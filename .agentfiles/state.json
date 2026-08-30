@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "profile_id": "addamsson",
+  "project_id": "omarchy-mcp-server",
+  "generator_version": "2.0.0",
+  "last_applied_at": "2026-08-30T14:20:24.843232207Z",
+  "managed_files": {
+    ".claude/skills/grilling/SKILL.md": {
+      "hash": "fe00af3e1815f97c0a7644605479328a726b5cd95ba6ef56a4be2a92fae6c20f",
+      "asset_id": "grilling",
+      "source_rel": "SKILL.md"
+    },
+    ".codex/skills/grilling/SKILL.md": {
+      "hash": "fe00af3e1815f97c0a7644605479328a726b5cd95ba6ef56a4be2a92fae6c20f",
+      "asset_id": "grilling",
+      "source_rel": "SKILL.md"
+    }
+  },
+  "ignored_paths": null
+}
