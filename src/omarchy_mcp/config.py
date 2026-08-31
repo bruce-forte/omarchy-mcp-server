@@ -17,10 +17,10 @@ DEFAULT_MAX_OUTPUT_B = 256 * 1024
 DEFAULT_TIMEOUT_MS = 30_000
 DEFAULT_PORT = 8765
 
-#: How long a call may wait for the user to answer an approval prompt. Not yet
-#: reachable: N4 owns the asking. Bounded rather than free so that neither
-#: extreme can exist -- a second is not long enough for a person to read the
-#: question, and ten minutes is a request parked on a desk nobody is at.
+#: How long a call may wait for the user to answer an approval prompt. Bounded
+#: rather than free so that neither extreme can exist -- a second is not long
+#: enough for a person to read the question, and ten minutes is a request parked
+#: on a desk nobody is at.
 DEFAULT_ASK_TIMEOUT_S = 60
 ASK_TIMEOUT_BOUNDS = (5, 600)
 
@@ -36,6 +36,14 @@ class Config:
     allow_groups: tuple[str, ...] = ()
     #: Safe routes demoted to guarded.
     deny: tuple[str, ...] = ()
+
+    #: Whether a guarded route asks the user at call time instead of refusing.
+    #:
+    #: Off by default, on purpose: installing this plugin must not make a
+    #: command reachable that was not reachable before. Discoverability is the
+    #: guarded refusal's job -- it names this key -- rather than a default that
+    #: quietly widens what an agent can reach.
+    ask: bool = False
 
     #: How long an approval prompt waits before the call is refused. No answer
     #: means denied: see `consent.py`.
@@ -63,6 +71,15 @@ def _strs(raw: object, key: str, problems: list[str]) -> tuple[str, ...]:
         problems.append(f"{key} must be a list of strings; ignoring it")
         return ()
     return tuple(raw)
+
+
+def _bool(raw: object, key: str, default: bool, problems: list[str]) -> bool:
+    if raw is None:
+        return default
+    if not isinstance(raw, bool):
+        problems.append(f"{key} must be true or false; using {str(default).lower()}")
+        return default
+    return raw
 
 
 def _int(raw: object, key: str, default: int, problems: list[str], lo: int, hi: int) -> int:
@@ -115,6 +132,7 @@ def load(path: Path | None = None) -> Config:
         allow=_strs(policy.get("allow"), "policy.allow", problems),
         allow_groups=_strs(policy.get("allow_groups"), "policy.allow_groups", problems),
         deny=_strs(policy.get("deny"), "policy.deny", problems),
+        ask=_bool(policy.get("ask"), "policy.ask", False, problems),
         ask_timeout_s=_int(
             policy.get("ask_timeout_s"),
             "policy.ask_timeout_s",

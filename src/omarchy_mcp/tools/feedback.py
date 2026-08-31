@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 
+from mcp.server.mcpserver import Context
 from mcp.types import ToolAnnotations
 
 from ..config import Config
@@ -41,6 +42,7 @@ def register(mcp, config: Config, log, stats: Stats) -> None:
             urgency: str = "normal",
             glyph: str = "",
             timeout_ms: int = 0,
+            ctx: Context = None,
         ) -> str:
             if urgency not in URGENCIES:
                 return json.dumps(
@@ -60,7 +62,7 @@ def register(mcp, config: Config, log, stats: Stats) -> None:
 
             return await run_route(
                 "omarchy notification send", args,
-                config=config, stats=stats, log=log, tool="omarchy_notify",
+                config=config, stats=stats, log=log, tool="omarchy_notify", ctx=ctx,
             )
 
     if enabled(config, "omarchy_osd"):
@@ -83,6 +85,7 @@ def register(mcp, config: Config, log, stats: Stats) -> None:
             icon: str = "",
             progress: int = -1,
             duration_ms: int = 0,
+            ctx: Context = None,
         ) -> str:
             args: list[str] = []
             if message:
@@ -100,5 +103,5 @@ def register(mcp, config: Config, log, stats: Stats) -> None:
 
             return await run_route(
                 "omarchy osd", args,
-                config=config, stats=stats, log=log, tool="omarchy_osd",
+                config=config, stats=stats, log=log, tool="omarchy_osd", ctx=ctx,
             )

@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import json
 
-from . import desktop, registry, shell
+from . import desktop, gate, registry, shell
 from .config import Config
 from .policy import decide
 from .status import gather
@@ -154,6 +154,16 @@ def register(mcp, config: Config, log) -> None:
             verdict = decide(cmd, config)
             row = registry.as_dict(cmd)
             row["tier"] = verdict.tier.value
-            row["runnable"] = verdict.allowed
+            # A route that will ask is runnable: reporting it as refused would
+            # make a careful agent never call it, so the prompt would never
+            # fire and the feature would be invisible to the only caller.
+            asks = gate.asks(verdict, config)
+            row["runnable"] = verdict.allowed or asks
+            if asks:
+                row["asks"] = True
+                row["note"] = (
+                    "This call pauses while the user is asked to approve it, and is "
+                    "refused if they decline or do not answer."
+                )
             rows.append(row)
         return {"count": len(rows), "commands": rows}

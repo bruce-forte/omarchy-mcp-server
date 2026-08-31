@@ -37,8 +37,8 @@ test: sync
 
 lint:
 	qmllint -I "$(OMARCHY_PATH)/shell" Service.qml BarWidget.qml
-	bash -n bin/omarchy-mcpd
-	uvx --from shellcheck-py shellcheck --severity=style bin/omarchy-mcpd
+	for f in bin/*; do bash -n "$$f"; done
+	uvx --from shellcheck-py shellcheck --severity=style bin/*
 
 validate:
 	omarchy plugin validate .

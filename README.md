@@ -208,11 +208,41 @@ rot when Omarchy adds commands:
 | Tier | Rule | Behaviour |
 |------|------|-----------|
 | `blocked` | needs sudo | Refused always. The daemon has no controlling terminal, so a password prompt could never be answered. Not overridable |
-| `guarded` | installs, removes, migrates, reboots | Refused unless allowed in your config |
+| `guarded` | installs, removes, migrates, reboots | Refused unless allowed in your config, or approved by you at the time |
 | `safe` | everything else | Runs |
 
 `omarchy_search_commands` reports the tier of every result, so an agent can see
 what it may do before trying.
+
+### Being asked instead of refused
+
+Deciding once, in advance, in a text editor, is the wrong shape for a decision
+about a specific command. Turn on asking:
+
+```toml
+[policy]
+ask = true
+# ask_timeout_s = 60
+```
+
+A guarded route now raises a critical notification naming the command and what
+it resolved to — the theme, the monitor, the path — and **clicking it approves
+that one call**. Nothing else does. Dismissing it, ignoring it, and letting the
+deadline pass all refuse, because a prompt that granted on expiry would be
+granting to an empty room.
+
+The agent is told which of those happened, because they mean different things:
+a refusal is worth respecting, and a silence is worth asking you about directly.
+
+Two things `ask` never reaches. Anything needing sudo stays refused — no answer
+makes it runnable. And anything you put in `deny` stays refused, because that is
+a decision you already took and re-asking it would turn your *no* into a
+question.
+
+If your MCP client supports elicitation over a transport that can carry it, the
+question appears there instead. Claude Code's does not — the protocol revision
+it negotiates carries no server-initiated requests at all — which is why the
+notification is the primary surface rather than a nicety beside it.
 
 Whatever the tier, an argument that names something is checked against your
 machine before anything is spawned. A theme name is matched the way Omarchy
@@ -276,8 +306,12 @@ anywhere inside a plugin folder and a virtualenv is largely symlinks.
 omarchy plugin remove io.github.bruce-forte.mcp-server
 rm -rf ~/.local/state/io.github.bruce-forte.mcp-server   # venv and bearer token
 rm -rf ~/.config/omarchy/mcp                             # your configuration
+rm -rf "$XDG_RUNTIME_DIR/io.github.bruce-forte.mcp-server"   # pending approvals
 claude mcp remove omarchy                                # if you added it there
 ```
+
+The runtime directory is cleared when you log out, so that line only matters if
+you are removing the plugin without rebooting.
 
 `plugin remove` takes the plugin directory only; the two directories above are
 outside it by design and are not touched.

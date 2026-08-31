@@ -151,6 +151,8 @@ In dependency order, shallowest first:
 | `policy.py` | The security boundary. Pure, takes the registry as an argument, tested against every route Omarchy ships |
 | `resolve.py` | Turns an identifier an agent supplied into the thing it names, or refuses. See below |
 | `consent.py` | The six ways a call can fail to get a yes, and a wait that fails closed. See below |
+| `gate.py` | Where policy, resolution and consent meet and a call runs or does not. Both tool paths come through it |
+| `prompt.py` | The two ways a question reaches a person, and the notification that outlives neither |
 | `execute.py` | `argv` only, never a shell. Timeouts, process-group termination, output caps, detaching |
 | `token.py` | The bearer token, created `0600` |
 | `auth.py` | Bearer authentication as **pure ASGI** — see below |
@@ -215,10 +217,14 @@ better message.
 
 ## Consent, and what silence means
 
-`consent.py` is the third gate. It has no caller yet — N4 owns the asking, via
-MCP elicitation — but the rule it enforces is the part that must not be got
-wrong, so it exists and is tested first, against a fake asker rather than a
-client.
+`consent.py` is the third gate. It owns the *rule* and not the mechanism: it
+takes anything that can be awaited for an answer, which is what let it be
+written and tested before any client was involved — and what saved it when the
+mechanism had to change. MCP elicitation was the plan; it turned out that the
+protocol revision Claude Code negotiates carries no server-initiated requests at
+all, so `ctx.elicit` fails inside this process before reaching the wire. The
+question goes to a desktop notification instead, and not a line of the rule
+changed.
 
 Six outcomes, and exactly one of them runs the command:
 
@@ -243,13 +249,55 @@ Two properties are load-bearing, and neither should be relaxed when N4 lands:
   told the call was refused and may have done something else since. This daemon
   starts with the session and outlives whoever walked away, so a prompt that
   granted on expiry would grant to an empty room.
-- **A client that cannot ask is not a client that said yes.** `supports_asking`
-  checks `elicitation.form` specifically — url-mode elicitation answers in a
-  browser tab, and this project exists because the person is looking at a
-  desktop. No capability means refuse, never hang and never assume.
+- **A client that cannot ask is not a client that said yes.** No capability
+  means refuse, never hang and never assume. What counts as *can be asked* had
+  to be loosened once: Claude Code declares a bare `elicitation: {}`, naming
+  neither sub-mode, and requiring `form` refused the client this project exists
+  for. A client naming only `url` is still refused — url mode answers in a
+  browser tab, and the person here is at a desktop.
 
 An exception from the asker is caught, not propagated: a broken prompt surfacing
 as a tool-call traceback would bury the reason the command did not run.
+
+## Asking at call time
+
+`gate.py` is where `policy.py`, `resolve.py` and `consent.py` meet. Both tool
+paths — `_shared.run_route` for the curated tools, and `omarchy_run` — reduce to
+one `await` on it, because a check that one path applies and the other skips is
+worse than no check at all.
+
+The order is the part worth stating:
+
+| Verdict | What happens |
+|---------|--------------|
+| allowed | resolve, run |
+| refused, askable, `policy.ask` | resolve, **then** ask, run only on an accept |
+| refused otherwise | refuse; nothing is resolved and nobody is asked |
+
+Resolution comes before the question and only on the ask path. Before, because a
+prompt reading *"set theme Tokyo Night"* is consent and one reading *"run
+omarchy theme set"* is not — the user cannot tell what they are approving. Only
+on that path, because a refusal nobody will be asked about should not spend a
+subprocess on a resolver, and because a question answered *yes* and then refused
+as unresolvable has spent something scarcer than a subprocess.
+
+Two refusals are never askable, and `Verdict` says so rather than leaving the
+caller to infer it: `blocked`, because no answer makes a sudo command runnable,
+and `policy.deny`, because that refusal is a decision the user already took by
+hand.
+
+The question itself goes wherever it can reach a person. If the client declares
+elicitation *and* the transport can carry a server-initiated request, it goes
+there. Otherwise it becomes a critical notification whose `--exec` runs a helper
+when clicked, which writes a one-time token the parked call is watching for.
+That surface has exactly one action, so a click is *yes* and silence is *no* —
+the mechanism and the rule agree by construction.
+
+Every tool is `async` for this reason, and every blocking call therefore has to
+be handed to a worker thread explicitly: `func_metadata` only threads a tool it
+finds to be *sync*, so an `async` body doing subprocess work would stall every
+other client — including one parked on a question, which is the concurrency the
+single-daemon design exists to provide.
 
 ## Three traps worth knowing about
 
@@ -306,11 +354,12 @@ other clients may list them.
 
 ## What the tests pin
 
-`policy.py`, `auth.py` and `execute.py` are the security boundary, and the
-existing tests are its specification — every sudo command classifies `blocked`
-and no configuration can promote it, `argv` never reaches a shell, a foreign
-`Origin` gets 403 and a foreign `Host` gets 421. Changes there need tests in the
-same commit.
+`policy.py`, `auth.py`, `execute.py`, `gate.py` and `prompt.py` are the security
+boundary, and the existing tests are its specification — every sudo command
+classifies `blocked` and no configuration can promote it, `argv` never reaches a
+shell, a foreign `Origin` gets 403 and a foreign `Host` gets 421, nothing that
+must not be asked about is asked about, and a consent file that merely exists is
+not a click. Changes there need tests in the same commit.
 
 The suite reads committed snapshots rather than the installed system, and
 autouse fixtures enforce it. That is what lets the tests run in CI at all, and

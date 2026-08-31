@@ -12,9 +12,8 @@ import json
 
 import anyio.to_thread
 
-from .. import execute, registry, resolve
+from .. import execute, gate, registry
 from ..config import Config
-from ..policy import decide
 from ..stats import Stats
 
 #: Appended to every tool whose result carries bytes this project did not
@@ -65,6 +64,7 @@ async def run_route(
     stats: Stats,
     log,
     tool: str,
+    ctx=None,
     detach: bool | None = None,
     timeout_ms: int | None = None,
 ) -> str:
@@ -80,17 +80,14 @@ async def run_route(
             indent=2,
         )
 
-    verdict = decide(cmd, config)
-    if not verdict.allowed:
+    decision = await gate.authorize(
+        cmd, args, config=config, ctx=ctx, log=log, offload=offload
+    )
+    if isinstance(decision, gate.Refused):
         stats.record(tool, route=route, ok=False)
-        return json.dumps({"error": verdict.reason, "tier": verdict.tier.value}, indent=2)
-
-    try:
-        call = await offload(resolve.resolve_call, cmd.route, args)
-    except resolve.Unresolvable as exc:
-        stats.record(tool, route=route, ok=False)
-        log.info("%s route=%r unresolved=%s", tool, route, exc.kind)
-        return json.dumps(exc.as_dict(), indent=2)
+        log.info("%s route=%r refused", tool, route)
+        return json.dumps(decision.as_dict(), indent=2)
+    call = decision.call
 
     if detach is None:
         detach = execute.should_detach(cmd.group, cmd.route)
