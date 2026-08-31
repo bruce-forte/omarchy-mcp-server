@@ -1,113 +1,240 @@
-# Roadmap
+# Architecture
 
-What is decided, what is built, what was rejected. Check here before proposing
-a feature — several things below were considered and deliberately dropped.
+For someone opening this repository knowing nothing about it. `README.md` says
+what it does for a user; this says how it works and why it is shaped this way.
+`ROADMAP.md` says what was decided and what is still to come.
 
-## Decisions
+## The constraint everything follows from
 
-Settled during design. Each row names the thing that forced it, because the
-reasons matter more than the choices when something needs revisiting.
+Omarchy plugins are QML, loaded into a long-running Quickshell process called
+`omarchy-shell`. An MCP server is an HTTP server that spawns processes. QML is
+the wrong place for both, so the server cannot be a plugin.
 
-| # | Decision | Forced by |
-|---|----------|-----------|
-| 1 | **HTTP transport on loopback**, not stdio | Clients are local agents and other plugins, which speak standard MCP HTTP. A stdio server could not be a daemon, and the daemon is the point |
-| 2 | **18 tools**: 4 generic + 14 curated | 356 commands as 356 tools is ~30k tokens of client context before the agent does anything. Discovery + dispatch scales; per-command tools do not |
-| 3 | **Bearer token + Origin validation**, loopback bind | `omarchy_run` is arbitrary command execution. Loopback alone does not stop browser DNS rebinding — a hostile page's `fetch` originates from your own machine |
-| 4 | **Three policy tiers derived from registry metadata** | `omarchy commands --json` already carries `requires_sudo` and `group`. Derived policy does not rot on Omarchy upgrades; a hand-written allowlist does |
-| 5 | **Timeout + detach, defaulted per route** | Many commands block on the user by design (`theme switcher`, `menu select`, `capture region`). A blocked HTTP request means a client timeout and a leaked child |
-| 6 | **Python + venv + official `mcp` SDK** | Spec compliance tracked upstream. `/usr/bin/python3` is guaranteed on Omarchy; node and luajit are not |
-| 7 | **Self-healing bash wrapper** builds the venv, then `exec`s | `omarchy plugin add` runs no build and no install hook, by design. Bootstrap has to be lazy, and QML is the wrong place for it |
-| 8 | **`kinds: ["service", "bar-widget"]`** | A daemon whose only client is an agent fails silently and invisibly. The bar icon is the cheapest compliance with "never fail silently" |
-| 9 | **7 IPC functions**, health probed not assumed | `qs ipc show` is the discovery mechanism, so the names are documentation. A wedged HTTP loop still shows a live pid, so liveness needs a real probe |
-| 10 | **4 concrete resources + 3 URI templates** | Covers all 356 commands and ~20 IPC targets. 356 concrete resources would bloat `resources/list` and blow up in any client that injects the list into context |
-| 11 | **Optional TOML config, every key commented out** | Live keys freeze v1 defaults forever. Commented keys let upstream defaults flow through |
-| 12 | **Daemon health notifies; request failures do not** | The agent already receives tool errors in the response. Toasting them would fire constantly on a wrong `omarchy_run` |
-| 13 | **Never install our own package into the venv** | An editable install writes build artifacts into the plugin directory, which Omarchy watches — every bootstrap would reload the shell |
-| 14 | **uv only, no pip fallback** | Two bootstrap paths means the rare one is the least tested and, without `uv.lock`, the least safe |
-| 15 | **Visibility before curated tools** | Building 14 tools on a daemon you can only observe through `journalctl` means debugging blind |
-| 16 | **Keep 4 concrete resources + 3 templates** even though Claude Code never enumerates templates (F8) | Resources are for a human typing `@`; agents discover through tools. 61 concrete group resources would bury `omarchy://shell/targets`, the entry actually wanted |
-| 17 | **Dev virtualenv lives outside the repository** | `omarchy plugin validate` rejects symlinks anywhere in a plugin folder, and a virtualenv is largely symlinks. The `Makefile` enforces it |
+So this project is two halves:
 
-## Phases
+- **A daemon** — `bin/omarchy-mcpd` and `src/omarchy_mcp/`. Serves MCP over HTTP
+  on loopback and runs Omarchy commands.
+- **A plugin** — two QML files hosted by `omarchy-shell`. Starts the daemon,
+  watches it, and draws a bar icon saying whether it is serving.
 
-- [x] **0 — Spike.** Done. Findings below. Minimal SDK server, one tool, bearer auth. Answers: does
-      `claude mcp add --transport http` connect; do resource *templates* appear
-      in `@` autocomplete or only concrete resources; does the SDK's streamable
-      HTTP require a session id the client must round-trip.
-- [x] **1 — Walking skeleton.** Done. Manifest, `Service.qml`, `bin/omarchy-mcpd`,
-      uv bootstrap, config seeding, `registry.py`, `policy.py`, `execute.py`,
-      the 4 generic tools, auth. Installs end to end. **An agent can reach all
-      356 commands and every IPC target at the end of this phase** — everything
-      after is ergonomics.
-- [x] **2 — Visibility.** Done. Bar widget, health probe, state file, 7 IPC
-      functions, throttled notifications.
-- [x] **3 — Curated tools.** Done. Tier 1 (5) first: `screenshot` and `desktop_state`
-      unlock what `run` structurally cannot do. Then Tier 2 (9).
-- [x] **4 — Resources.** Done. The 7 from decision 10, shaped by what Phase 0 found.
-- [x] **5 — Hardening.** Done. Generated `TOOLS.md`, CI, `SECURITY.md`.
+The plugin *supervises* the daemon rather than containing it. That buys two real
+things. The daemon starts with your session and stops with it, with no systemd
+unit to enable and no second install step. And, less obviously, being a child of
+`omarchy-shell` is what gives the daemon `WAYLAND_DISPLAY`,
+`HYPRLAND_INSTANCE_SIGNATURE` and `DBUS_SESSION_BUS_ADDRESS` from the live
+graphical session — every command that touches the desktop needs them, and a
+systemd user unit would have to import them explicitly and would race the
+session at boot.
 
-Tests are not a phase. `policy.py` and the auth checks are tested in the phase
-that creates them — they are the security boundary, and tests retrofitted to a
-security boundary only assert whatever the code already does.
+## Why there is no build step
 
-## Rejected
+`omarchy plugin add` clones a git repository, validates the manifest, and copies
+files. **It runs no build and no install hook, by design** — the installer
+refuses to execute plugin code before you have enabled it.
 
-| Thing | Why not |
-|-------|---------|
-| One tool per omarchy command | Decision 2 |
-| Hand-curated allowlist of commands | Defeats the self-maintaining registry; rots every Omarchy release |
-| `ask_user` via `omarchy menu select` | Blocks the HTTP request until the user answers. MCP elicitation is the right mechanism if this is ever wanted |
-| `power` tool (lock/logout/reboot/shutdown) | Irreversible from an agent's hands. Still reachable through `omarchy_run` if deliberately allowed in config |
-| `plugin_manage` tool | An agent editing the shell it runs inside |
-| `reminder`, `screenrecord` tools | `reminder` is fine through `omarchy_run`. `screenrecord` is long-running and stateful for rare use |
-| Configurable listen `host` | Turns arbitrary command execution into a LAN service behind one bearer token. If ever wanted, it is a named feature with its own documentation, not a config key |
-| Promoting sudo commands to runnable | No controlling tty: `sudo` hangs on a password prompt nobody can see |
-| Async job model for long runners | Decision 5 covers it with less surface. Revisit if progress streaming is actually wanted |
-| MCP prompts | Anything worth shipping is better as a Claude Code skill, iterable without a daemon restart |
-| stdio transport / shim | Decision 1. Revisit only if a target client cannot do HTTP |
+So the environment is built lazily, on first run, by `bin/omarchy-mcpd`. It is a
+bash wrapper that checks a stamp, builds a virtualenv if anything changed, and
+then `exec`s into Python. Keeping it in bash rather than QML means the daemon is
+also runnable by hand from a checkout, which is how you debug it.
 
-## Phase 0 findings
+The stamp covers the lockfile, the interpreter version, and the wrapper's own
+hash, so any of the three changing rebuilds the environment and nothing else
+does. `uv` itself is downloaded at a pinned version and checksum-verified rather
+than through the upstream one-line installer: other people install this plugin,
+and fetching an unpinned script from a third-party host would run whatever that
+host happened to be serving that day.
 
-Verified against `mcp` 2.1.1, Claude Code, and a live Omarchy 4.0.1 desktop.
+## Where things are written
 
-| # | Finding | Consequence |
-|---|---------|-------------|
-| F1 | The SDK is on **2.x**, where `FastMCP` was renamed `MCPServer` and the module moved to `mcp.server.mcpserver`. Nearly every example in the wild is 1.x | Pin `mcp>=2,<3` in `pyproject.toml`. Treat 1.x docs as wrong |
-| F2 | `claude mcp add --transport http` connects and lists tools. A full session calls the tool and returns its result | Decision 1 holds. The whole transport choice is validated |
-| F3 | Claude Code's handshake is `server/discover` + `subscriptions/listen` + `tools/list` — **not** a classic `initialize`. The SDK answers it transparently | Nothing to do, but do not hand-roll the protocol on this evidence |
-| F4 | The server returns `mcp-session-id` and the client round-trips it. Stateful mode works | No need for `stateless_http` |
-| F5 | `TransportSecuritySettings` has `enable_dns_rebinding_protection = True` by default and returns **403** for a hostile `Origin` | Decision 3's Origin requirement is **native to the SDK**, not custom code. Still set `allowed_hosts`/`allowed_origins` explicitly |
-| F6 | Bearer auth as `BaseHTTPMiddleware` reading the body **breaks the transport**: the SDK's `watch_disconnect` calls `receive()` expecting `http.disconnect`, gets `http.request`, and every `tools/call` 500s | **Auth must be pure ASGI middleware touching headers only.** Verified both ways: the failure and the fix |
-| F7 | `ToolAnnotations(readOnlyHint=..., destructiveHint=..., openWorldHint=...)` is supported and surfaces in `tools/list` | Decision 4's annotation layer works as designed |
-| F8 | **Claude Code never calls `resources/templates/list`.** Confirmed twice, at RPC and handler level, in a session that *did* call `resources/list` unprompted | Templates are invisible in Claude Code's `@` menu. They still resolve when read by explicit URI, and other clients may enumerate them. See decision 10 |
-| F9 | `uv venv --python /usr/bin/python3` builds against the system interpreter with no managed CPython download | Decision 14's bootstrap is sound |
-| F10 | `MCPServer` also ships `custom_route` (used for `/health`), `token_verifier`, and `resource_security` with path-traversal rejection on by default | `/health` for decision 9's liveness probe is a one-liner |
+Omarchy watches `~/.config/omarchy/plugins/` and **reloads the shell on any file
+write**. A plugin that writes inside its own directory reloads the shell every
+time it does, which at worst is a loop. So:
 
-## Phase 2 findings
+| Kind of file | Goes in |
+|--------------|---------|
+| User config | `~/.config/omarchy/mcp/` |
+| Virtualenv, bearer token, bootstrap stamp, bytecode cache | `~/.local/state/io.github.bruce-forte.mcp-server/` |
+| The state file the bar widget reads | `$XDG_RUNTIME_DIR/omarchy-mcp.state` |
+| Never | the plugin directory |
 
-Found by running the plugin in a live shell. None of these are visible to
-`qmllint`, and all three shipped broken before the shell was actually started.
+`paths.py` holds every one of these locations, so the rules are enforced by
+construction rather than by remembering them at each call site.
 
-| # | Finding | Consequence |
-|---|---------|-------------|
-| F11 | `StdioCollector` needs `waitForEnd: true`, or its `text` is empty when read. Deciding in `onStreamFinished` while `onExited` also writes the same property is a race | The health probe reported `serving: false` forever. Both signals fire; the verdict belongs in `onExited`, which is the pattern `PluginRegistry.qml` uses |
-| F12 | A purely interval-driven probe leaves the widget claiming the server is down for a full interval after every start | The probe now fires when the daemon reports `listening`, and polls at 2s while it looks down against 10s once it answers |
-| F13 | Publishing state from a property-change handler writes a half-filled snapshot: assigning `calls` fired `writeState()` before `lastTool` had been assigned | State is written once, explicitly, after every field is set |
+This has three non-obvious consequences.
 
-## Phase 3 findings
+**The project is never installed into its own virtualenv.** An editable install
+writes `.egg-info` and build artifacts into the plugin directory. So the wrapper
+installs *dependencies only* (`uv sync --no-install-project`) and runs the code
+by path with `PYTHONPATH=$PLUGIN_DIR/src`.
 
-| # | Finding | Consequence |
-|---|---------|-------------|
-| F14 | `wl-copy` forks a child that stays alive to serve the selection, because Wayland has no clipboard daemon. That child inherits captured pipes, which then never close, so `subprocess.run` waits out its whole timeout and reports failure for a copy that already worked | Clipboard writes send output to `/dev/null` and pass text on stdin. Pinned by a round-trip test and a timing test |
-| F15 | `grim -g` takes **logical** coordinates but writes **physical** pixels. On a 1.25-scaled monitor a 100x50 region returns 125x62 | Not a bug, but it makes `max_width` the meaningful cap and it invalidates the obvious test assertion |
-| F16 | The `omarchy toggle` routes disagree about arguments: `bar` takes on/off, `idle` takes stay-awake/allow-idle, `screensaver` and `notification silencing` take nothing at all | Accepted state words are read out of the registry rather than hardcoded, so the table cannot drift. Forcing a route that only toggles now explains itself |
-| F17 | `MCPServer.call_tool` returns a `CallToolResult`, not a content list | Only affects tests that drive the server directly |
-| F18 | `omarchy capture screenshot` freezes the screen, copies to the clipboard, sends a notification, and writes a file into the user's Pictures directory | All four are right for a person pressing a key and wrong for an agent looking at the screen, which would otherwise litter the photo library. Screenshots go through `grim` directly |
+**Bytecode goes to the state directory.** Python caches `__pycache__` next to
+the source it imports, and the source is in the watched directory — so without
+`PYTHONPYCACHEPREFIX` every interpreter start made the shell reload itself, and
+the reload restarted the daemon. This shipped broken; see finding F19.
+`tests/test_bootstrap.py` reads the wrapper and fails if anything writes into
+the plugin directory, so it cannot come back quietly.
 
-## Phase 5 findings
+**The development virtualenv also lives outside the repository.** Not for
+tidiness: `omarchy plugin validate` rejects symlinks anywhere inside a plugin
+folder, and a virtualenv is largely symlinks, so a `.venv` here makes the plugin
+fail validation. The `Makefile` sets `UV_PROJECT_ENVIRONMENT` so a bare
+`uv run` cannot create one by accident. Use the `Makefile`, not bare `uv`.
 
-| # | Finding | Consequence |
-|---|---------|-------------|
-| F19 | The daemon wrote `__pycache__` **into the installed plugin directory** — 22 `.pyc` files. Python caches bytecode next to the source it imports, and the source is in the directory Omarchy watches, so the daemon made the shell reload itself simply by starting | `PYTHONPYCACHEPREFIX` points the cache at the state directory. `tests/test_bootstrap.py` now reads the wrapper and fails if anything writes into the plugin directory. **The plugin was violating the rule its own ARCHITECTURE.md states** |
-| F20 | `hyprctl`'s per-workspace window count disagrees with its client list — it counts a group as one window — and `desktop_state` reported both | Found by an agent using the tool, which flagged the contradiction and had to pick which to believe. Counts are now derived from the windows actually returned |
-| F21 | Several tests shelled out to the installed `omarchy`, so the suite could not run in CI and would change meaning on the next Omarchy update | An autouse fixture pins every test to the committed registry snapshot |
+## The pieces
+
+```
+  omarchy-shell (Quickshell)
+    │
+    ├── Service.qml ───spawns──> bin/omarchy-mcpd ───exec──> python -m omarchy_mcp
+    │        │                     (bootstrap)                    │
+    │        │<──── JSON state lines on stdout ───────────────────┤
+    │        │<──── logs on stderr ──────────────────────────────-┘
+    │        │
+    │        ├── polls GET /health every 10s
+    │        ├── writes $XDG_RUNTIME_DIR/omarchy-mcp.state
+    │        └── IpcHandler: status, start, stop, restart,
+    │                        reloadConfig, rebuild, clientConfig
+    │
+    └── BarWidget.qml ──reads──> the state file
+```
+
+The daemon prints one JSON line to stdout per state change — `listening` with
+the port, or `failed` with the reason. Everything else goes to stderr, which
+`omarchy-shell` inherits, so `journalctl --user -f` carries the daemon's log
+alongside the shell's own QML errors.
+
+The bar widget reads a file rather than asking the service, because **Omarchy
+routes inter-plugin calls to panels and overlays but not to services**. A widget
+cannot call a service, so the service publishes. This is a house rule for
+Omarchy plugins generally and it constrains anything that later wants the widget
+to *send* rather than only display — see `ROADMAP.md` N6.
+
+## The IPC surface is documentation
+
+`Service.qml` registers an `IpcHandler` under the plugin id, so the plugin is
+drivable from a terminal:
+
+```bash
+omarchy-shell io.github.bruce-forte.mcp-server status
+qs ipc -n -p "$OMARCHY_PATH/shell" show     # every target and signature
+```
+
+That listing is how a script or an agent discovers what a plugin can do, and it
+is the only documentation these interfaces have. So the function names are part
+of the public surface: name them for the caller rather than the implementation,
+and return a string rather than nothing when there is anything worth reporting.
+
+## Why a health probe and not a pid
+
+`Process.running` tells you a process exists. It does not tell you the HTTP loop
+is answering. A daemon whose event loop has wedged looks identical to a healthy
+one from the outside, and the only client is a language model that will report
+"I could not reach the tool" long after the fact. So `Service.qml` polls
+`/health` and the widget distinguishes *serving* from *running*.
+
+`/health` is the one route that does not require the bearer token. It carries no
+secrets, and requiring a token would mean the supervising QML needed to read one.
+
+## Reading the source
+
+In dependency order, shallowest first:
+
+| Module | Holds |
+|--------|-------|
+| `paths.py` | Every filesystem location, in one place, so the rules above are enforced by construction |
+| `config.py` | TOML loading. Never raises: a broken file yields defaults plus a list of problems |
+| `registry.py` | Parses `omarchy commands --json`, cached until Omarchy's version changes. Search and suggestions |
+| `shell.py` | Parses `qs ipc show` into targets and typed method signatures |
+| `desktop.py` | Hyprland's monitors, workspaces, windows and focus, via `hyprctl -j` |
+| `status.py` | The system-status aggregate: several probes gathered into one answer |
+| `stats.py` | In-memory call counters, published through `/health` for the bar tooltip |
+| `policy.py` | The security boundary. Pure, takes the registry as an argument, tested against every route Omarchy ships |
+| `execute.py` | `argv` only, never a shell. Timeouts, process-group termination, output caps, detaching |
+| `token.py` | The bearer token, created `0600` |
+| `auth.py` | Bearer authentication as **pure ASGI** — see below |
+| `resources.py` | The 4 concrete resources and 3 URI templates |
+| `server.py` | Assembles the MCP server, transport security, `/health` |
+
+The tools are a package, split by what they are for:
+
+| Module | Tools |
+|--------|-------|
+| `tools/generic.py` | 4 — search, run, shell targets, shell call |
+| `tools/desktop.py` | 5 — screenshot, desktop state, screen text, clipboard read and write |
+| `tools/control.py` | 7 — theme, background, audio, brightness, media, toggle, launch |
+| `tools/feedback.py` | 2 — notify, OSD |
+| `tools/system.py` | 1 — system status |
+| `tools/_shared.py` | `run_route`, the one path every curated tool takes to reach the executor |
+
+`_shared.run_route` matters more than its size suggests. Every curated tool goes
+through the same `policy.decide` and the same `execute.run` as `omarchy_run`: a
+curated tool is a better-shaped door onto the same room, never a way around the
+lock. It is also the single place where a future consent check hooks in
+(`ROADMAP.md` N4).
+
+## Three traps worth knowing about
+
+**Auth must not be a `BaseHTTPMiddleware`.** Starlette's `BaseHTTPMiddleware`
+wraps the receive channel. The MCP streamable-HTTP transport runs a disconnect
+watcher that calls `receive()` expecting `http.disconnect`; through
+`BaseHTTPMiddleware` it gets `http.request` instead, and every `tools/call` fails
+with a 500. `auth.py` reads headers straight off the ASGI scope for this reason.
+
+**The SDK is `mcp` 2.x, where `FastMCP` was renamed `MCPServer`** and moved to
+`mcp.server.mcpserver`. Almost every example online is 1.x and does not apply.
+`pyproject.toml` pins `mcp>=2,<3`, and `tests/test_server.py` does a real
+handshake so a breaking release fails here rather than in a client.
+
+**QML failures are invisible to `qmllint`.** Every finding in phase 2 was a
+component that linted clean and behaved differently in a live shell — a
+collector read before its stream finished, a probe that reported down for a full
+interval after every start, a state file written from a property handler before
+the rest of the properties were set. Run it in a real shell before believing it.
+
+## Why the tool surface is small
+
+Omarchy has several hundred commands. One MCP tool per command would put tens of
+thousands of tokens of schema into every client's context before it did any work.
+So the four generic tools are discovery and dispatch — search to find out what
+exists, run to do it — and the registry itself is the documentation. Nothing here
+needs updating when Omarchy adds a command.
+
+Fifteen curated tools sit on top, and each earns its place one of two ways:
+either the generic path structurally cannot produce the result (an image; window
+state that is `hyprctl`'s rather than Omarchy's; the clipboard, which is not an
+Omarchy command at all), or the thing is asked for constantly and a search round
+trip before every volume change is a bad trade. Anything a curated tool does
+stays reachable through `omarchy_run`, and any of them can be switched off in
+the config — a disabled tool is never registered, so it does not appear in
+`tools/list` at all.
+
+`TOOLS.md` is generated from the server's own schemas and `make check` fails if
+it is stale. Never edit it by hand.
+
+## Resources, and who they are for
+
+Seven, and they are not a second tool surface. Tools are how an agent acts;
+resources are how a person reads. In Claude Code they appear as `@` mentions the
+user types, so they are chosen for what someone building an Omarchy plugin would
+want to pull into a conversation — above all `omarchy://shell/targets`, the
+shell's IPC surface with full signatures, which is documented nowhere upstream.
+
+Four are concrete and appear in the `@` menu. Three are URI templates covering
+every command and every target without putting several hundred entries in a
+listing. Claude Code never enumerates templates (finding F8), so the concrete
+four are the discoverable set; templates still resolve when read by URI, and
+other clients may list them.
+
+## What the tests pin
+
+`policy.py`, `auth.py` and `execute.py` are the security boundary, and the
+existing tests are its specification — every sudo command classifies `blocked`
+and no configuration can promote it, `argv` never reaches a shell, a foreign
+`Origin` gets 403 and a foreign `Host` gets 421. Changes there need tests in the
+same commit.
+
+The suite reads `tests/fixtures/commands.json`, a committed snapshot of
+`omarchy commands --all --json`, rather than the installed Omarchy. An autouse
+fixture enforces it. That is what lets the tests run in CI at all, and it stops
+them quietly changing meaning the next time `omarchy update` renames a route
+(finding F21). Refresh the snapshot deliberately, in its own commit.
