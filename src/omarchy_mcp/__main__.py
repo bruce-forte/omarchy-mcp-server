@@ -21,6 +21,16 @@ from .server import build, client_config_json, client_config_line
 LOG_LEVELS = {"debug": logging.DEBUG, "info": logging.INFO, "warn": logging.WARNING,
               "error": logging.ERROR}
 
+#: How long a SIGTERM waits for in-flight work before connections are cancelled.
+#:
+#: Uvicorn's default is to wait forever, and an attached MCP client holds its
+#: stream open for the life of the session -- so the documented restart
+#: (`omarchy-shell <id> restart`) hung indefinitely whenever a client was
+#: attached, which is whenever restarting matters. Three seconds is long enough
+#: for a tool call that is nearly done and short enough that a restart feels
+#: like one.
+SHUTDOWN_GRACE_S = 3
+
 
 def _logger(level: str) -> logging.Logger:
     logging.basicConfig(
@@ -67,7 +77,14 @@ def main(argv: list[str] | None = None) -> int:
     print(json.dumps({"state": "listening", "port": cfg.port, "version": __version__}), flush=True)
 
     try:
-        uvicorn.run(app, host=cfg.host, port=cfg.port, log_level=cfg.log_level, access_log=False)
+        uvicorn.run(
+            app,
+            host=cfg.host,
+            port=cfg.port,
+            log_level=cfg.log_level,
+            access_log=False,
+            timeout_graceful_shutdown=SHUTDOWN_GRACE_S,
+        )
     except OSError as exc:
         log.error("cannot listen on port %d: %s", cfg.port, exc)
         print(json.dumps({"state": "failed", "port": cfg.port, "error": str(exc)}), flush=True)

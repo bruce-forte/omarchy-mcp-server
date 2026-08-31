@@ -36,6 +36,13 @@ Item {
   property bool   wantRunning: true
   property int    failures: 0
 
+  // A restart is "start once the old one is actually gone", not "start in 250ms
+  // and hope". The daemon can take seconds to exit -- it stops accepting, then
+  // gives in-flight work its grace period -- and a timer that fired first found
+  // the process still running, returned from start() without setting
+  // wantRunning, and left the daemon stopped for good when it finally exited.
+  property bool   restartPending: false
+
   // A daemon that dies immediately -- a broken venv, a syntax error -- must not
   // be respawned in a tight loop. Back off, and cap the delay so a transient
   // failure still recovers without a shell restart.
@@ -51,15 +58,24 @@ Item {
 
   function stop() {
     wantRunning = false
-    daemon.running = false
+    if (daemon.running) {
+      daemon.running = false   // SIGTERM
+      sigkill.restart()        // ...and a deadline on it
+    }
     phase = "stopped"
     serving = false
     writeState()
   }
 
   function restart() {
+    restartPending = true
+    const wasRunning = daemon.running
     stop()
-    restartTimer.restart()
+    // Nothing will exit if it was already down, so nothing would start it.
+    if (!wasRunning) {
+      restartPending = false
+      start()
+    }
   }
 
   function writeState() {
@@ -116,7 +132,15 @@ Item {
     }
 
     onExited: function (exitCode, exitStatus) {
+      sigkill.stop()
       root.serving = false
+
+      if (root.restartPending) {
+        root.restartPending = false
+        root.start()
+        return
+      }
+
       if (!root.wantRunning) {
         root.phase = "stopped"
         return
@@ -143,11 +167,21 @@ Item {
     onTriggered: if (root.wantRunning) daemon.running = true
   }
 
+  // SIGTERM is asked politely and is not always answered. The daemon bounds its
+  // own graceful shutdown, so reaching this means it is wedged rather than
+  // busy -- and a supervisor that cannot end what it started is not supervising.
+  // Longer than the daemon's own grace period, so the ordinary path is its
+  // clean exit and this only ever fires on a real fault.
   Timer {
-    id: restartTimer
-    interval: 250
+    id: sigkill
+    interval: 5000
     repeat: false
-    onTriggered: root.start()
+    onTriggered: {
+      if (!daemon.running)
+        return
+      console.warn("omarchy-mcp: daemon ignored SIGTERM for 5s; killing it")
+      daemon.signal(9)
+    }
   }
 
   // Liveness, not just aliveness. A wedged HTTP loop still has a live pid, so
