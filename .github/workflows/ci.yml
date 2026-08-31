@@ -1,0 +1,62 @@
+name: CI
+
+# The suite reads a committed snapshot of `omarchy commands --json` rather than
+# the installed system, so everything except the desktop tests runs on a plain
+# runner with no Omarchy, no Hyprland, and no Wayland session. Those skip
+# themselves.
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Run tests
+        run: uv run --frozen pytest -q
+
+      - name: TOOLS.md is up to date
+        # It is generated from the server's own schemas, so a tool whose
+        # description or arguments changed without regenerating it means the
+        # documentation is already wrong.
+        run: |
+          PYTHONPATH=src uv run --frozen python -m tests.generate_tools_doc > /tmp/TOOLS.md
+          diff -u TOOLS.md /tmp/TOOLS.md || {
+            echo "::error::TOOLS.md is stale. Run 'make tools' and commit the result."
+            exit 1
+          }
+
+      - name: The example config pins no defaults
+        # Every key ships commented out. A live key would freeze that default
+        # for everyone who installed before it changed.
+        run: |
+          grep -vE '^\s*(#|$)' config.example.toml | grep -vE '^\[' && {
+            echo "::error::config.example.toml has an uncommented key."
+            exit 1
+          } || true
+
+      - name: No virtualenv committed
+        # `omarchy plugin validate` rejects symlinks inside a plugin folder.
+        run: test ! -e .venv
+
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Parse the bootstrap wrapper
+        run: bash -n bin/omarchy-mcpd
+      - name: shellcheck
+        # Through uv so the same command runs locally (`make lint`) and here,
+        # rather than a CI-only action that cannot be reproduced on a desktop.
+        run: uvx --from shellcheck-py shellcheck --severity=style bin/omarchy-mcpd

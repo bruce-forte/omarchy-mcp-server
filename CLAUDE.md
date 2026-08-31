@@ -19,14 +19,21 @@ This file is the working agreement.
 - **Commit straight to `master`.** No branches.
 - **No AI attribution in commit messages.** No `Co-Authored-By`, no
   `Generated with`, no session trailer.
-- Run `make check` before committing. It runs the tests, `qmllint`, and
-  `omarchy plugin validate`.
+- Run `make check` before committing. It runs the tests, `qmllint`,
+  `shellcheck`, `omarchy plugin validate`, and two staleness gates: that
+  `TOOLS.md` matches the server's current schemas, and that
+  `config.example.toml` still pins no defaults. CI runs the same things.
 - **Use the `Makefile`, not bare `uv`.** It sets `UV_PROJECT_ENVIRONMENT` so the
   dev virtualenv lands outside the repository. A `.venv` here makes
   `omarchy plugin validate` fail, because it rejects symlinks inside a plugin
   folder.
 - Regenerate `TOOLS.md` with `make tools` whenever a tool's name, description,
-  schema, or annotations change. It is generated; never edit it by hand.
+  schema, or annotations change. It is generated; never edit it by hand, and
+  `make check` fails if it is stale.
+- Tests read `tests/fixtures/commands.json`, a committed snapshot of
+  `omarchy commands --all --json`, never the installed Omarchy. That is what
+  lets the suite run in CI, and it stops tests changing meaning the next time
+  `omarchy update` renames a route. Refresh it deliberately, in its own commit.
 
 ## The security boundary
 

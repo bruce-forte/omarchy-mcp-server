@@ -33,9 +33,18 @@ test: sync
 lint:
 	qmllint -I "$(OMARCHY_PATH)/shell" Service.qml BarWidget.qml
 	bash -n bin/omarchy-mcpd
+	uvx --from shellcheck-py shellcheck --severity=style bin/omarchy-mcpd
 
 validate:
 	omarchy plugin validate .
+
+# What CI checks that the other targets do not: that the generated reference is
+# current, and that the shipped config still pins nothing.
+	@PYTHONPATH=src uv run --frozen python -m tests.generate_tools_doc > /tmp/TOOLS.md.check
+	@diff -q TOOLS.md /tmp/TOOLS.md.check >/dev/null || { \
+	  echo "error: TOOLS.md is stale. Run 'make tools' and commit it."; exit 1; }
+	@grep -vE '^[[:space:]]*(#|$$)' config.example.toml | grep -vE '^\[' >/dev/null && { \
+	  echo "error: config.example.toml has an uncommented key."; exit 1; } || true
 
 # Regenerate TOOLS.md from the server's own schemas, so the documentation
 # cannot drift from what the server actually advertises.

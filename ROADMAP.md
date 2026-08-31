@@ -44,7 +44,7 @@ reasons matter more than the choices when something needs revisiting.
 - [x] **3 — Curated tools.** Done. Tier 1 (5) first: `screenshot` and `desktop_state`
       unlock what `run` structurally cannot do. Then Tier 2 (9).
 - [x] **4 — Resources.** Done. The 7 from decision 10, shaped by what Phase 0 found.
-- [ ] **5 — Hardening.** Generated `TOOLS.md`, CI, `SECURITY.md`.
+- [x] **5 — Hardening.** Done. Generated `TOOLS.md`, CI, `SECURITY.md`.
 
 Tests are not a phase. `policy.py` and the auth checks are tested in the phase
 that creates them — they are the security boundary, and tests retrofitted to a
