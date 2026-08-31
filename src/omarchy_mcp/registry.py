@@ -77,9 +77,18 @@ def _parse(payload: str) -> dict[str, Command]:
 def _load_for_version(_version: str) -> dict[str, Command]:
     # --all so that hidden commands are classified by policy too. They are
     # filtered out of search results unless explicitly asked for.
+    from .execute import NotInstalled, resolve_binary
+
+    argv = ["omarchy", "commands", "--all", "--json"]
+    try:
+        exe = resolve_binary(argv[0])
+    except NotInstalled as exc:
+        raise RegistryError(f"{exc} Is this an Omarchy system?") from exc
+
     try:
         proc = subprocess.run(
-            ["omarchy", "commands", "--all", "--json"],
+            argv,
+            executable=exe,
             capture_output=True,
             text=True,
             timeout=REGISTRY_TIMEOUT_S,

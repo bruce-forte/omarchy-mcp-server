@@ -93,19 +93,26 @@ async def run_route(
         detach = execute.should_detach(cmd.group, cmd.route)
 
     argv = [*cmd.argv_prefix, *call.args]
-    result = await offload(
-        execute.run,
-        argv,
-        timeout_ms=timeout_ms or config.timeout_ms,
-        max_output_b=config.max_output_b,
-        detach=detach,
-    )
+    try:
+        result = await offload(
+            execute.run,
+            argv,
+            timeout_ms=timeout_ms or config.timeout_ms,
+            max_output_b=config.max_output_b,
+            detach=detach,
+        )
+    except execute.NotInstalled as exc:
+        stats.record(tool, route=route, ok=False)
+        log.warning("%s route=%r %s", tool, route, exc)
+        return json.dumps(exc.as_dict(), indent=2)
+
     stats.record(tool, route=route, ok=result.exit_code in (0, None))
     log.info(
-        "%s route=%r target=%r exit=%s",
+        "%s route=%r target=%r exec=%s exit=%s",
         tool,
         route,
         call.target.label if call.target else None,
+        result.executable,
         result.exit_code,
     )
 

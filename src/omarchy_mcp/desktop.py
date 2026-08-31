@@ -40,6 +40,22 @@ class DesktopError(RuntimeError):
     pass
 
 
+def _exe(argv: list[str]) -> str:
+    """The binary this argv should run, as a DesktopError if there is none.
+
+    None of these are `omarchy` commands, so they never pass through
+    `execute.run` -- and the same reasoning applies to them twice over. `grim`
+    and `tesseract` are ordinary names in /usr/bin with a session PATH in front
+    of them.
+    """
+    from .execute import NotInstalled, resolve_binary
+
+    try:
+        return resolve_binary(argv[0])
+    except NotInstalled as exc:
+        raise DesktopError(str(exc)) from exc
+
+
 @dataclass(frozen=True)
 class Capture:
     png: bytes
@@ -52,9 +68,11 @@ class Capture:
 
 def hyprctl(*args: str) -> object:
     """Run `hyprctl -j` and parse the reply."""
+    argv = ["hyprctl", "-j", *args]
     try:
         proc = subprocess.run(
-            ["hyprctl", "-j", *args],
+            argv,
+            executable=_exe(argv),
             capture_output=True,
             text=True,
             timeout=HYPRCTL_TIMEOUT_S,
@@ -179,7 +197,14 @@ def clipboard_read(*, mime: str = "") -> str:
     if mime:
         args += ["--type", mime]
     try:
-        proc = subprocess.run(args, capture_output=True, text=True, timeout=5, errors="replace")
+        proc = subprocess.run(
+            args,
+            executable=_exe(args),
+            capture_output=True,
+            text=True,
+            timeout=5,
+            errors="replace",
+        )
     except FileNotFoundError as exc:
         raise DesktopError("`wl-paste` is not on PATH") from exc
     except subprocess.TimeoutExpired as exc:
@@ -211,6 +236,7 @@ def clipboard_write(text: str) -> None:
     try:
         proc = subprocess.run(
             ["wl-copy"],
+            executable=_exe(["wl-copy"]),
             input=text.encode(),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -226,7 +252,9 @@ def clipboard_write(text: str) -> None:
 
 def _run(argv: list[str], timeout_s: int, what: str) -> str:
     try:
-        proc = subprocess.run(argv, capture_output=True, text=True, timeout=timeout_s)
+        proc = subprocess.run(
+            argv, executable=_exe(argv), capture_output=True, text=True, timeout=timeout_s
+        )
     except FileNotFoundError as exc:
         raise DesktopError(f"`{argv[0]}` is not on PATH") from exc
     except subprocess.TimeoutExpired as exc:

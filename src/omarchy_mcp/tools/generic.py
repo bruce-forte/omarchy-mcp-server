@@ -119,17 +119,23 @@ def register(mcp, config: Config, log, stats: Stats | None = None) -> None:
             detach = execute.should_detach(cmd.group, cmd.route)
 
         argv = [*cmd.argv_prefix, *call.args]
-        result = await offload(
-            execute.run,
-            argv,
-            timeout_ms=timeout_ms or config.timeout_ms,
-            max_output_b=config.max_output_b,
-            detach=detach,
-        )
+        try:
+            result = await offload(
+                execute.run,
+                argv,
+                timeout_ms=timeout_ms or config.timeout_ms,
+                max_output_b=config.max_output_b,
+                detach=detach,
+            )
+        except execute.NotInstalled as exc:
+            log.warning("run route=%r %s", cmd.route, exc)
+            return json.dumps(exc.as_dict(), indent=2)
+
         log.info(
-            "run route=%r target=%r exit=%s detached=%s timed_out=%s",
+            "run route=%r target=%r exec=%s exit=%s detached=%s timed_out=%s",
             cmd.route,
             call.target.label if call.target else None,
+            result.executable,
             result.exit_code,
             result.detached,
             result.timed_out,
