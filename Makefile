@@ -17,12 +17,17 @@ check: guard test lint validate
 # A bare `uv run` or `uv sync` outside these targets creates ./.venv, and
 # `omarchy plugin validate` then fails on the symlinks inside it with a message
 # that does not explain itself. Fail early and say what to do instead.
+# Locally a .venv must not exist at all, since `omarchy plugin validate` runs
+# against this directory. CI checks the weaker property -- that it is not
+# tracked by git -- because there `uv sync` creates one on purpose.
 guard:
 	@test ! -e .venv || { \
 	  echo "error: ./.venv exists. omarchy plugin validate rejects symlinks in a"; \
 	  echo "       plugin folder. Remove it with 'make clean' and use make targets,"; \
 	  echo "       or 'make py CMD=...', which put the venv in the state directory."; \
 	  exit 1; }
+	@test -z "$$(git ls-files .venv)" || { \
+	  echo "error: .venv is tracked by git."; exit 1; }
 
 sync:
 	uv sync --frozen
