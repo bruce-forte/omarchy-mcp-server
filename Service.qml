@@ -30,7 +30,8 @@ Item {
   property int    port: 8765
   property string lastError: ""
   property bool   serving: false          // proven by /health, not assumed from a pid
-  property int    requests: 0
+  property int    calls: 0                // tool calls served, from /health
+  property string lastTool: ""
 
   property bool   wantRunning: true
   property int    failures: 0
@@ -66,7 +67,8 @@ Item {
       phase: root.phase,
       serving: root.serving,
       port: root.port,
-      requests: root.requests,
+      calls: root.calls,
+      lastTool: root.lastTool,
       error: root.lastError,
       pid: daemon.processId || 0
     }))
@@ -74,6 +76,7 @@ Item {
 
   onPhaseChanged: writeState()
   onServingChanged: writeState()
+  onCallsChanged: writeState()
 
   Component.onCompleted: start()
 
@@ -94,6 +97,10 @@ Item {
           if (frame.port)
             root.port = frame.port
           root.lastError = frame.error || ""
+          // Probe immediately rather than waiting out an interval: otherwise
+          // the widget claims the server is down for ten seconds every start.
+          if (frame.state === "listening" && !health.running)
+            health.running = true
         } catch (e) {
           // Not a state line; the wrapper's own output goes to stderr, so this
           // is unexpected but harmless.
@@ -119,6 +126,13 @@ Item {
       root.phase = "failed"
       root.lastError = "daemon exited with code " + exitCode
       console.warn("omarchy-mcp: daemon exited", exitCode, "- restarting in", root.backoffMs, "ms")
+
+      // Nowhere else reports this. The only client is a language model, and it
+      // will report "the tool is unreachable" long after the fact, if at all.
+      // Warn once the restarts have clearly stopped being transient.
+      if (root.failures === 3)
+        notify.running = true
+
       respawn.interval = root.backoffMs
       respawn.restart()
     }
@@ -158,7 +172,10 @@ Item {
         return
       }
       try {
-        root.serving = JSON.parse(healthOut.text).ok === true
+        const body = JSON.parse(healthOut.text)
+        root.serving = body.ok === true
+        root.calls = Number(body.calls || 0)
+        root.lastTool = String(body.last_tool || "")
         if (root.serving)
           root.failures = 0
       } catch (e) {
@@ -167,8 +184,10 @@ Item {
     }
   }
 
+  // Fast while it looks down, slow once it is answering: a server that is up
+  // needs no attention, and one that is down is the thing worth noticing.
   Timer {
-    interval: 10000
+    interval: root.serving ? 10000 : 2000
     running: daemon.running
     repeat: true
     triggeredOnStart: true
@@ -195,6 +214,8 @@ Item {
         port: root.port,
         url: "http://127.0.0.1:" + root.port + "/mcp",
         pid: daemon.processId || 0,
+        calls: root.calls,
+        lastTool: root.lastTool,
         failures: root.failures,
         error: root.lastError
       }, null, 2)
@@ -233,6 +254,13 @@ Item {
       rebuildProc.running = true
       return "rebuilding the environment; the daemon will restart when it finishes"
     }
+  }
+
+  Process {
+    id: notify
+    command: ["omarchy", "notification", "send", "-u", "critical",
+      "MCP server", "The Omarchy MCP server keeps failing to start. "
+      + "See journalctl --user -f, or run: omarchy-shell io.github.bruce-forte.mcp-server rebuild"]
   }
 
   Process {

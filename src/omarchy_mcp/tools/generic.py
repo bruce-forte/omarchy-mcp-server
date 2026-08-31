@@ -19,9 +19,11 @@ from mcp.types import ToolAnnotations
 from .. import execute, registry, shell
 from ..config import Config
 from ..policy import decide
+from ..stats import Stats
 
 
-def register(mcp, config: Config, log) -> None:
+def register(mcp, config: Config, log, stats: Stats | None = None) -> None:
+    stats = stats or Stats()
     @mcp.tool(
         name="omarchy_search_commands",
         title="Search Omarchy commands",
@@ -40,6 +42,7 @@ def register(mcp, config: Config, log) -> None:
         limit: int = 20,
         include_hidden: bool = False,
     ) -> str:
+        stats.record("omarchy_search_commands")
         limit = max(1, min(limit, 100))
         hits = registry.search(query, limit=limit, include_hidden=include_hidden)
         rows = []
@@ -76,6 +79,7 @@ def register(mcp, config: Config, log) -> None:
     ) -> str:
         args = list(args or [])
         cmd = registry.get(route.strip())
+        stats.record("omarchy_run", route=route.strip(), ok=cmd is not None)
         if cmd is None:
             close = registry.suggest(route)
             return json.dumps(
@@ -123,6 +127,7 @@ def register(mcp, config: Config, log) -> None:
         ),
     )
     def omarchy_shell_targets(target: str = "", refresh: bool = False) -> str:
+        stats.record("omarchy_shell_targets")
         try:
             found = shell.targets(refresh=refresh)
         except shell.ShellError as exc:
@@ -159,6 +164,7 @@ def register(mcp, config: Config, log) -> None:
         timeout_ms: int | None = None,
     ) -> str:
         args = list(args or [])
+        stats.record("omarchy_shell_call", route=f"{target}.{method}")
         try:
             known = shell.targets()
         except shell.ShellError as exc:
