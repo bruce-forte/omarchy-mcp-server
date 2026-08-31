@@ -4,7 +4,7 @@
   "name": "MCP Server",
   "version": "0.1.0",
   "author": "bruce-forte",
-  "license": "AGPL-3.0",
+  "license": "Apache-2.0",
   "description": "Exposes Omarchy's commands and shell IPC to local AI agents over MCP",
   "kinds": [
     "service",
