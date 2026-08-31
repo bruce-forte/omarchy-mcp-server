@@ -15,6 +15,7 @@ from mcp.types import ImageContent, TextContent, ToolAnnotations
 from .. import desktop
 from ..config import Config
 from ..stats import Stats
+from ._shared import UNTRUSTED
 
 TARGETS = "screen (the focused monitor), window (the focused window), monitor, or region"
 
@@ -35,7 +36,7 @@ def register(mcp, config: Config, log, stats: Stats) -> None:
                 f"actually there. `target` is one of: {TARGETS}. For `monitor`, pass a "
                 "monitor name from omarchy_desktop_state. For `region`, pass geometry "
                 "like '0,0 800x600'. Images are scaled down before being returned; "
-                "nothing is saved to disk and the clipboard is not touched."
+                "nothing is saved to disk and the clipboard is not touched." + UNTRUSTED
             ),
             annotations=ToolAnnotations(
                 readOnlyHint=True, destructiveHint=False, idempotentHint=False,
@@ -77,7 +78,7 @@ def register(mcp, config: Config, log, stats: Stats) -> None:
                 "open window with its class, title, position, and workspace, and which "
                 "window is focused. This is not an Omarchy command and is not reachable "
                 "through omarchy_run. Use it before acting on 'the current window' or "
-                "'the other monitor'."
+                "'the other monitor'." + UNTRUSTED
             ),
             annotations=ToolAnnotations(
                 readOnlyHint=True, destructiveHint=False, idempotentHint=True,
@@ -100,7 +101,7 @@ def register(mcp, config: Config, log, stats: Stats) -> None:
             description=(
                 "Extract text from the screen with OCR. Cheaper than a screenshot when "
                 "you only need what something says, and it works on text inside images "
-                f"and terminals. `target` is one of: {TARGETS}."
+                f"and terminals. `target` is one of: {TARGETS}." + UNTRUSTED
             ),
             annotations=ToolAnnotations(
                 readOnlyHint=True, destructiveHint=False, idempotentHint=False,
@@ -128,7 +129,7 @@ def register(mcp, config: Config, log, stats: Stats) -> None:
             description=(
                 "Return the current clipboard contents as text. Reading the clipboard is "
                 "not an Omarchy command, so this is not reachable through omarchy_run. "
-                "An empty clipboard returns an empty string rather than an error."
+                "An empty clipboard returns an empty string rather than an error." + UNTRUSTED
             ),
             annotations=ToolAnnotations(
                 readOnlyHint=True, destructiveHint=False, idempotentHint=True,

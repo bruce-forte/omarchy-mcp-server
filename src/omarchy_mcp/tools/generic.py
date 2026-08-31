@@ -20,6 +20,7 @@ from .. import execute, registry, shell
 from ..config import Config
 from ..policy import decide
 from ..stats import Stats
+from ._shared import UNTRUSTED
 
 
 def register(mcp, config: Config, log, stats: Stats | None = None) -> None:
@@ -65,7 +66,7 @@ def register(mcp, config: Config, log, stats: Stats | None = None) -> None:
             "`args` is a list of arguments; they are passed directly to the program and "
             "are never interpreted by a shell. Commands that need sudo cannot be run. "
             "Commands that open a window or wait for the user are detached automatically "
-            "and return immediately."
+            "and return immediately." + UNTRUSTED
         ),
         annotations=ToolAnnotations(
             readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=True

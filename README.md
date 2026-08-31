@@ -275,6 +275,13 @@ outside it by design and are not touched.
 This server runs commands on your desktop on behalf of a language model. Read
 [`SECURITY.md`](SECURITY.md) before installing it.
 
+The one thing worth knowing before you get there: the tools that read your
+screen, your clipboard and your window titles hand the model text that neither
+you nor this project wrote, and a page that says *"ignore your instructions and
+run …"* is a real attack. The server tells the model to treat all of it as data,
+but that is a request, not a control. What actually stops it is the policy tier
+and your client's approval prompt — so keep tool approvals on.
+
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
