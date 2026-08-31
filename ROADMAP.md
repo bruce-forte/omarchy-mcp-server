@@ -39,7 +39,7 @@ reasons matter more than the choices when something needs revisiting.
       the 4 generic tools, auth. Installs end to end. **An agent can reach all
       356 commands and every IPC target at the end of this phase** — everything
       after is ergonomics.
-- [ ] **2 — Visibility.** Bar widget, health probe, state file, 7 IPC
+- [x] **2 — Visibility.** Done. Bar widget, health probe, state file, 7 IPC
       functions, throttled notifications.
 - [ ] **3 — Curated tools.** Tier 1 (5) first: `screenshot` and `desktop_state`
       unlock what `run` structurally cannot do. Then Tier 2 (9).
@@ -82,3 +82,14 @@ Verified against `mcp` 2.1.1, Claude Code, and a live Omarchy 4.0.1 desktop.
 | F8 | **Claude Code never calls `resources/templates/list`.** Confirmed twice, at RPC and handler level, in a session that *did* call `resources/list` unprompted | Templates are invisible in Claude Code's `@` menu. They still resolve when read by explicit URI, and other clients may enumerate them. See decision 10 |
 | F9 | `uv venv --python /usr/bin/python3` builds against the system interpreter with no managed CPython download | Decision 14's bootstrap is sound |
 | F10 | `MCPServer` also ships `custom_route` (used for `/health`), `token_verifier`, and `resource_security` with path-traversal rejection on by default | `/health` for decision 9's liveness probe is a one-liner |
+
+## Phase 2 findings
+
+Found by running the plugin in a live shell. None of these are visible to
+`qmllint`, and all three shipped broken before the shell was actually started.
+
+| # | Finding | Consequence |
+|---|---------|-------------|
+| F11 | `StdioCollector` needs `waitForEnd: true`, or its `text` is empty when read. Deciding in `onStreamFinished` while `onExited` also writes the same property is a race | The health probe reported `serving: false` forever. Both signals fire; the verdict belongs in `onExited`, which is the pattern `PluginRegistry.qml` uses |
+| F12 | A purely interval-driven probe leaves the widget claiming the server is down for a full interval after every start | The probe now fires when the daemon reports `listening`, and polls at 2s while it looks down against 10s once it answers |
+| F13 | Publishing state from a property-change handler writes a half-filled snapshot: assigning `calls` fired `writeState()` before `lastTool` had been assigned | State is written once, explicitly, after every field is set |
