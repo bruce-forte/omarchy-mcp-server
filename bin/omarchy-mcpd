@@ -144,4 +144,13 @@ seed_config
 ensure_venv
 
 # PYTHONPATH rather than an install, for the reason in ensure_venv.
-exec env PYTHONPATH="$PLUGIN_DIR/src" "$VENV/bin/python" -m omarchy_mcp "$@"
+#
+# PYTHONPYCACHEPREFIX is not optional. Python writes __pycache__ next to the
+# source it imports, and the source lives in the plugin directory, which
+# Omarchy watches -- so without this every fresh interpreter start writes
+# bytecode into a watched directory and makes the shell reload itself. The
+# cache is still kept, just in the state directory where it belongs.
+exec env \
+  PYTHONPATH="$PLUGIN_DIR/src" \
+  PYTHONPYCACHEPREFIX="$STATE_DIR/pycache" \
+  "$VENV/bin/python" -m omarchy_mcp "$@"
