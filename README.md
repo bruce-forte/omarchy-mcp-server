@@ -277,4 +277,4 @@ This server runs commands on your desktop on behalf of a language model. Read
 
 ## License
 
-AGPL-3.0. See [LICENSE](LICENSE).
+Apache-2.0. See [LICENSE](LICENSE).
