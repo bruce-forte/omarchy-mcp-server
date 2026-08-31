@@ -7,9 +7,9 @@ Runs as an **Omarchy plugin**, so there is no systemd unit to enable, no second
 install step, and no separate package. The plugin supervises a small daemon; the
 daemon starts with your session and stops with it.
 
-> **Status: Phase 3.** Nineteen tools, a supervised daemon, and a bar widget
-> that says whether it is serving. MCP resources are the remaining phase; see
-> [`ROADMAP.md`](ROADMAP.md).
+> **Status: Phase 4.** Nineteen tools, seven resources, a supervised daemon,
+> and a bar widget that says whether it is serving. What is left is hardening;
+> see [`ROADMAP.md`](ROADMAP.md).
 
 ## Documentation
 
@@ -86,6 +86,21 @@ Curated tools go through the same policy check and executor as `omarchy_run` —
 better-shaped door onto the same room, never a way around the lock. Any of them
 can be switched off in the config, and everything they do stays reachable
 through `omarchy_run`.
+
+**Seven resources** carry the reference material. Tools are how an agent acts;
+resources are how a person reads — in Claude Code they appear as `@` mentions:
+
+| URI | Holds |
+|-----|-------|
+| `omarchy://commands` | The whole registry, annotated with what this server may run |
+| `omarchy://shell/targets` | Every IPC target with full method signatures — documented nowhere upstream |
+| `omarchy://desktop/state` | Monitors, workspaces, windows, focus |
+| `omarchy://system/status` | The system status aggregate |
+
+Plus three URI templates — `omarchy://command/{route}`,
+`omarchy://commands/{group}`, `omarchy://shell/target/{name}` — which between
+them cover every command and target without a listing of several hundred
+entries.
 
 Full reference, generated from the server's own schemas: [`TOOLS.md`](TOOLS.md).
 

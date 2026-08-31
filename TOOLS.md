@@ -207,6 +207,29 @@ Turn a desktop feature on, off, or over: bar, do_not_disturb, idle, nightlight, 
 | `feature` | `string` | **required** |
 | `state` | `string` | optional, default `"toggle"` |
 
+## Resources
+
+Tools are how an agent acts; resources are how a person reads. In Claude Code they appear as `@` mentions.
+
+### The 4 concrete resources
+
+| URI | Holds |
+|-----|-------|
+| `omarchy://commands` | Every Omarchy command with its route, arguments, summary, examples, and whether the MCP server may run it. |
+| `omarchy://desktop/state` | Monitors, workspaces, open windows, and which window is focused. |
+| `omarchy://shell/targets` | Every IPC target the running shell exposes, with the exact signature of each method. This is the interface plugins are driven through, and it is documented nowhere else. |
+| `omarchy://system/status` | CPU, memory, battery, network, theme, background, idle, font, monitor. |
+
+### The 3 templates
+
+Between them these cover every command and every IPC target without putting several hundred entries in a listing. They resolve when read by URI; Claude Code does not enumerate them, so the concrete resources above are the discoverable set.
+
+| URI template | Holds |
+|--------------|-------|
+| `omarchy://command/{route}` | A single command's registry entry. The route may be given with or without the leading 'omarchy', for example 'theme set' or 'omarchy theme set'. |
+| `omarchy://commands/{group}` | Every command in a group, such as 'theme', 'audio', or 'capture'. Group names appear on each command in omarchy://commands. |
+| `omarchy://shell/target/{name}` | A single IPC target's methods and signatures, such as 'media' or 'shell'. |
+
 ## Policy
 
 Every command is classified from `omarchy commands --json`. `omarchy_search_commands` reports the tier of each result.
