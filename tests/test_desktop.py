@@ -140,24 +140,48 @@ class TestClipboard:
         monkeypatch.setattr(subprocess, "run", lambda *a, **k: Reply())
         assert desktop.clipboard_read() == ""
 
-    def test_write_passes_text_as_an_argument(self, monkeypatch):
+    def test_write_sends_text_on_stdin_not_as_an_argument(self, monkeypatch):
+        """Keeps a large clipboard clear of the argument-length limit, and means
+        text starting with a dash cannot be read as a flag."""
         import subprocess
 
         seen = {}
 
         class Reply:
             returncode = 0
-            stdout = ""
-            stderr = ""
 
         def fake(argv, **kwargs):
             seen["argv"] = argv
+            seen["kwargs"] = kwargs
             return Reply()
 
         monkeypatch.setattr(subprocess, "run", fake)
         desktop.clipboard_write("--not-a-flag")
-        # The `--` matters: text starting with a dash must not become a flag.
-        assert seen["argv"] == ["wl-copy", "--", "--not-a-flag"]
+
+        assert seen["argv"] == ["wl-copy"]
+        assert seen["kwargs"]["input"] == b"--not-a-flag"
+
+    def test_write_does_not_capture_output(self, monkeypatch):
+        """wl-copy forks a child that stays alive to serve the selection. If it
+        inherits captured pipes they never close and subprocess.run waits out
+        its whole timeout on a copy that already succeeded."""
+        import subprocess
+
+        seen = {}
+
+        class Reply:
+            returncode = 0
+
+        def fake(argv, **kwargs):
+            seen.update(kwargs)
+            return Reply()
+
+        monkeypatch.setattr(subprocess, "run", fake)
+        desktop.clipboard_write("x")
+
+        assert seen["stdout"] is subprocess.DEVNULL
+        assert seen["stderr"] is subprocess.DEVNULL
+        assert "capture_output" not in seen
 
 
 @needs_wayland
@@ -178,3 +202,21 @@ class TestAgainstARealSession:
         scale = desktop.focused_monitor().get("scale") or 1.0
         shot = desktop.capture(target="region", region="0,0 100x50", max_width=1568)
         assert shot.width == pytest.approx(100 * scale, abs=2)
+
+
+@needs_wayland
+class TestClipboardRoundTrip:
+    def test_write_then_read_returns_the_same_text(self):
+        """The regression this pins: wl-copy succeeded but reported a timeout,
+        because its selection-serving child held the captured pipes open."""
+        marker = "omarchy-mcp round trip ✓"
+        desktop.clipboard_write(marker)
+        assert desktop.clipboard_read() == marker
+
+    def test_write_is_prompt(self):
+        """It used to take the full 5s timeout before reporting failure."""
+        import time
+
+        started = time.monotonic()
+        desktop.clipboard_write("timing check")
+        assert time.monotonic() - started < 2.0
