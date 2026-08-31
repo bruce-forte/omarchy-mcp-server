@@ -139,23 +139,31 @@ Item {
 
   // Liveness, not just aliveness. A wedged HTTP loop still has a live pid, so
   // the bar widget would lie without an actual probe.
+  //
+  // The verdict is reached in onExited rather than onStreamFinished: both fire,
+  // and deciding in one while the other also writes `serving` is a race. The
+  // collector needs waitForEnd, or its text is empty when we read it.
   Process {
     id: health
     command: ["curl", "-fsS", "--max-time", "2", "http://127.0.0.1:" + root.port + "/health"]
+
     stdout: StdioCollector {
-      onStreamFinished: {
-        try {
-          const body = JSON.parse(this.text)
-          root.serving = body.ok === true
-          root.failures = 0
-        } catch (e) {
-          root.serving = false
-        }
-      }
+      id: healthOut
+      waitForEnd: true
     }
-    onExited: function (code) {
-      if (code !== 0)
+
+    onExited: function (exitCode) {
+      if (exitCode !== 0) {
         root.serving = false
+        return
+      }
+      try {
+        root.serving = JSON.parse(healthOut.text).ok === true
+        if (root.serving)
+          root.failures = 0
+      } catch (e) {
+        root.serving = false
+      }
     }
   }
 
