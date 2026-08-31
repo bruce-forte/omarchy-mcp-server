@@ -195,16 +195,33 @@ def clipboard_read(*, mime: str = "") -> str:
 
 
 def clipboard_write(text: str) -> None:
+    """Put text on the clipboard.
+
+    Two things here are not optional. Wayland has no clipboard daemon: whoever
+    offers a selection must stay alive to serve it, so `wl-copy` forks a child
+    that outlives the command. If that child inherits captured pipes they never
+    close, and `subprocess.run` waits out its whole timeout on a copy that
+    already succeeded -- reporting failure for something that worked. So its
+    output goes to /dev/null rather than to pipes.
+
+    The text goes in on stdin rather than as an argument, which keeps a large
+    clipboard clear of the argument-length limit and means text beginning with a
+    dash cannot be read as a flag.
+    """
     try:
         proc = subprocess.run(
-            ["wl-copy", "--", text], capture_output=True, text=True, timeout=5
+            ["wl-copy"],
+            input=text.encode(),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
         )
     except FileNotFoundError as exc:
         raise DesktopError("`wl-copy` is not on PATH") from exc
     except subprocess.TimeoutExpired as exc:
         raise DesktopError("wl-copy timed out") from exc
     if proc.returncode != 0:
-        raise DesktopError(f"wl-copy failed: {proc.stderr.strip()[:200]}")
+        raise DesktopError(f"wl-copy exited {proc.returncode}")
 
 
 def _run(argv: list[str], timeout_s: int, what: str) -> str:
