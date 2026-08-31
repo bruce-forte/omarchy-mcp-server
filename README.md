@@ -7,8 +7,9 @@ Runs as an **Omarchy plugin**, so there is no systemd unit to enable, no second
 install step, and no separate package. The plugin supervises a small daemon; the
 daemon starts with your session and stops with it.
 
-> **Status: Phase 4.** Nineteen tools, seven resources, a supervised daemon,
-> and a bar widget that says whether it is serving. What is left is hardening;
+> **Status: Phase 6.** Nineteen tools, seven resources, a supervised daemon, a
+> bar widget that says whether it is serving, and approval prompts that reach
+> the desktop. What is left is an activity log and the surfaces that read it;
 > see [`ROADMAP.md`](ROADMAP.md).
 
 ## Documentation
@@ -24,6 +25,7 @@ daemon starts with your session and stops with it.
 
 ## Contents
 
+- [What this is](#what-this-is)
 - [What it does](#what-it-does)
 - [Install](#install)
 - [Connecting a client](#connecting-a-client)
@@ -36,6 +38,38 @@ daemon starts with your session and stops with it.
 - [Requirements](#requirements)
 - [Security](#security)
 - [License](#license)
+
+## What this is
+
+One process that exposes the whole of Omarchy to whatever agent you point at it,
+rather than a chosen subset of it wrapped in hand-written tools.
+
+**Complete coverage that maintains itself.** Every command in Omarchy's registry
+is reachable, including ones added by a release published after this one. The
+registry is read live and classified by rules rather than by a list, so there is
+no catalogue here to keep in step and nothing to update when `omarchy update`
+renames a route.
+
+**The shell's IPC surface at all.** The bar, the OSD, media, notifications, and
+every loaded plugin are reachable only through Quickshell IPC, which no command
+covers. `qs ipc show` is the only documentation these interfaces have, and this
+server republishes it with full method signatures.
+
+**Resources, so a person can read what an agent can do.** Tools are for acting;
+resources are for reading. In Claude Code they are `@` mentions — the whole
+annotated registry, every IPC target, the desktop's current state — readable
+without running anything, by you as much as by the agent.
+
+**One daemon, many clients.** Claude and Codex attached at the same time share
+one policy, one configuration, and one place where approvals are decided,
+because there is one process holding all of it rather than one per client.
+
+**It can ask you, where you actually are.** A guarded command can raise a
+notification on your desktop naming what it would do and what it resolved to —
+the theme, the monitor, the file — and clicking it approves that one call.
+Ignoring it refuses. The question reaches you at the desktop rather than in
+whichever terminal the agent happens to be running in, because that is where you
+are. Off unless you turn it on.
 
 ## What it does
 

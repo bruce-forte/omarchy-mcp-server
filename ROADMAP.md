@@ -45,9 +45,9 @@ reasons matter more than the choices when something needs revisiting.
       unlock what `run` structurally cannot do. Then Tier 2 (9).
 - [x] **4 — Resources.** Done. The 7 from decision 10, shaped by what Phase 0 found.
 - [x] **5 — Hardening.** Done. Generated `TOOLS.md`, CI, `SECURITY.md`.
-- [ ] **6 — Consent and visibility.** In progress: N1–N3 done. The user can
-      see what an agent did, answer for the calls that warrant it, and stop the
-      thing. See [Next steps](#next-steps).
+- [ ] **6 — Consent and visibility.** In progress: N1–N4 and N8 done. The user
+      can see what an agent did, answer for the calls that warrant it, and stop
+      the thing. See [Next steps](#next-steps).
 
 Tests are not a phase. `policy.py` and the auth checks are tested in the phase
 that creates them — they are the security boundary, and tests retrofitted to a
@@ -489,7 +489,7 @@ The concrete case, measured on the machine this was written on: the daemon's
 inherited `PATH` was `/usr/share/omarchy/bin`, then **fifty-five** toolchain-manager
 shims, and only then `/usr/bin`.
 
-### N9 — A one-line USP section in the README
+### N9 — A one-line USP section in the README — done
 
 The README explains the parts well and never says, in one place, what this is
 that a fixed set of hand-written desktop tools is not. Four things, none of them
@@ -509,6 +509,16 @@ currently stated together:
 
 Write it against the design, not against any other project. It goes stale the
 moment it is a comparison.
+
+**Five, not four.** N4 shipped after this was written, and a question that
+reaches the desktop and refuses on silence is a property of the design rather
+than a detail of the configuration — the most unusual thing here, and the one a
+reader is least likely to have met before. Its being off by default is a
+sentence, not a disqualification.
+
+Argument resolution was considered as a sixth and left out: it is true and
+distinctive, but it already has a worked example under *What an agent is allowed
+to run*, and six items read as a list rather than a claim.
 
 ### N10 — A consent store, reviewed by diff
 
