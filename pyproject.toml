@@ -1,0 +1,29 @@
+# Tooling and dependency declaration only. This project is NEVER installed into
+# the venv -- an editable install writes build artifacts into the plugin
+# directory, which Omarchy watches, reloading the shell on every bootstrap.
+# The daemon runs from source via PYTHONPATH. See ARCHITECTURE.md.
+[project]
+name = "omarchy-mcp"
+version = "0.1.0"
+description = "MCP server exposing Omarchy to local agents"
+requires-python = ">=3.11"
+license = "AGPL-3.0-or-later"
+dependencies = [
+    # 2.x renamed FastMCP to MCPServer and moved the module. 1.x examples do
+    # not apply; see ROADMAP.md finding F1.
+    "mcp>=2,<3",
+    "uvicorn>=0.30",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+src = ["src"]

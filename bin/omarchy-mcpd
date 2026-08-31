@@ -1,0 +1,147 @@
+#!/bin/bash
+#
+# Starts the Omarchy MCP daemon, building whatever it needs first.
+#
+# `omarchy plugin add` clones the repository and copies files. It runs no build
+# and no install hook, by design -- the installer will not execute plugin code
+# before you have enabled it. So the environment has to be built lazily, here,
+# on first run.
+#
+# Everything this creates lives in the state directory. Nothing is ever written
+# inside the plugin directory: Omarchy watches it and reloads the shell on any
+# write, so a plugin that writes to itself reloads the shell every time it runs.
+
+set -euo pipefail
+
+PLUGIN_ID="io.github.bruce-forte.mcp-server"
+PLUGIN_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/$PLUGIN_ID"
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/mcp"
+VENV="$STATE_DIR/venv"
+STAMP="$STATE_DIR/bootstrap.stamp"
+UV_BIN_DIR="$STATE_DIR/bin"
+
+# Downloaded at a pinned version and verified, rather than through the upstream
+# one-line installer. This plugin gets installed by other people, and fetching
+# an unpinned script from a third-party host would run whatever that host
+# happens to be serving at the moment they install it.
+UV_VERSION="0.9.29"
+
+# The system interpreter, by absolute path. `python3` on PATH is frequently a
+# mise, brew or conda shim, and building the venv against one of those makes the
+# daemon stop working the moment that shim moves.
+SYSTEM_PYTHON="/usr/bin/python3"
+
+log()  { printf 'omarchy-mcpd: %s\n' "$*" >&2; }
+fail() {
+  log "$*"
+  # Nowhere else reports this: the caller is a QML service and the user is
+  # looking at a desktop, not a terminal.
+  omarchy notification send -u critical "Omarchy MCP server" "$*" 2>/dev/null || true
+  exit 1
+}
+
+find_uv() {
+  if command -v uv >/dev/null 2>&1; then
+    command -v uv
+    return 0
+  fi
+  if [[ -x $UV_BIN_DIR/uv ]]; then
+    printf '%s\n' "$UV_BIN_DIR/uv"
+    return 0
+  fi
+  return 1
+}
+
+install_uv() {
+  local arch tarball url tmp
+  arch="$(uname -m)"
+  case "$arch" in
+    x86_64)  tarball="uv-x86_64-unknown-linux-gnu.tar.gz" ;;
+    aarch64) tarball="uv-aarch64-unknown-linux-gnu.tar.gz" ;;
+    *) fail "unsupported architecture $arch; install uv yourself (sudo pacman -S uv)" ;;
+  esac
+
+  url="https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/${tarball}"
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' RETURN
+
+  log "downloading uv $UV_VERSION"
+  curl -fsSL --retry 3 --retry-delay 2 -o "$tmp/uv.tar.gz" "$url" \
+    || fail "could not download uv. Check your network, or install it with: sudo pacman -S uv"
+
+  # The checksum comes from the same release, so this catches a corrupted or
+  # truncated download rather than a compromised release. Pinning the version is
+  # what bounds the latter.
+  curl -fsSL --retry 3 -o "$tmp/sums" "${url}.sha256" \
+    || fail "could not download the uv checksum"
+  ( cd "$tmp" && sha256sum -c --ignore-missing sums >/dev/null 2>&1 ) \
+    || fail "the downloaded uv failed its checksum; refusing to run it"
+
+  mkdir -p "$UV_BIN_DIR"
+  tar -xzf "$tmp/uv.tar.gz" -C "$tmp"
+  install -m 0755 "$(find "$tmp" -name uv -type f -print -quit)" "$UV_BIN_DIR/uv" \
+    || fail "could not unpack uv"
+  printf '%s\n' "$UV_BIN_DIR/uv"
+}
+
+seed_config() {
+  # Seeded on every start, not only when the venv is built, so deleting the file
+  # gets it back. Never overwritten: the copy in the config directory is yours.
+  [[ -f $CONFIG_DIR/config.toml ]] && return 0
+  mkdir -p "$CONFIG_DIR"
+  cp "$PLUGIN_DIR/config.example.toml" "$CONFIG_DIR/config.toml"
+  log "wrote $CONFIG_DIR/config.toml"
+}
+
+# The venv is rebuilt when the lockfile, the interpreter, or this script change.
+want_stamp() {
+  printf '%s\n' \
+    "uv=$UV_VERSION" \
+    "python=$("$SYSTEM_PYTHON" -c 'import sys;print(sys.version.split()[0])' 2>/dev/null || echo none)" \
+    "lock=$(sha256sum "$PLUGIN_DIR/uv.lock" 2>/dev/null | cut -d' ' -f1)" \
+    "wrapper=$(sha256sum "${BASH_SOURCE[0]}" | cut -d' ' -f1)"
+}
+
+ensure_venv() {
+  local uv
+  if [[ -x $VENV/bin/python ]] && [[ -f $STAMP ]] \
+     && [[ "$(cat "$STAMP")" == "$(want_stamp)" ]]; then
+    return 0
+  fi
+
+  [[ -x $SYSTEM_PYTHON ]] || fail "$SYSTEM_PYTHON is missing; Omarchy expects a system Python"
+
+  uv="$(find_uv || true)"
+  [[ -n $uv ]] || uv="$(install_uv)"
+
+  log "building the environment in $VENV"
+  mkdir -p "$STATE_DIR"
+  # UV_PROJECT_ENVIRONMENT puts the venv in the state directory instead of the
+  # plugin directory. That is not a preference: `omarchy plugin validate`
+  # rejects symlinks inside a plugin folder, and a venv is made of them.
+  #
+  # --python by absolute path, or uv fetches a CPython of its own.
+  # --frozen installs exactly the locked versions and never resolves.
+  # --no-install-project because this project is never installed: an editable
+  # install writes build artifacts into the plugin directory, and Omarchy
+  # reloads the shell on any write there.
+  UV_PROJECT_ENVIRONMENT="$VENV" "$uv" sync \
+    --frozen --no-dev --no-install-project \
+    --project "$PLUGIN_DIR" --python "$SYSTEM_PYTHON" >&2 \
+    || fail "could not install dependencies. Check your network, then run: omarchy-shell $PLUGIN_ID rebuild"
+
+  want_stamp > "$STAMP"
+  log "environment ready"
+}
+
+case "${1:-}" in
+  --rebuild) rm -rf "$VENV" "$STAMP"; shift ;;
+esac
+
+seed_config
+ensure_venv
+
+# PYTHONPATH rather than an install, for the reason in ensure_venv.
+exec env PYTHONPATH="$PLUGIN_DIR/src" "$VENV/bin/python" -m omarchy_mcp "$@"
