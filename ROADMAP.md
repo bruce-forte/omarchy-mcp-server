@@ -448,7 +448,7 @@ config on change and emit `notifications/tools/list_changed`, so a session
 started before the change does not keep offering a tool that now refuses, or
 hiding one just granted.
 
-### N8 — Resolve binaries on a fixed path
+### N8 — Resolve binaries on a fixed path — done
 
 `Command.argv_prefix` splits a route into `["omarchy", …]` and `execute.run`
 hands the bare name to `execve`, which resolves it against the `PATH` inherited
@@ -464,6 +464,30 @@ would defend against does not exist here. What it buys is that the daemon runs
 the binary it means to regardless of what the session's `PATH` has accumulated,
 and that a missing dependency reports itself clearly instead of surfacing as a
 confusing exit code. Do not add it to the `SECURITY.md` threat model.
+
+Four things the item did not say, found while doing it:
+
+- **It is not one spawn site but six**, in four modules. `execute.run` runs
+  `omarchy`; `desktop.py` runs `hyprctl`, `grim`, `tesseract`, `wl-copy`,
+  `wl-paste` and `magick`; `shell.py` runs `qs`; `registry.py` runs `omarchy`
+  again. Resolving only the first would have left the third-party tools — the
+  ones with a shim directory in front of them — exactly as they were.
+- **The list is derived from `OMARCHY_PATH`**, not hardcoded as written above.
+  The Makefile already trusts that variable, and a dev-linked Omarchy has to get
+  its own binaries rather than the system's.
+- **`Popen(argv, executable=...)`** rather than rewriting `argv[0]`, so the
+  command reported to the agent stays the pasteable `omarchy theme set` that
+  the README and `TOOLS.md` show. Which file ran goes in the log.
+- **The environment is left alone.** Reaching into a child's `PATH` would be a
+  behaviour change to hundreds of scripts, and would break `omarchy launch
+  editor` for anyone whose editor is not in `/usr/bin` — which, on a machine
+  with a session `PATH` worth fixing, is most of them. Omarchy's dispatcher
+  resolves its own helpers relative to its own location anyway, so choosing the
+  right `omarchy` settles every subcommand.
+
+The concrete case, measured on the machine this was written on: the daemon's
+inherited `PATH` was `/usr/share/omarchy/bin`, then **fifty-five** toolchain-manager
+shims, and only then `/usr/bin`.
 
 ### N9 — A one-line USP section in the README
 

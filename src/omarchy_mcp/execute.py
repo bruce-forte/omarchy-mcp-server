@@ -12,6 +12,15 @@ and everything else is bounded.
 
 *Output is capped.* One command's output should not be able to bury the caller's
 context.
+
+*The binary is the one we meant.* ``argv[0]`` is resolved against a fixed list of
+directories rather than the ``PATH`` this process inherited from the session.
+**This is robustness, not a security control**, and it is deliberately absent
+from `SECURITY.md`: no MCP client can influence this daemon's environment, so
+the attack it would defend against does not exist here. What it buys is that a
+session ``PATH`` which has accumulated shims, a homebrew prefix and half a dozen
+toolchain managers cannot change which ``grim`` a screenshot uses -- and that a
+missing dependency says so instead of arriving as a stripped tool error.
 """
 
 from __future__ import annotations
@@ -20,7 +29,10 @@ import os
 import shlex
 import signal
 import subprocess
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
+from pathlib import Path
+
+from .paths import OMARCHY_PATH
 
 #: Commands in these groups open a window or wait for the user. Waiting on them
 #: is always wrong: they finish when a human is done, not when work is done.
@@ -29,10 +41,61 @@ DETACH_GROUPS = frozenset({"launch", "menu", "tui"})
 #: Same, for routes whose group is otherwise unremarkable.
 DETACH_MARKERS = ("switcher", "selector", "select", "region", "screenrecording", "screensaver")
 
+#: Where a bare ``argv[0]`` is looked for, in order.
+#:
+#: Derived from ``OMARCHY_PATH`` rather than hardcoded, so a developer running a
+#: dev-linked Omarchy gets the binaries from their checkout -- the same variable
+#: the Makefile passes to ``qmllint``.
+SEARCH = (
+    OMARCHY_PATH / "bin",
+    Path("/usr/local/bin"),
+    Path("/usr/bin"),
+)
+
 #: How long a terminated child gets to exit before it is killed.
 GRACE_S = 2.0
 
 _TRUNCATION_NOTE = "\n\n... [{dropped} bytes dropped] ...\n\n"
+
+
+class NotInstalled(Exception):
+    """``argv[0]`` names nothing runnable in any searched directory."""
+
+    def __init__(self, name: str, searched=None) -> None:
+        searched = SEARCH if searched is None else searched
+        self.name = name
+        self.searched = tuple(str(d) for d in searched)
+        super().__init__(
+            f"`{name}` is not installed. Looked in " + ", ".join(self.searched) + "."
+        )
+
+    def as_dict(self) -> dict[str, object]:
+        return {"error": str(self), "missing": self.name}
+
+
+def resolve_binary(name: str, searched=None) -> str:
+    """The file a bare command name should run, or raise.
+
+    A name containing a separator is a path already and is used as given, which
+    is what every other PATH lookup does and what keeps an explicitly-chosen
+    binary explicit.
+
+    ``searched`` defaults to `SEARCH` at call time rather than as a default
+    argument: a default is bound once at import, which would make the module
+    global a decoy that could be reassigned with no effect.
+
+    Not cached. Three `os.access` calls cost nothing beside the fork that
+    follows, there is no invalidation question to answer forever, and a
+    dependency installed while the daemon is running works without a restart.
+    """
+    searched = SEARCH if searched is None else searched
+    if os.sep in name:
+        return name
+    for directory in searched:
+        candidate = os.path.join(str(directory), name)
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    raise NotInstalled(name, searched)
 
 
 @dataclass(frozen=True)
@@ -44,9 +107,14 @@ class Result:
     detached: bool
     pid: int | None = None
     truncated: bool = False
+    #: Which file actually ran. For the log, not for the agent: it is the same
+    #: answer on every call and would cost a line of context each time.
+    executable: str = field(default="", compare=False)
 
     def as_dict(self) -> dict[str, object]:
-        return asdict(self)
+        body = asdict(self)
+        body.pop("executable")
+        return body
 
 
 def should_detach(group: str, route: str) -> bool:
@@ -80,6 +148,13 @@ def run(
     if not argv:
         raise ValueError("argv must not be empty")
 
+    # Raises NotInstalled rather than letting execve fail: a FileNotFoundError
+    # out of Popen reaches the agent as a tool error with the cause stripped.
+    exe = resolve_binary(argv[0])
+
+    # The environment is passed through untouched, including PATH. What a
+    # command looks up for itself is its own business -- `omarchy launch editor`
+    # is supposed to find the editor this user installed, wherever that is.
     full_env = {**os.environ, **(env or {})}
 
     if detach:
@@ -87,6 +162,7 @@ def run(
         # survives a daemon restart and never receives our signals.
         proc = subprocess.Popen(
             argv,
+            executable=exe,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -100,10 +176,15 @@ def run(
             timed_out=False,
             detached=True,
             pid=proc.pid,
+            executable=exe,
         )
 
+    # `executable` rather than rewriting argv[0]: the process runs the file we
+    # chose, while the command reported back to the agent stays the copy-
+    # pasteable `omarchy theme set` rather than an absolute path.
     proc = subprocess.Popen(
         argv,
+        executable=exe,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -138,6 +219,7 @@ def run(
         detached=False,
         pid=proc.pid,
         truncated=cut_out or cut_err,
+        executable=exe,
     )
 
 

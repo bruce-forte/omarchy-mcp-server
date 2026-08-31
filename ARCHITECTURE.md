@@ -153,7 +153,7 @@ In dependency order, shallowest first:
 | `consent.py` | The six ways a call can fail to get a yes, and a wait that fails closed. See below |
 | `gate.py` | Where policy, resolution and consent meet and a call runs or does not. Both tool paths come through it |
 | `prompt.py` | The two ways a question reaches a person, and the notification that outlives neither |
-| `execute.py` | `argv` only, never a shell. Timeouts, process-group termination, output caps, detaching |
+| `execute.py` | `argv` only, never a shell. Timeouts, process-group termination, output caps, detaching, and which file a bare command name runs |
 | `token.py` | The bearer token, created `0600` |
 | `auth.py` | Bearer authentication as **pure ASGI** — see below |
 | `resources.py` | The 4 concrete resources and 3 URI templates |
@@ -298,6 +298,41 @@ be handed to a worker thread explicitly: `func_metadata` only threads a tool it
 finds to be *sync*, so an `async` body doing subprocess work would stall every
 other client — including one parked on a question, which is the concurrency the
 single-daemon design exists to provide.
+
+## Which binary actually runs
+
+`argv[0]` is resolved against a fixed list -- `$OMARCHY_PATH/bin`,
+`/usr/local/bin`, `/usr/bin` -- rather than against the `PATH` this process
+inherited from the session.
+
+**This is robustness, not a security control,** and it is deliberately not in
+`SECURITY.md`. No MCP client can influence this daemon's environment, so the
+attack it would defend against does not exist here. What it defends against is
+an ordinary desktop: on the machine this was written on, the daemon's inherited
+`PATH` was `/usr/share/omarchy/bin`, then fifty-five toolchain-manager shims,
+and only then `/usr/bin`. Which `tesseract` an OCR call used was therefore a
+property of what the user had most recently installed, and would change without
+anything in this project changing.
+
+Two details are load-bearing:
+
+- **`Popen(argv, executable=...)`, not a rewritten `argv[0]`.** The process runs
+  the file that was chosen while the command reported back to the agent stays
+  the copy-pasteable `omarchy theme set` that the README and `TOOLS.md` show.
+  Which file ran goes in the log line, where it answers *which one* without
+  costing a line of the agent's context on every call.
+- **The environment is passed through untouched, `PATH` included.** What a
+  command looks up for *itself* is its own business: `omarchy launch editor` is
+  supposed to find the editor this user installed, wherever that is. Omarchy's
+  own dispatcher resolves its `omarchy-*` helpers relative to its own location
+  rather than through `PATH`, so choosing the right `omarchy` already settles
+  every subcommand.
+
+The other half is the error. `execute.run` was the one spawn site that let
+`FileNotFoundError` escape, and the SDK strips the cause, so a renamed `omarchy`
+reached the agent as *"Error executing tool omarchy_run"* and nothing more. It
+now raises `NotInstalled`, naming the binary and the directories searched --
+facts, rather than a guess at which package ships it.
 
 ## Three traps worth knowing about
 

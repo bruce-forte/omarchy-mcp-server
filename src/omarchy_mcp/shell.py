@@ -84,9 +84,18 @@ def parse_targets(listing: str) -> dict[str, Target]:
 
 @lru_cache(maxsize=1)
 def _list_raw() -> str:
+    from .execute import NotInstalled, resolve_binary
+
+    argv = ["qs", "ipc", "-n", "-p", str(OMARCHY_PATH / "shell"), "show"]
+    try:
+        exe = resolve_binary(argv[0])
+    except NotInstalled as exc:
+        raise ShellError(f"{exc} Is Quickshell installed?") from exc
+
     try:
         proc = subprocess.run(
-            ["qs", "ipc", "-n", "-p", str(OMARCHY_PATH / "shell"), "show"],
+            argv,
+            executable=exe,
             capture_output=True,
             text=True,
             timeout=LIST_TIMEOUT_S,
