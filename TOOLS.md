@@ -10,13 +10,20 @@ so discovery and dispatch are separate: **search** to find out what exists,
 **run** to do it.
 
 
-## The 10 tools
+## The 19 tools
 
 | Tool | Behaviour |
 |------|-----------|
+| [`omarchy_audio`](#omarchy_audio) | — |
+| [`omarchy_background`](#omarchy_background) | — |
+| [`omarchy_brightness`](#omarchy_brightness) | — |
 | [`omarchy_clipboard_read`](#omarchy_clipboard_read) | read-only, idempotent |
 | [`omarchy_clipboard_write`](#omarchy_clipboard_write) | destructive, idempotent |
 | [`omarchy_desktop_state`](#omarchy_desktop_state) | read-only, idempotent |
+| [`omarchy_launch`](#omarchy_launch) | open-world |
+| [`omarchy_media`](#omarchy_media) | — |
+| [`omarchy_notify`](#omarchy_notify) | — |
+| [`omarchy_osd`](#omarchy_osd) | — |
 | [`omarchy_run`](#omarchy_run) | destructive, open-world |
 | [`omarchy_screen_text`](#omarchy_screen_text) | read-only |
 | [`omarchy_screenshot`](#omarchy_screenshot) | read-only |
@@ -24,6 +31,36 @@ so discovery and dispatch are separate: **search** to find out what exists,
 | [`omarchy_shell_call`](#omarchy_shell_call) | open-world |
 | [`omarchy_shell_targets`](#omarchy_shell_targets) | read-only, idempotent |
 | [`omarchy_system_status`](#omarchy_system_status) | read-only, idempotent |
+| [`omarchy_theme`](#omarchy_theme) | idempotent |
+| [`omarchy_toggle`](#omarchy_toggle) | — |
+
+### `omarchy_audio`
+
+Adjust output volume, toggle output or microphone mute, or switch between audio outputs. `level` accepts 'raise', 'lower', or a signed step like '+10' or '-5'. Volume changes show the Omarchy OSD, so the user sees what happened.
+
+| Parameter | Type | |
+|-----------|------|--|
+| `action` | `string` | optional, default `"volume"` |
+| `level` | `string` | optional, default `"raise"` |
+
+### `omarchy_background`
+
+Read the current desktop background, cycle to the next one in the current theme, or set a specific image by absolute path.
+
+| Parameter | Type | |
+|-----------|------|--|
+| `action` | `string` | optional, default `"current"` |
+| `path` | `string` | optional, default `""` |
+
+### `omarchy_brightness`
+
+Show or change display brightness, or step the keyboard backlight. For the display, `value` is a percentage like '50%', a relative step like '+10%' or '10%-', or 'on'/'off'. Omit it to read the current level.
+
+| Parameter | Type | |
+|-----------|------|--|
+| `target` | `string` | optional, default `"display"` |
+| `value` | `string` | optional, default `""` |
+| `monitor` | `string` | optional, default `""` |
 
 ### `omarchy_clipboard_read`
 
@@ -44,6 +81,46 @@ Replace the clipboard contents with the given text. This overwrites whatever the
 ### `omarchy_desktop_state`
 
 Report the desktop layout from Hyprland: monitors, workspaces, every open window with its class, title, position, and workspace, and which window is focused. This is not an Omarchy command and is not reachable through omarchy_run. Use it before acting on 'the current window' or 'the other monitor'.
+
+### `omarchy_launch`
+
+Open a URL in the browser, a path in the editor, a terminal, or a URL as a web app. These start a window and return immediately rather than waiting for it to be closed.
+
+| Parameter | Type | |
+|-----------|------|--|
+| `what` | `string` | **required** |
+| `target` | `string` | optional, default `""` |
+
+### `omarchy_media`
+
+Play, pause, skip, or report what is playing. This talks to the running shell rather than to a command, so it follows whichever player Omarchy currently considers active. `status` reports the track without changing anything.
+
+| Parameter | Type | |
+|-----------|------|--|
+| `action` | `string` | optional, default `"status"` |
+
+### `omarchy_notify`
+
+Show a desktop notification. Use this to reach the user when they are not looking at the terminal -- a long job finishing, something that needs a decision. `urgency` critical stays on screen until dismissed, so keep it for things that genuinely cannot wait.
+
+| Parameter | Type | |
+|-----------|------|--|
+| `headline` | `string` | **required** |
+| `description` | `string` | optional, default `""` |
+| `urgency` | `string` | optional, default `"normal"` |
+| `glyph` | `string` | optional, default `""` |
+| `timeout_ms` | `integer` | optional, default `0` |
+
+### `omarchy_osd`
+
+Flash a message, icon, or progress bar over the screen and let it fade. Unlike a notification it leaves nothing in the notification history, so it suits progress and acknowledgements that are not worth keeping.
+
+| Parameter | Type | |
+|-----------|------|--|
+| `message` | `string` | optional, default `""` |
+| `icon` | `string` | optional, default `""` |
+| `progress` | `integer` | optional, default `-1` |
+| `duration_ms` | `integer` | optional, default `0` |
 
 ### `omarchy_run`
 
@@ -111,6 +188,24 @@ List the IPC targets the running omarchy-shell exposes, with the exact signature
 ### `omarchy_system_status`
 
 Report CPU and memory, battery, network, current theme and background, idle state, font, and focused monitor, in a single call. Every field is also available individually through omarchy_run; this exists so that answering a question about the machine does not take eight round trips. A field is null when the machine has no such thing, such as battery on a desktop.
+
+### `omarchy_theme`
+
+Read the current Omarchy theme, list the installed ones, or apply one. Applying a theme restyles the whole desktop -- shell, terminals, and GTK apps -- so confirm the name against `list` rather than guessing it.
+
+| Parameter | Type | |
+|-----------|------|--|
+| `action` | `string` | optional, default `"current"` |
+| `name` | `string` | optional, default `""` |
+
+### `omarchy_toggle`
+
+Turn a desktop feature on, off, or over: bar, do_not_disturb, idle, nightlight, screensaver, touchpad, touchscreen. `state` is 'toggle', 'on', or 'off'. Other Omarchy flags are reachable through omarchy_run with `omarchy toggle <flag>`.
+
+| Parameter | Type | |
+|-----------|------|--|
+| `feature` | `string` | **required** |
+| `state` | `string` | optional, default `"toggle"` |
 
 ## Policy
 

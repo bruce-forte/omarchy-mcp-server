@@ -102,13 +102,23 @@ EXPECTED_TOOLS = {
     "omarchy_run",
     "omarchy_shell_targets",
     "omarchy_shell_call",
-    # Curated: each does something the generic tools structurally cannot.
+    # Perception: each returns something the generic tools structurally cannot.
     "omarchy_screenshot",
     "omarchy_desktop_state",
     "omarchy_screen_text",
     "omarchy_clipboard_read",
     "omarchy_clipboard_write",
     "omarchy_system_status",
+    # Frequency: a better-shaped door onto the same room.
+    "omarchy_notify",
+    "omarchy_osd",
+    "omarchy_theme",
+    "omarchy_background",
+    "omarchy_audio",
+    "omarchy_brightness",
+    "omarchy_media",
+    "omarchy_toggle",
+    "omarchy_launch",
 }
 
 
