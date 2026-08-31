@@ -16,7 +16,7 @@ import json
 
 from mcp.types import ToolAnnotations
 
-from .. import execute, registry, shell
+from .. import execute, registry, resolve, shell
 from ..config import Config
 from ..policy import decide
 from ..stats import Stats
@@ -95,10 +95,18 @@ def register(mcp, config: Config, log, stats: Stats | None = None) -> None:
         if not verdict.allowed:
             return json.dumps({"error": verdict.reason, "tier": verdict.tier.value}, indent=2)
 
+        # The same gate the curated tools pass through. Reaching a command by
+        # its route must not skip a check that reaching it by a tool applies.
+        try:
+            call = resolve.resolve_call(cmd.route, args)
+        except resolve.Unresolvable as exc:
+            log.info("run route=%r unresolved=%s", cmd.route, exc.kind)
+            return json.dumps(exc.as_dict(), indent=2)
+
         if detach is None:
             detach = execute.should_detach(cmd.group, cmd.route)
 
-        argv = [*cmd.argv_prefix, *args]
+        argv = [*cmd.argv_prefix, *call.args]
         result = execute.run(
             argv,
             timeout_ms=timeout_ms or config.timeout_ms,
@@ -106,13 +114,17 @@ def register(mcp, config: Config, log, stats: Stats | None = None) -> None:
             detach=detach,
         )
         log.info(
-            "run route=%r exit=%s detached=%s timed_out=%s",
+            "run route=%r target=%r exit=%s detached=%s timed_out=%s",
             cmd.route,
+            call.target.label if call.target else None,
             result.exit_code,
             result.detached,
             result.timed_out,
         )
-        return json.dumps({"command": execute.quote(argv), **result.as_dict()}, indent=2)
+        payload: dict[str, object] = {"command": execute.quote(argv), **result.as_dict()}
+        if call.target is not None:
+            payload["target"] = call.target.label
+        return json.dumps(payload, indent=2)
 
     @mcp.tool(
         name="omarchy_shell_targets",
