@@ -183,7 +183,7 @@ not to be *alongside* the prompt but to **be** the prompt for HTTP clients —
 F23 closed the back-channel elicitation needed, and F25 found that a
 notification's `--exec` can carry the answer back.
 
-### N4 — Ask at call time
+### N4 — Ask at call time — done
 
 The substantive one. Today `guarded` means *refused unless pre-allowed in
 `config.toml`*, which forces a per-call risk decision to be made once, in
@@ -352,6 +352,22 @@ command reachable that was not reachable before. The rot that N10 describes —
 nobody edits the arrays, so `guarded` means *never* — is answered instead by the
 guarded refusal naming both ways out, `policy.allow` and `policy.ask`, where an
 agent will read it and can tell the user.
+
+#### Verified on a live desktop
+
+Not only against fakes. With `ask = true`, `omarchy channel current` — guarded,
+harmless, and so a real test rather than a brave one — was called from Claude
+Code three times:
+
+| Call | What happened |
+|------|---------------|
+| clicked | `consent asked (#1)` → 37s → `consent accepted` → ran, exit 0 |
+| ignored | `consent asked (#2)` → 60s → `consent timed_out` → refused, and the agent was told the silence was ambiguous |
+| `omarchy apply hardware` (sudo) | refused with no `consent asked` line at all |
+
+The runtime directory was `0700` and empty afterwards on both ask paths: a token
+is spent when it is read and cleared when it is not. Turning `ask` back off
+restored `runnable: false` and a refusal naming both ways out.
 
 #### Tests
 
