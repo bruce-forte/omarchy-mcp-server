@@ -49,7 +49,7 @@
 [tools]
 # Curated tools to switch off by name. Anything disabled here can still be
 # reached through omarchy_run, subject to [policy].
-# disabled = ["screen_text"]
+# disabled = ["omarchy_screenshot", "omarchy_clipboard_write"]
 
 [log]
 # debug logs the arguments of every tool call, which is useful when an agent is

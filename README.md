@@ -7,9 +7,9 @@ Runs as an **Omarchy plugin**, so there is no systemd unit to enable, no second
 install step, and no separate package. The plugin supervises a small daemon; the
 daemon starts with your session and stops with it.
 
-> **Status: Phase 1.** The generic tools work end to end — an agent can already
-> reach every Omarchy command and every shell IPC target. Curated tools,
-> resources, and the bar widget are in [`ROADMAP.md`](ROADMAP.md).
+> **Status: Phase 3.** Nineteen tools, a supervised daemon, and a bar widget
+> that says whether it is serving. MCP resources are the remaining phase; see
+> [`ROADMAP.md`](ROADMAP.md).
 
 ## Documentation
 
@@ -50,7 +50,7 @@ Omarchy has two control surfaces, and this exposes both:
   Quickshell IPC. `qs ipc show` lists them with full method signatures, and that
   listing is the only documentation these interfaces have.
 
-Four tools cover both. See [`TOOLS.md`](TOOLS.md).
+**Four generic tools** cover both surfaces completely:
 
 | Tool | Does |
 |------|------|
@@ -61,6 +61,33 @@ Four tools cover both. See [`TOOLS.md`](TOOLS.md).
 
 One tool per command would put tens of thousands of tokens of schema into a
 client's context before it did anything, so discovery and dispatch are separate.
+
+**Fifteen curated tools** sit on top, each earning its place one of two ways.
+
+Some return what the generic runner structurally cannot — an image, or data that
+is not Omarchy's at all:
+
+| Tool | Does |
+|------|------|
+| `omarchy_screenshot` | Returns the screen as an image, so an agent can see it |
+| `omarchy_desktop_state` | Hyprland's monitors, workspaces, windows, and focus |
+| `omarchy_screen_text` | OCR, for reading what something says |
+| `omarchy_clipboard_read` / `_write` | The clipboard, which is not an Omarchy command |
+| `omarchy_system_status` | Eight probes in one call instead of eight round trips |
+
+The rest are simply asked for constantly, and a search round trip before every
+volume change is a bad trade:
+
+`omarchy_notify`, `omarchy_osd`, `omarchy_theme`, `omarchy_background`,
+`omarchy_audio`, `omarchy_brightness`, `omarchy_media`, `omarchy_toggle`,
+`omarchy_launch`.
+
+Curated tools go through the same policy check and executor as `omarchy_run` — a
+better-shaped door onto the same room, never a way around the lock. Any of them
+can be switched off in the config, and everything they do stays reachable
+through `omarchy_run`.
+
+Full reference, generated from the server's own schemas: [`TOOLS.md`](TOOLS.md).
 
 ## Install
 

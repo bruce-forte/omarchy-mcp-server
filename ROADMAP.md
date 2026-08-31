@@ -41,7 +41,7 @@ reasons matter more than the choices when something needs revisiting.
       after is ergonomics.
 - [x] **2 — Visibility.** Done. Bar widget, health probe, state file, 7 IPC
       functions, throttled notifications.
-- [ ] **3 — Curated tools.** Tier 1 (5) first: `screenshot` and `desktop_state`
+- [x] **3 — Curated tools.** Done. Tier 1 (5) first: `screenshot` and `desktop_state`
       unlock what `run` structurally cannot do. Then Tier 2 (9).
 - [ ] **4 — Resources.** The 7 from decision 10, shaped by what Phase 0 found.
 - [ ] **5 — Hardening.** Generated `TOOLS.md`, CI, `SECURITY.md`.
@@ -93,3 +93,13 @@ Found by running the plugin in a live shell. None of these are visible to
 | F11 | `StdioCollector` needs `waitForEnd: true`, or its `text` is empty when read. Deciding in `onStreamFinished` while `onExited` also writes the same property is a race | The health probe reported `serving: false` forever. Both signals fire; the verdict belongs in `onExited`, which is the pattern `PluginRegistry.qml` uses |
 | F12 | A purely interval-driven probe leaves the widget claiming the server is down for a full interval after every start | The probe now fires when the daemon reports `listening`, and polls at 2s while it looks down against 10s once it answers |
 | F13 | Publishing state from a property-change handler writes a half-filled snapshot: assigning `calls` fired `writeState()` before `lastTool` had been assigned | State is written once, explicitly, after every field is set |
+
+## Phase 3 findings
+
+| # | Finding | Consequence |
+|---|---------|-------------|
+| F14 | `wl-copy` forks a child that stays alive to serve the selection, because Wayland has no clipboard daemon. That child inherits captured pipes, which then never close, so `subprocess.run` waits out its whole timeout and reports failure for a copy that already worked | Clipboard writes send output to `/dev/null` and pass text on stdin. Pinned by a round-trip test and a timing test |
+| F15 | `grim -g` takes **logical** coordinates but writes **physical** pixels. On a 1.25-scaled monitor a 100x50 region returns 125x62 | Not a bug, but it makes `max_width` the meaningful cap and it invalidates the obvious test assertion |
+| F16 | The `omarchy toggle` routes disagree about arguments: `bar` takes on/off, `idle` takes stay-awake/allow-idle, `screensaver` and `notification silencing` take nothing at all | Accepted state words are read out of the registry rather than hardcoded, so the table cannot drift. Forcing a route that only toggles now explains itself |
+| F17 | `MCPServer.call_tool` returns a `CallToolResult`, not a content list | Only affects tests that drive the server directly |
+| F18 | `omarchy capture screenshot` freezes the screen, copies to the clipboard, sends a notification, and writes a file into the user's Pictures directory | All four are right for a person pressing a key and wrong for an agent looking at the screen, which would otherwise litter the photo library. Screenshots go through `grim` directly |
