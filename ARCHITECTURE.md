@@ -272,8 +272,21 @@ and no configuration can promote it, `argv` never reaches a shell, a foreign
 `Origin` gets 403 and a foreign `Host` gets 421. Changes there need tests in the
 same commit.
 
-The suite reads `tests/fixtures/commands.json`, a committed snapshot of
-`omarchy commands --all --json`, rather than the installed Omarchy. An autouse
-fixture enforces it. That is what lets the tests run in CI at all, and it stops
-them quietly changing meaning the next time `omarchy update` renames a route
-(finding F21). Refresh the snapshot deliberately, in its own commit.
+The suite reads committed snapshots rather than the installed system, and
+autouse fixtures enforce it. That is what lets the tests run in CI at all, and
+it stops them quietly changing meaning the next time `omarchy update` renames a
+route (finding F21).
+
+| Snapshot | Of | Pinned for |
+|----------|----|-----------|
+| `commands.json` | `omarchy commands --all --json` | `registry.all_commands` |
+| `themes.txt` | `omarchy theme list` | `resolve._themes` |
+| `monitors.json` | `hyprctl -j monitors`, trimmed | `resolve._monitors` |
+| `ipc-show.txt` | `qs ipc show` | the shell parser tests |
+
+Refresh a snapshot deliberately, in its own commit. `monitors.json` is the one
+that is edited rather than captured: it carries two monitors so that a wrong
+name can be shown being refused rather than taken as the only candidate, and
+the serial number is dropped. A `needs_omarchy` test checks that `themes.txt`
+still shares a theme with the machine it runs on, so a snapshot that has rotted
+away from any real Omarchy says so.

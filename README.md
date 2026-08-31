@@ -214,6 +214,25 @@ rot when Omarchy adds commands:
 `omarchy_search_commands` reports the tier of every result, so an agent can see
 what it may do before trying.
 
+Whatever the tier, an argument that names something is checked against your
+machine before anything is spawned. A theme name is matched the way Omarchy
+matches it — case and spaces do not count — and a near miss is refused with the
+near misses named rather than corrected into a different theme:
+
+```jsonc
+// omarchy_theme(action="set", name="Tokoy Night")
+{
+  "error": "no theme named 'Tokoy Night' is installed.",
+  "unresolved": "theme",
+  "reason": "not_found",
+  "did_you_mean": ["Tokyo Night"]
+}
+```
+
+The same applies to monitor names, wallpaper paths, and URLs. `reason` tells an
+agent whether the name was wrong (`not_found`, worth retrying with another) or
+whether nothing could be checked (`source_unavailable`, retrying will not help).
+
 ## Development
 
 Work on a checkout, then point Omarchy at it:
