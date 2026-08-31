@@ -76,7 +76,6 @@ Item {
 
   onPhaseChanged: writeState()
   onServingChanged: writeState()
-  onCallsChanged: writeState()
 
   Component.onCompleted: start()
 
@@ -181,6 +180,10 @@ Item {
       } catch (e) {
         root.serving = false
       }
+      // Written once, after every field is set. Publishing from a property
+      // change handler instead means the first field assigned writes a snapshot
+      // that does not yet contain the others.
+      root.writeState()
     }
   }
 
