@@ -17,6 +17,13 @@ DEFAULT_MAX_OUTPUT_B = 256 * 1024
 DEFAULT_TIMEOUT_MS = 30_000
 DEFAULT_PORT = 8765
 
+#: How long a call may wait for the user to answer an approval prompt. Not yet
+#: reachable: N4 owns the asking. Bounded rather than free so that neither
+#: extreme can exist -- a second is not long enough for a person to read the
+#: question, and ten minutes is a request parked on a desk nobody is at.
+DEFAULT_ASK_TIMEOUT_S = 60
+ASK_TIMEOUT_BOUNDS = (5, 600)
+
 
 @dataclass(frozen=True)
 class Config:
@@ -29,6 +36,10 @@ class Config:
     allow_groups: tuple[str, ...] = ()
     #: Safe routes demoted to guarded.
     deny: tuple[str, ...] = ()
+
+    #: How long an approval prompt waits before the call is refused. No answer
+    #: means denied: see `consent.py`.
+    ask_timeout_s: int = DEFAULT_ASK_TIMEOUT_S
 
     #: Curated tools switched off. Still reachable through ``omarchy_run``.
     disabled_tools: tuple[str, ...] = ()
@@ -104,6 +115,13 @@ def load(path: Path | None = None) -> Config:
         allow=_strs(policy.get("allow"), "policy.allow", problems),
         allow_groups=_strs(policy.get("allow_groups"), "policy.allow_groups", problems),
         deny=_strs(policy.get("deny"), "policy.deny", problems),
+        ask_timeout_s=_int(
+            policy.get("ask_timeout_s"),
+            "policy.ask_timeout_s",
+            DEFAULT_ASK_TIMEOUT_S,
+            problems,
+            *ASK_TIMEOUT_BOUNDS,
+        ),
         disabled_tools=_strs(tools.get("disabled"), "tools.disabled", problems),
         log_level=level,
     )
