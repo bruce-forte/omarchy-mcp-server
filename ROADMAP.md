@@ -45,7 +45,7 @@ reasons matter more than the choices when something needs revisiting.
       unlock what `run` structurally cannot do. Then Tier 2 (9).
 - [x] **4 — Resources.** Done. The 7 from decision 10, shaped by what Phase 0 found.
 - [x] **5 — Hardening.** Done. Generated `TOOLS.md`, CI, `SECURITY.md`.
-- [ ] **6 — Consent and visibility.** In progress: N1 and N2 done. The user can
+- [ ] **6 — Consent and visibility.** In progress: N1–N3 done. The user can
       see what an agent did, answer for the calls that warrant it, and stop the
       thing. See [Next steps](#next-steps).
 
@@ -135,15 +135,47 @@ Not built: a window resolver. The roadmap's own *"close **Firefox — GitHub**"*
 example has no caller — no tool takes a window identifier, and the perception
 tools act on the focused one. It lands when something needs it.
 
-### N3 — No answer means denied
+### N3 — No answer means denied — done
 
 Prerequisite for N4. Any consent mechanism needs a timeout and the timeout has to
 fail closed. The daemon starts with the session and outlives whoever walked away
 from the desk, so a prompt that grants on expiry grants to an empty room.
 
-Default 60s, configurable via `policy.ask_timeout_s`. Denial on timeout is
-reported to the agent as a distinct reason from an explicit refusal, so it can
-tell "the user said no" from "nobody was there".
+`consent.py` is the rule without the mechanism: N4 owns the elicitation call,
+this owns everything around it. `ask()` takes any awaitable as the asker, so the
+rule is tested against a fake before a client is involved.
+
+Default 60s, `policy.ask_timeout_s`, bounded 5–600. The key is parsed but left
+out of `config.example.toml` and the README until N4 makes it do something — a
+documented key that changes nothing reads as a bug.
+
+**Six outcomes, not four.** The two N4 already named as edge cases are outcomes
+in their own right, because each implies a different next move:
+
+| Outcome | Means |
+|---------|-------|
+| `accepted` | Proceeds, carrying whatever the user typed |
+| `declined` | The user refused this specific call |
+| `cancelled` | The user dismissed the prompt without deciding |
+| `timed_out` | Nobody answered; assume nobody is at the desk |
+| `unsupported` | The client cannot ask anyone — refuse, naming `config.toml` |
+| `unreachable` | The client disconnected mid-question |
+
+Three rules N4 must not undo:
+
+- **The deadline is the decision.** At the deadline the awaitable is cancelled
+  and its result is never read. A click landing a second late has nowhere to go:
+  the agent has already been told the call was refused and may have acted since.
+- **A client that cannot ask never counts as one that said yes.**
+  `supports_asking` checks `elicitation.form` specifically — url mode answers in
+  a browser tab, and this project exists because the person is at a desktop.
+- **Only the word `accept` grants.** Matched on the reply's `action`, not on its
+  class, so a fourth action added upstream fails closed instead of falling
+  through.
+
+Still N4's: the `omarchy notification send -u critical` alongside the prompt and
+its dismissal on every exit path, including the timeout and disconnect paths
+above.
 
 ### N4 — Ask at call time, via MCP elicitation
 
