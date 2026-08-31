@@ -248,6 +248,32 @@ def state() -> dict[str, object]:
     clients = hyprctl("clients")
     active = hyprctl("activewindow")
 
+    windows = [
+        {
+            "address": c.get("address"),
+            "class": c.get("class"),
+            "title": c.get("title"),
+            "workspace": (c.get("workspace") or {}).get("name"),
+            "monitor": c.get("monitor"),
+            "at": c.get("at"),
+            "size": c.get("size"),
+            "floating": bool(c.get("floating")),
+            "fullscreen": bool(c.get("fullscreen")),
+            "pid": c.get("pid"),
+        }
+        for c in (clients if isinstance(clients, list) else [])
+        if c.get("mapped", True)
+    ]
+
+    # Counted from the windows actually listed above, not taken from
+    # hyprctl's own per-workspace figure. The two disagree -- Hyprland counts
+    # a group as one -- and reporting both invites a reader to treat the
+    # smaller one as a reason to doubt the list.
+    per_workspace: dict[str, int] = {}
+    for window in windows:
+        name = window["workspace"]
+        per_workspace[name] = per_workspace.get(name, 0) + 1
+
     return {
         "monitors": [
             {
@@ -267,28 +293,13 @@ def state() -> dict[str, object]:
                     "id": w.get("id"),
                     "name": w.get("name"),
                     "monitor": w.get("monitor"),
-                    "windows": w.get("windows"),
+                    "windows": per_workspace.get(w.get("name"), 0),
                 }
                 for w in (workspaces if isinstance(workspaces, list) else [])
             ),
             key=lambda w: (w["id"] is None, w["id"]),
         ),
-        "windows": [
-            {
-                "address": c.get("address"),
-                "class": c.get("class"),
-                "title": c.get("title"),
-                "workspace": (c.get("workspace") or {}).get("name"),
-                "monitor": c.get("monitor"),
-                "at": c.get("at"),
-                "size": c.get("size"),
-                "floating": bool(c.get("floating")),
-                "fullscreen": bool(c.get("fullscreen")),
-                "pid": c.get("pid"),
-            }
-            for c in (clients if isinstance(clients, list) else [])
-            if c.get("mapped", True)
-        ],
+        "windows": windows,
         "focused_window": (
             {
                 "address": active.get("address"),

@@ -220,3 +220,42 @@ class TestClipboardRoundTrip:
         started = time.monotonic()
         desktop.clipboard_write("timing check")
         assert time.monotonic() - started < 2.0
+
+
+class TestWorkspaceCounts:
+    def test_counts_come_from_the_listed_windows(self, monkeypatch):
+        """Hyprland's own per-workspace count disagrees with its client list --
+        it counts a group as one window. Reporting both numbers invites a reader
+        to treat the smaller one as a reason to doubt the list, so the count is
+        derived from the windows actually returned."""
+        replies = {
+            ("monitors",): [],
+            ("workspaces",): [{"id": 2, "name": "2", "monitor": "DP-1", "windows": 1}],
+            ("clients",): [
+                {"address": f"0x{i}", "class": "c", "title": "t", "mapped": True,
+                 "workspace": {"name": "2"}, "at": [0, 0], "size": [1, 1]}
+                for i in range(4)
+            ],
+            ("activewindow",): {},
+        }
+        monkeypatch.setattr(desktop, "hyprctl", lambda *a: replies[a])
+
+        state = desktop.state()
+
+        assert state["workspaces"][0]["windows"] == 4
+        assert len(state["windows"]) == 4
+
+    def test_unmapped_windows_are_counted_nowhere(self, monkeypatch):
+        replies = {
+            ("monitors",): [],
+            ("workspaces",): [{"id": 1, "name": "1", "monitor": "DP-1", "windows": 9}],
+            ("clients",): [
+                {"address": "0x1", "class": "c", "title": "t", "mapped": True,
+                 "workspace": {"name": "1"}},
+                {"address": "0x2", "class": "c", "title": "t", "mapped": False,
+                 "workspace": {"name": "1"}},
+            ],
+            ("activewindow",): {},
+        }
+        monkeypatch.setattr(desktop, "hyprctl", lambda *a: replies[a])
+        assert desktop.state()["workspaces"][0]["windows"] == 1
