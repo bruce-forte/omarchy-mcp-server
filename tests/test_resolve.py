@@ -193,14 +193,15 @@ class TestTheGate:
 
         return fake_execute
 
-    def test_a_curated_tool_refuses_before_spawning_anything(self, monkeypatch):
+    @pytest.mark.anyio
+    async def test_a_curated_tool_refuses_before_spawning_anything(self, monkeypatch):
         spawned: list[list[str]] = []
         from omarchy_mcp import execute
 
         monkeypatch.setattr(execute, "run", self._run(spawned))
 
         payload = json.loads(
-            run_route(
+            await run_route(
                 "omarchy theme set",
                 ["Tokoy Night"],
                 config=Config(),
@@ -214,14 +215,15 @@ class TestTheGate:
         assert payload["did_you_mean"] == ["Tokyo Night"]
         assert spawned == [], "nothing may be executed for an unresolvable target"
 
-    def test_a_resolved_call_reports_what_it_acted_on(self, monkeypatch):
+    @pytest.mark.anyio
+    async def test_a_resolved_call_reports_what_it_acted_on(self, monkeypatch):
         spawned: list[list[str]] = []
         from omarchy_mcp import execute
 
         monkeypatch.setattr(execute, "run", self._run(spawned))
 
         payload = json.loads(
-            run_route(
+            await run_route(
                 "omarchy theme set",
                 ["tokyo night"],
                 config=Config(),

@@ -7,7 +7,10 @@ room, never a way around the lock.
 
 from __future__ import annotations
 
+import functools
 import json
+
+import anyio.to_thread
 
 from .. import execute, registry, resolve
 from ..config import Config
@@ -26,7 +29,35 @@ UNTRUSTED = (
 )
 
 
-def run_route(
+async def offload(fn, *args, **kwargs):
+    """Run a blocking call on a worker thread.
+
+    Every tool is `async` now, so nothing gets the SDK's free worker thread any
+    more: `func_metadata` only threads a tool it finds to be *sync*. An OCR pass
+    is a thirty-second subprocess, and running it on the event loop would stall
+    every other client for its whole duration -- including one parked on an
+    approval prompt, which is the concurrency decision 1 rests on.
+    """
+    return await anyio.to_thread.run_sync(functools.partial(fn, *args, **kwargs))
+
+
+def threaded(fn):
+    """Register a sync tool body as an async tool that runs in one thread hop.
+
+    For tools with nothing to await: the body stays exactly as it was, sync and
+    readable, and this restores the behaviour the SDK gave it for free. Applied
+    *under* `@mcp.tool`, which reads the wrapped function's signature through
+    `functools.wraps` and so still builds the schema from the real parameters.
+    """
+
+    @functools.wraps(fn)
+    async def wrapper(*args, **kwargs):
+        return await offload(fn, *args, **kwargs)
+
+    return wrapper
+
+
+async def run_route(
     route: str,
     args: list[str],
     *,
@@ -55,7 +86,7 @@ def run_route(
         return json.dumps({"error": verdict.reason, "tier": verdict.tier.value}, indent=2)
 
     try:
-        call = resolve.resolve_call(cmd.route, args)
+        call = await offload(resolve.resolve_call, cmd.route, args)
     except resolve.Unresolvable as exc:
         stats.record(tool, route=route, ok=False)
         log.info("%s route=%r unresolved=%s", tool, route, exc.kind)
@@ -65,7 +96,8 @@ def run_route(
         detach = execute.should_detach(cmd.group, cmd.route)
 
     argv = [*cmd.argv_prefix, *call.args]
-    result = execute.run(
+    result = await offload(
+        execute.run,
         argv,
         timeout_ms=timeout_ms or config.timeout_ms,
         max_output_b=config.max_output_b,

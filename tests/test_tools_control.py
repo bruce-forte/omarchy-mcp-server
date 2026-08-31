@@ -74,7 +74,7 @@ class TestToolBehaviour:
 
         ran = []
 
-        def fake_run(route, args, **kwargs):
+        async def fake_run(route, args, **kwargs):
             ran.append((route, args))
             return json.dumps({"command": route, "args": args})
 
