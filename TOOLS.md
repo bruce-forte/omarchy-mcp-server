@@ -10,14 +10,40 @@ so discovery and dispatch are separate: **search** to find out what exists,
 **run** to do it.
 
 
-## The 4 tools
+## The 10 tools
 
 | Tool | Behaviour |
 |------|-----------|
+| [`omarchy_clipboard_read`](#omarchy_clipboard_read) | read-only, idempotent |
+| [`omarchy_clipboard_write`](#omarchy_clipboard_write) | destructive, idempotent |
+| [`omarchy_desktop_state`](#omarchy_desktop_state) | read-only, idempotent |
 | [`omarchy_run`](#omarchy_run) | destructive, open-world |
+| [`omarchy_screen_text`](#omarchy_screen_text) | read-only |
+| [`omarchy_screenshot`](#omarchy_screenshot) | read-only |
 | [`omarchy_search_commands`](#omarchy_search_commands) | read-only, idempotent |
 | [`omarchy_shell_call`](#omarchy_shell_call) | open-world |
 | [`omarchy_shell_targets`](#omarchy_shell_targets) | read-only, idempotent |
+| [`omarchy_system_status`](#omarchy_system_status) | read-only, idempotent |
+
+### `omarchy_clipboard_read`
+
+Return the current clipboard contents as text. Reading the clipboard is not an Omarchy command, so this is not reachable through omarchy_run. An empty clipboard returns an empty string rather than an error.
+
+| Parameter | Type | |
+|-----------|------|--|
+| `mime` | `string` | optional, default `""` |
+
+### `omarchy_clipboard_write`
+
+Replace the clipboard contents with the given text. This overwrites whatever the user had copied, which they will not be expecting, so say what you are putting there.
+
+| Parameter | Type | |
+|-----------|------|--|
+| `text` | `string` | **required** |
+
+### `omarchy_desktop_state`
+
+Report the desktop layout from Hyprland: monitors, workspaces, every open window with its class, title, position, and workspace, and which window is focused. This is not an Omarchy command and is not reachable through omarchy_run. Use it before acting on 'the current window' or 'the other monitor'.
 
 ### `omarchy_run`
 
@@ -29,6 +55,28 @@ Run a command from Omarchy's registry. `route` must be a full route as returned 
 | `args` | `array \| null` | optional |
 | `timeout_ms` | `integer \| null` | optional |
 | `detach` | `boolean \| null` | optional |
+
+### `omarchy_screen_text`
+
+Extract text from the screen with OCR. Cheaper than a screenshot when you only need what something says, and it works on text inside images and terminals. `target` is one of: screen (the focused monitor), window (the focused window), monitor, or region.
+
+| Parameter | Type | |
+|-----------|------|--|
+| `target` | `string` | optional, default `"screen"` |
+| `monitor` | `string` | optional, default `""` |
+| `region` | `string` | optional, default `""` |
+| `lang` | `string` | optional, default `""` |
+
+### `omarchy_screenshot`
+
+Capture the screen and return it as an image, so you can see what is actually there. `target` is one of: screen (the focused monitor), window (the focused window), monitor, or region. For `monitor`, pass a monitor name from omarchy_desktop_state. For `region`, pass geometry like '0,0 800x600'. Images are scaled down before being returned; nothing is saved to disk and the clipboard is not touched.
+
+| Parameter | Type | |
+|-----------|------|--|
+| `target` | `string` | optional, default `"screen"` |
+| `monitor` | `string` | optional, default `""` |
+| `region` | `string` | optional, default `""` |
+| `max_width` | `integer` | optional, default `1568` |
 
 ### `omarchy_search_commands`
 
@@ -59,6 +107,10 @@ List the IPC targets the running omarchy-shell exposes, with the exact signature
 |-----------|------|--|
 | `target` | `string` | optional, default `""` |
 | `refresh` | `boolean` | optional, default `false` |
+
+### `omarchy_system_status`
+
+Report CPU and memory, battery, network, current theme and background, idle state, font, and focused monitor, in a single call. Every field is also available individually through omarchy_run; this exists so that answering a question about the machine does not take eight round trips. A field is null when the machine has no such thing, such as battery on a desktop.
 
 ## Policy
 

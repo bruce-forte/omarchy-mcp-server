@@ -10,9 +10,19 @@
 PLUGIN_ID := io.github.bruce-forte.mcp-server
 export UV_PROJECT_ENVIRONMENT := $(if $(XDG_STATE_HOME),$(XDG_STATE_HOME),$(HOME)/.local/state)/$(PLUGIN_ID)/dev-venv
 
-.PHONY: check test lint validate tools sync clean run
+.PHONY: check test lint validate tools sync clean run guard py
 
-check: test lint validate
+check: guard test lint validate
+
+# A bare `uv run` or `uv sync` outside these targets creates ./.venv, and
+# `omarchy plugin validate` then fails on the symlinks inside it with a message
+# that does not explain itself. Fail early and say what to do instead.
+guard:
+	@test ! -e .venv || { \
+	  echo "error: ./.venv exists. omarchy plugin validate rejects symlinks in a"; \
+	  echo "       plugin folder. Remove it with 'make clean' and use make targets,"; \
+	  echo "       or 'make py CMD=...', which put the venv in the state directory."; \
+	  exit 1; }
 
 sync:
 	uv sync --frozen
@@ -31,6 +41,11 @@ validate:
 # cannot drift from what the server actually advertises.
 tools: sync
 	PYTHONPATH=src uv run --frozen python -m tests.generate_tools_doc > TOOLS.md
+
+# Ad-hoc python against the dev environment, without creating ./.venv:
+#   make py CMD='-c "import omarchy_mcp; print(omarchy_mcp.__version__)"'
+py: sync
+	@PYTHONPATH=src uv run --frozen python $(CMD)
 
 # Run the daemon in the foreground, as the plugin would.
 run:

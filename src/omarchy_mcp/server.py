@@ -13,7 +13,7 @@ from . import __version__
 from .auth import BearerAuth
 from .config import Config
 from .stats import Stats
-from .tools import generic
+from .tools import desktop, generic, system
 
 SERVER_NAME = "omarchy"
 
@@ -52,6 +52,8 @@ def build(config: Config, token: str, log: logging.Logger, *, stats: Stats | Non
     )
 
     generic.register(mcp, config, log, stats)
+    desktop.register(mcp, config, log, stats)
+    system.register(mcp, config, log, stats)
 
     @mcp.custom_route("/health", methods=["GET"])
     async def health(_request):
