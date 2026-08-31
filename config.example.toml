@@ -46,6 +46,20 @@
 # Demote otherwise-safe routes to guarded, so they are refused:
 # deny = ["omarchy launch browser"]
 
+# Ask at the time instead of refusing. With this on, a guarded route raises a
+# critical notification naming the command and what it would act on; clicking it
+# approves that one call. Nothing else approves it -- not dismissing it, not
+# ignoring it, and not the deadline passing.
+#
+# Routes in `deny` above are never asked about, because that is a decision you
+# already took. Nothing that needs sudo is ever asked about either.
+# ask = false
+
+# How long a call waits for you to answer before it is refused, in seconds.
+# Bounded to 5-600: a second is not long enough to read the question, and ten
+# minutes is a request parked on a desk nobody is at.
+# ask_timeout_s = 60
+
 [tools]
 # Curated tools to switch off by name. Anything disabled here can still be
 # reached through omarchy_run, subject to [policy].

@@ -28,6 +28,18 @@ RUNTIME_DIR = Path(os.environ.get("XDG_RUNTIME_DIR") or "/tmp")
 
 TOKEN_FILE = STATE_DIR / "token"
 
+#: Where a clicked approval notification drops its token. Dies with the
+#: session, which is right: an approval that outlived the desktop it was granted
+#: on would be a stale yes.
+CONSENT_DIR = RUNTIME_DIR / PLUGIN_ID / "consent"
+
+#: The plugin directory itself, resolved from this file rather than guessed, so
+#: a checkout and an installed copy both find their own helper.
+PLUGIN_DIR = Path(__file__).resolve().parents[2]
+
+#: Run by a notification's --exec when the user clicks it.
+CONSENT_HELPER = PLUGIN_DIR / "bin" / "omarchy-mcp-consent"
+
 #: Read by BarWidget.qml. Written by Service.qml, not by the daemon: only
 #: panels and overlays can be called by the shell, so a widget cannot ask a
 #: service anything and has to read a file instead.

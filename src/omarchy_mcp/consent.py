@@ -18,9 +18,11 @@ They are distinct because they imply different next moves for the agent, and an
 agent that cannot tell "the user said no" from "nobody was there" will either
 give up on a call the user would have allowed or keep re-asking an empty room.
 
-The mechanism -- MCP elicitation -- is N4's. This module knows only that
-something can be awaited for an answer, which is what lets the rule be tested
-before a client is involved.
+The mechanism is not this module's. It knows only that something can be awaited
+for an answer, which is what lets the rule be tested before a client is
+involved -- and what saved N4 when elicitation turned out to be unreachable
+over this transport (F23). There are two askers now, an MCP elicitation and a
+desktop notification, and neither one changed a line of the rule.
 """
 
 from __future__ import annotations
@@ -61,8 +63,20 @@ class Answer:
         return self.outcome is Outcome.ACCEPTED
 
 
-def _reason(outcome: Outcome, *, timeout_s: float, what: str) -> str:
-    """What the agent is told. Each one has to suggest a different next move."""
+def _reason(outcome: Outcome, *, timeout_s: float, what: str, clicked: bool = False) -> str:
+    """What the agent is told. Each one has to suggest a different next move.
+
+    ``clicked`` says the question went to the desktop, where the notification
+    has exactly one action (F25). That surface can express *yes* but not *no*,
+    so a non-answer there is genuinely ambiguous and the wording says so rather
+    than asserting nobody was at the desk.
+    """
+    if outcome is Outcome.TIMED_OUT and clicked:
+        return (
+            f"The approval notification for ({what}) was not clicked within "
+            f"{timeout_s}s. That may mean the user refused it or that they were "
+            f"not there. Nothing ran. Ask them directly rather than repeating it."
+        )
     return {
         Outcome.ACCEPTED: "",
         Outcome.DECLINED: f"The user refused this call ({what}).",
@@ -86,15 +100,22 @@ def _reason(outcome: Outcome, *, timeout_s: float, what: str) -> str:
 
 
 def supports_asking(capabilities) -> bool:
-    """Whether this client can put a question in front of a person.
+    """Whether this client can put a question in front of a person itself.
 
-    `form` specifically, not `url`: url-mode elicitation sends the user to a
-    browser tab to answer, and this project exists because the person is looking
-    at a desktop. A client that declared no capabilities at all arrives as
-    ``None``, which is not consent either.
+    Not `form` alone, which was the original rule and was wrong. Claude Code
+    declares a bare ``elicitation: {}`` -- the object present, neither sub-mode
+    named (F22) -- and checking ``form is not None`` refuses the client this
+    project exists for. A client that names *only* `url` is still refused: url
+    mode answers in a browser tab, and the person here is at a desktop.
+
+    A client that declared no capabilities at all arrives as ``None``, which is
+    not consent either. Note this says nothing about whether the *transport*
+    can carry the question; see `gate.can_elicit`.
     """
     elicitation = getattr(capabilities, "elicitation", None)
-    return getattr(elicitation, "form", None) is not None
+    if elicitation is None:
+        return False
+    return getattr(elicitation, "url", None) is None or getattr(elicitation, "form", None) is not None
 
 
 def unsupported(what: str, *, timeout_s: float = DEFAULT_TIMEOUT_S) -> Answer:
@@ -109,6 +130,7 @@ async def ask(
     *,
     what: str,
     timeout_s: float = DEFAULT_TIMEOUT_S,
+    clicked: bool = False,
     log=None,
 ) -> Answer:
     """Await an answer, and fail closed if one does not arrive.
@@ -139,7 +161,8 @@ async def ask(
         if log is not None:
             log.info("consent timed out after %ss: %s", timeout_s, what)
         return Answer(
-            Outcome.TIMED_OUT, _reason(Outcome.TIMED_OUT, timeout_s=timeout_s, what=what)
+            Outcome.TIMED_OUT,
+            _reason(Outcome.TIMED_OUT, timeout_s=timeout_s, what=what, clicked=clicked),
         )
 
     return _interpret(result, timeout_s=timeout_s, what=what)

@@ -14,9 +14,10 @@ from __future__ import annotations
 
 import json
 
+from mcp.server.mcpserver import Context
 from mcp.types import ToolAnnotations
 
-from .. import execute, registry, resolve, shell
+from .. import execute, gate, registry, shell
 from ..config import Config
 from ..policy import decide
 from ..stats import Stats
@@ -52,8 +53,18 @@ def register(mcp, config: Config, log, stats: Stats | None = None) -> None:
             verdict = decide(cmd, config)
             row = registry.as_dict(cmd)
             row["tier"] = verdict.tier.value
-            row["runnable"] = verdict.allowed
-            if not verdict.allowed:
+            # One derivation, shared with the commands resource. A route that
+            # will ask is runnable, or a careful agent reads "refused", never
+            # calls it, and the question is never put to anyone.
+            asks = gate.asks(verdict, config)
+            row["runnable"] = verdict.allowed or asks
+            if asks:
+                row["asks"] = True
+                row["note"] = (
+                    "This call pauses while the user is asked to approve it, and is "
+                    "refused if they decline or do not answer."
+                )
+            elif not verdict.allowed:
                 row["refusal"] = verdict.reason
             rows.append(row)
         return json.dumps({"query": query, "count": len(rows), "commands": rows}, indent=2)
@@ -78,6 +89,7 @@ def register(mcp, config: Config, log, stats: Stats | None = None) -> None:
         args: list[str] | None = None,
         timeout_ms: int | None = None,
         detach: bool | None = None,
+        ctx: Context = None,
     ) -> str:
         args = list(args or [])
         cmd = registry.get(route.strip())
@@ -92,17 +104,16 @@ def register(mcp, config: Config, log, stats: Stats | None = None) -> None:
                 indent=2,
             )
 
-        verdict = decide(cmd, config)
-        if not verdict.allowed:
-            return json.dumps({"error": verdict.reason, "tier": verdict.tier.value}, indent=2)
-
         # The same gate the curated tools pass through. Reaching a command by
-        # its route must not skip a check that reaching it by a tool applies.
-        try:
-            call = await offload(resolve.resolve_call, cmd.route, args)
-        except resolve.Unresolvable as exc:
-            log.info("run route=%r unresolved=%s", cmd.route, exc.kind)
-            return json.dumps(exc.as_dict(), indent=2)
+        # its route must not skip a check that reaching it by a tool applies --
+        # including the one that asks the user.
+        decision = await gate.authorize(
+            cmd, args, config=config, ctx=ctx, log=log, offload=offload
+        )
+        if isinstance(decision, gate.Refused):
+            log.info("run route=%r refused", cmd.route)
+            return json.dumps(decision.as_dict(), indent=2)
+        call = decision.call
 
         if detach is None:
             detach = execute.should_detach(cmd.group, cmd.route)

@@ -73,6 +73,14 @@ class Verdict:
     tier: Tier
     allowed: bool
     reason: str = ""
+    #: Whether this refusal is one a person may overturn at call time.
+    #:
+    #: Not derivable from ``tier`` and ``allowed`` by the caller, which is the
+    #: reason it is stated here. A ``policy.deny`` demotion also refuses at
+    #: ``GUARDED``, and re-asking it would turn a decision the user already took
+    #: into a question. ``BLOCKED`` is never askable: no answer makes a sudo
+    #: command runnable -- decision 4.
+    askable: bool = False
 
 
 def base_tier(cmd: Command) -> Tier:
@@ -115,7 +123,9 @@ def decide(cmd: Command, config: Config) -> Verdict:
             f"`{cmd.route}` is guarded because it can change the system in ways "
             f"that are hard to undo. To allow it, add it to policy.allow (or its "
             f'group "{cmd.group}" to policy.allow_groups) in '
-            f"~/.config/omarchy/mcp/config.toml.",
+            f"~/.config/omarchy/mcp/config.toml. To be asked at the time instead, "
+            f"set policy.ask = true there.",
+            askable=True,
         )
 
     return Verdict(Tier.SAFE, True, "")

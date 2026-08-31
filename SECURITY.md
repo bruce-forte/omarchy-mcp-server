@@ -85,6 +85,40 @@ This tier protects against **accidents, not attackers**. An agent that already
 has shell access does not need this server to do damage. The value is that a
 confused agent cannot reboot your machine while trying to change your wallpaper.
 
+### Approving a guarded command at the time
+
+With `policy.ask = true`, a guarded route raises a critical desktop notification
+naming the command and the resolved target, and clicking it approves **that one
+call**. Two properties matter more than the convenience:
+
+**Every way of not answering refuses.** Declining, dismissing, the deadline
+passing, a client that cannot be asked, a client that disconnects mid-question —
+all of them refuse. The daemon starts with your session and outlives whoever
+walked away from the desk, so a prompt that granted on expiry would be granting
+to an empty room.
+
+**A click cannot be forged by writing a file.** The approval is a
+`secrets.token_urlsafe` value that is both the filename and the contents, in a
+`0700` directory under `$XDG_RUNTIME_DIR`, deleted as soon as it is read. The
+token is never given to the model — not in a result, not in a refusal. This
+matters because the model is the party trying to run the command: `omarchy_run`
+passes arguments to hundreds of commands this project did not write, and if the
+mere existence of a path counted as consent, an agent that talked any one of
+them into writing a file would approve its own guarded call.
+
+`ask` never reaches sudo, and never reaches a route you put in `policy.deny`.
+The first cannot work; the second is a decision you already took.
+
+The text you are shown is assembled from a fixed frame, and every argument in it
+is stripped of control characters, flattened to one line, and truncated.
+`omarchy install` has no resolver — package names have no local truth to check
+against — so its arguments are strings the model chose, possibly after reading
+them off a page through `omarchy_screen_text`. Nothing an argument contains can
+add a line to the prompt or counterfeit the frame around it.
+
+The boundary files for this are `gate.py` and `prompt.py`, and
+`tests/test_gate.py` is their specification.
+
 ### Arguments never reach a shell
 
 `omarchy_run` takes arguments as a JSON array and passes them to `execve` as

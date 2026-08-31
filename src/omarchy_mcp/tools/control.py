@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import re
 
+from mcp.server.mcpserver import Context
 from mcp.types import ToolAnnotations
 
 from .. import execute, registry, shell
@@ -47,8 +48,10 @@ MEDIA_ACTIONS = (
 
 
 def register(mcp, config: Config, log, stats: Stats) -> None:
-    async def run(route, args, tool, **kw):
-        return await run_route(route, args, config=config, stats=stats, log=log, tool=tool, **kw)
+    async def run(route, args, tool, ctx, **kw):
+        return await run_route(
+            route, args, config=config, stats=stats, log=log, tool=tool, ctx=ctx, **kw
+        )
 
     # ---------------------------------------------------------------- theme
 
@@ -67,15 +70,15 @@ def register(mcp, config: Config, log, stats: Stats) -> None:
                 openWorldHint=False,
             ),
         )
-        async def omarchy_theme(action: str = "current", name: str = "") -> str:
+        async def omarchy_theme(action: str = "current", name: str = "", ctx: Context = None) -> str:
             if action == "current":
-                return await run("omarchy theme current", [], "omarchy_theme")
+                return await run("omarchy theme current", [], "omarchy_theme", ctx)
             if action == "list":
-                return await run("omarchy theme list", [], "omarchy_theme")
+                return await run("omarchy theme list", [], "omarchy_theme", ctx)
             if action == "set":
                 if not name:
                     return json.dumps({"error": 'action "set" needs a theme name'}, indent=2)
-                return await run("omarchy theme set", [name], "omarchy_theme")
+                return await run("omarchy theme set", [name], "omarchy_theme", ctx)
             return json.dumps({"error": 'action must be current, list, or set'}, indent=2)
 
     if enabled(config, "omarchy_background"):
@@ -92,17 +95,17 @@ def register(mcp, config: Config, log, stats: Stats) -> None:
                 openWorldHint=False,
             ),
         )
-        async def omarchy_background(action: str = "current", path: str = "") -> str:
+        async def omarchy_background(action: str = "current", path: str = "", ctx: Context = None) -> str:
             if action == "current":
-                return await run("omarchy theme bg current", [], "omarchy_background")
+                return await run("omarchy theme bg current", [], "omarchy_background", ctx)
             if action == "next":
-                return await run("omarchy theme bg next", [], "omarchy_background")
+                return await run("omarchy theme bg next", [], "omarchy_background", ctx)
             if action == "set":
                 if not path:
                     return json.dumps(
                         {"error": 'action "set" needs an absolute image path'}, indent=2
                     )
-                return await run("omarchy theme bg set", [path], "omarchy_background")
+                return await run("omarchy theme bg set", [path], "omarchy_background", ctx)
             return json.dumps({"error": "action must be current, next, or set"}, indent=2)
 
     # ---------------------------------------------------------------- audio
@@ -123,20 +126,22 @@ def register(mcp, config: Config, log, stats: Stats) -> None:
                 openWorldHint=False,
             ),
         )
-        async def omarchy_audio(action: str = "volume", level: str = "raise") -> str:
+        async def omarchy_audio(action: str = "volume", level: str = "raise", ctx: Context = None) -> str:
             if action == "volume":
                 if level not in ("raise", "lower") and not _is_step(level):
                     return json.dumps(
                         {"error": "level must be 'raise', 'lower', or a signed step like '+10'"},
                         indent=2,
                     )
-                return await run("omarchy audio output volume", [level], "omarchy_audio")
+                return await run("omarchy audio output volume", [level], "omarchy_audio", ctx)
             if action == "mute":
-                return await run("omarchy audio output volume", ["mute-toggle"], "omarchy_audio")
+                return await run(
+                    "omarchy audio output volume", ["mute-toggle"], "omarchy_audio", ctx
+                )
             if action == "mic_mute":
-                return await run("omarchy audio input mute", [], "omarchy_audio")
+                return await run("omarchy audio input mute", [], "omarchy_audio", ctx)
             if action == "switch_output":
-                return await run("omarchy audio output switch", [], "omarchy_audio")
+                return await run("omarchy audio output switch", [], "omarchy_audio", ctx)
             return json.dumps(
                 {"error": "action must be volume, mute, mic_mute, or switch_output"}, indent=2
             )
@@ -157,7 +162,7 @@ def register(mcp, config: Config, log, stats: Stats) -> None:
             ),
         )
         async def omarchy_brightness(
-            target: str = "display", value: str = "", monitor: str = ""
+            target: str = "display", value: str = "", monitor: str = "", ctx: Context = None
         ) -> str:
             if target == "display":
                 args: list[str] = []
@@ -165,14 +170,14 @@ def register(mcp, config: Config, log, stats: Stats) -> None:
                     args += ["--monitor", monitor]
                 if value:
                     args.append(value)
-                return await run("omarchy brightness display", args, "omarchy_brightness")
+                return await run("omarchy brightness display", args, "omarchy_brightness", ctx)
             if target == "keyboard":
                 if not value:
                     return json.dumps(
                         {"error": "keyboard brightness needs up, down, cycle, off, or restore"},
                         indent=2,
                     )
-                return await run("omarchy brightness keyboard", [value], "omarchy_brightness")
+                return await run("omarchy brightness keyboard", [value], "omarchy_brightness", ctx)
             return json.dumps({"error": "target must be display or keyboard"}, indent=2)
 
     # ---------------------------------------------------------------- media
@@ -225,7 +230,7 @@ def register(mcp, config: Config, log, stats: Stats) -> None:
                 openWorldHint=False,
             ),
         )
-        async def omarchy_toggle(feature: str, state: str = "toggle") -> str:
+        async def omarchy_toggle(feature: str, state: str = "toggle", ctx: Context = None) -> str:
             route = TOGGLES.get(feature)
             if route is None:
                 return json.dumps(
@@ -251,7 +256,7 @@ def register(mcp, config: Config, log, stats: Stats) -> None:
                     indent=2,
                 )
 
-            return await run(route, [word] if word else [], "omarchy_toggle")
+            return await run(route, [word] if word else [], "omarchy_toggle", ctx)
 
     # --------------------------------------------------------------- launch
 
@@ -270,7 +275,7 @@ def register(mcp, config: Config, log, stats: Stats) -> None:
                 openWorldHint=True,
             ),
         )
-        async def omarchy_launch(what: str, target: str = "") -> str:
+        async def omarchy_launch(what: str, target: str = "", ctx: Context = None) -> str:
             routes = {
                 "browser": "omarchy launch browser",
                 "editor": "omarchy launch editor",
@@ -286,7 +291,9 @@ def register(mcp, config: Config, log, stats: Stats) -> None:
             if what in ("editor", "webapp") and not target:
                 return json.dumps({"error": f"{what} needs a path or URL"}, indent=2)
 
-            return await run(route, [target] if target else [], "omarchy_launch", detach=True)
+            return await run(
+                route, [target] if target else [], "omarchy_launch", ctx, detach=True
+            )
 
 
 def accepted_states(route: str) -> set[str]:
