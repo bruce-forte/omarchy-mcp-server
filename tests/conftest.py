@@ -34,3 +34,9 @@ def ipc_listing() -> str:
 @pytest.fixture
 def live_registry_groups(registry_payload):
     return {c["group"] for c in json.loads(registry_payload)["commands"]}
+
+
+@pytest.fixture
+def anyio_backend():
+    """The MCP SDK is anyio-based; the async tool tests run on asyncio."""
+    return "asyncio"

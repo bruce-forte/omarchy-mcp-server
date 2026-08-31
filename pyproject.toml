@@ -18,11 +18,13 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pytest>=8",
+    "anyio>=4",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = ["anyio: async test, run on the asyncio backend"]
 
 [tool.ruff]
 line-length = 100
