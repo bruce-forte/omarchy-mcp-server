@@ -225,3 +225,60 @@ def test_a_foreign_host_header_is_rejected(client):
         json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
     )
     assert response.status_code == 421
+
+
+def test_health_reports_call_counts():
+    """The call count is the only visible trace an agent leaves on the desktop,
+    so it has to survive the trip from the tool to the bar widget."""
+    from omarchy_mcp.stats import Stats
+
+    stats = Stats()
+    app = build(Config(), TOKEN, logging.getLogger("test"), stats=stats)
+    with TestClient(app, base_url=BASE_URL) as client:
+        assert client.get("/health").json()["calls"] == 0
+
+        response = rpc(
+            client,
+            "initialize",
+            {"protocolVersion": PROTOCOL, "capabilities": {},
+             "clientInfo": {"name": "pytest", "version": "1"}},
+        )
+        sid = response.headers["mcp-session-id"]
+        rpc(client, "notifications/initialized", session=sid)
+        rpc(
+            client,
+            "tools/call",
+            {"name": "omarchy_search_commands", "arguments": {"query": "theme"}},
+            session=sid,
+        )
+
+        body = client.get("/health").json()
+
+    assert body["calls"] == 1
+    assert body["last_tool"] == "omarchy_search_commands"
+
+
+def test_health_records_the_route_that_was_run():
+    from omarchy_mcp.stats import Stats
+
+    stats = Stats()
+    app = build(Config(), TOKEN, logging.getLogger("test"), stats=stats)
+    with TestClient(app, base_url=BASE_URL) as client:
+        response = rpc(
+            client,
+            "initialize",
+            {"protocolVersion": PROTOCOL, "capabilities": {},
+             "clientInfo": {"name": "pytest", "version": "1"}},
+        )
+        sid = response.headers["mcp-session-id"]
+        rpc(client, "notifications/initialized", session=sid)
+        # Refused, but still recorded: the audit trail is what was attempted.
+        rpc(
+            client,
+            "tools/call",
+            {"name": "omarchy_run", "arguments": {"route": "omarchy system reboot"}},
+            session=sid,
+        )
+        body = client.get("/health").json()
+
+    assert body["last_route"] == "omarchy system reboot"

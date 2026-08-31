@@ -12,6 +12,7 @@ from starlette.responses import JSONResponse
 from . import __version__
 from .auth import BearerAuth
 from .config import Config
+from .stats import Stats
 from .tools import generic
 
 SERVER_NAME = "omarchy"
@@ -33,8 +34,9 @@ def _transport_security(port: int) -> TransportSecuritySettings:
     )
 
 
-def build(config: Config, token: str, log: logging.Logger, *, status: dict | None = None):
+def build(config: Config, token: str, log: logging.Logger, *, stats: Stats | None = None):
     """Build the ASGI application for the MCP server."""
+    stats = stats or Stats()
     mcp = MCPServer(
         name=SERVER_NAME,
         title="Omarchy",
@@ -49,7 +51,7 @@ def build(config: Config, token: str, log: logging.Logger, *, status: dict | Non
         ),
     )
 
-    generic.register(mcp, config, log)
+    generic.register(mcp, config, log, stats)
 
     @mcp.custom_route("/health", methods=["GET"])
     async def health(_request):
@@ -61,7 +63,7 @@ def build(config: Config, token: str, log: logging.Logger, *, status: dict | Non
                 "server": SERVER_NAME,
                 "version": __version__,
                 "port": config.port,
-                **(status or {}),
+                **stats.snapshot(),
             }
         )
 

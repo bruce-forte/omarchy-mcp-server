@@ -22,7 +22,8 @@ BarWidget {
   property string phase: "starting"
   property bool serving: false
   property int port: 8765
-  property int requests: 0
+  property int calls: 0
+  property string lastTool: ""
   property string lastError: ""
 
   // Nerd Font: a plug, connected or not.
@@ -37,9 +38,16 @@ BarWidget {
   }
 
   readonly property string tooltip: {
-    if (serving)
-      return "MCP server on 127.0.0.1:" + port
-             + "\nRun `omarchy-shell " + root.moduleName + " clientConfig` to connect a client"
+    if (serving) {
+      var up = "MCP server on 127.0.0.1:" + port
+      // The call count is the only visible trace an agent leaves. Without it
+      // there is nothing on the desktop that says anything happened.
+      up += "\n" + calls + (calls === 1 ? " tool call" : " tool calls") + " served"
+      if (lastTool !== "")
+        up += "\nLast: " + lastTool
+      up += "\nRun `omarchy-shell " + root.moduleName + " clientConfig` to connect a client"
+      return up
+    }
     if (phase === "building")
       return "MCP server: building its environment on first run"
     if (phase === "stopped")
@@ -63,7 +71,8 @@ BarWidget {
       phase = String(data.phase || "starting")
       serving = data.serving === true
       port = Number(data.port || 8765)
-      requests = Number(data.requests || 0)
+      calls = Number(data.calls || 0)
+      lastTool = String(data.lastTool || "")
       lastError = String(data.error || "")
     } catch (e) {
       // A partial read; the next write brings a whole one.
