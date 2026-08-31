@@ -12,7 +12,7 @@ import json
 
 from mcp.types import ImageContent, TextContent, ToolAnnotations
 
-from .. import desktop
+from .. import desktop, resolve
 from ..config import Config
 from ..stats import Stats
 from ._shared import UNTRUSTED
@@ -52,19 +52,33 @@ def register(mcp, config: Config, log, stats: Stats) -> None:
             stats.record("omarchy_screenshot", route=target)
             max_width = max(64, min(max_width, 3840))
             try:
+                named = _monitor(target, monitor)
                 shot = desktop.capture(
-                    target=target, monitor=monitor, region=region, max_width=max_width
+                    target=target,
+                    monitor=named.value if named else monitor,
+                    region=region,
+                    max_width=max_width,
                 )
+            except resolve.Unresolvable as exc:
+                stats.record("omarchy_screenshot", ok=False)
+                return [TextContent(type="text", text=json.dumps(exc.as_dict()))]
             except desktop.DesktopError as exc:
                 stats.record("omarchy_screenshot", ok=False)
                 return [TextContent(type="text", text=json.dumps({"error": str(exc)}))]
 
-            log.info("screenshot target=%s %dx%d", target, shot.width, shot.height)
+            where = f", {named.label}" if named else ""
+            log.info(
+                "screenshot target=%s monitor=%r %dx%d",
+                target,
+                named.label if named else None,
+                shot.width,
+                shot.height,
+            )
             return [
                 ImageContent(type="image", data=shot.as_base64(), mimeType="image/png"),
                 TextContent(
                     type="text",
-                    text=f"{shot.width}x{shot.height}, target={target}",
+                    text=f"{shot.width}x{shot.height}, target={target}{where}",
                 ),
             ]
 
@@ -113,13 +127,25 @@ def register(mcp, config: Config, log, stats: Stats) -> None:
         ) -> str:
             stats.record("omarchy_screen_text", route=target)
             try:
-                text = desktop.ocr(target=target, monitor=monitor, region=region, lang=lang)
+                named = _monitor(target, monitor)
+                text = desktop.ocr(
+                    target=target,
+                    monitor=named.value if named else monitor,
+                    region=region,
+                    lang=lang,
+                )
+            except resolve.Unresolvable as exc:
+                stats.record("omarchy_screen_text", ok=False)
+                return json.dumps(exc.as_dict(), indent=2)
             except desktop.DesktopError as exc:
                 stats.record("omarchy_screen_text", ok=False)
                 return json.dumps({"error": str(exc)}, indent=2)
 
             capped, truncated = _cap(text, config.max_output_b)
-            return json.dumps({"text": capped, "truncated": truncated}, indent=2)
+            payload: dict[str, object] = {"text": capped, "truncated": truncated}
+            if named:
+                payload["target"] = named.label
+            return json.dumps(payload, indent=2)
 
     if enabled("omarchy_clipboard_read"):
 
@@ -172,6 +198,20 @@ def register(mcp, config: Config, log, stats: Stats) -> None:
                 stats.record("omarchy_clipboard_write", ok=False)
                 return json.dumps({"error": str(exc)}, indent=2)
             return json.dumps({"ok": True, "bytes": len(text.encode())})
+
+
+def _monitor(target: str, monitor: str) -> resolve.Target | None:
+    """Resolve a named output before grim is asked for it.
+
+    These tools do not go through `run_route`, so they call the resolver
+    themselves rather than let grim fail on a name that was never connected.
+    A monitor name is only meaningful for `target="monitor"`; anywhere else it
+    is ignored, and resolving it would refuse a call over an argument that has
+    no effect.
+    """
+    if target != "monitor" or not monitor:
+        return None
+    return resolve.monitor(monitor)
 
 
 def _cap(text: str, limit: int) -> tuple[str, bool]:
