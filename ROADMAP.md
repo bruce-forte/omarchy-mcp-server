@@ -169,15 +169,21 @@ Three rules N4 must not undo:
 - **A client that cannot ask never counts as one that said yes.**
   `supports_asking` checks `elicitation.form` specifically — url mode answers in
   a browser tab, and this project exists because the person is at a desktop.
+  **Amended by F22.** Claude Code declares `elicitation: {}` and names neither
+  sub-mode, so that check refuses the client this project is for. A bare
+  `elicitation` object counts as form mode. The rule the sentence protects is
+  intact: no client is ever assumed to have said yes.
 - **Only the word `accept` grants.** Matched on the reply's `action`, not on its
   class, so a fourth action added upstream fails closed instead of falling
   through.
 
-Still N4's: the `omarchy notification send -u critical` alongside the prompt and
-its dismissal on every exit path, including the timeout and disconnect paths
-above.
+Still N4's: the `omarchy notification send -u critical` and its dismissal on
+every exit path, including the timeout and disconnect paths above. It turned out
+not to be *alongside* the prompt but to **be** the prompt for HTTP clients —
+F23 closed the back-channel elicitation needed, and F25 found that a
+notification's `--exec` can carry the answer back.
 
-### N4 — Ask at call time, via MCP elicitation
+### N4 — Ask at call time
 
 The substantive one. Today `guarded` means *refused unless pre-allowed in
 `config.toml`*, which forces a per-call risk decision to be made once, in
@@ -193,123 +199,176 @@ map:
 # ask_timeout_s = 60
 ```
 
-Mechanism is **MCP elicitation** — a server-initiated request down the streamable
-HTTP stream, answered in the client's own UI. Reasons it is the right one:
-
-- It is the spec's mechanism for exactly this, so client support improves without
-  work here. The `ask_user` row in [Rejected](#rejected) already named it.
-- It needs no new UI. The alternative is a panel, and a panel cannot reach the
-  daemon (see N6).
-- The SDK's transport is asyncio, so a parked request holds one connection while
-  the daemon keeps serving every other client. **Concurrent asks are natural
-  here and are the reason to keep decision 1**: a transport that gives each
-  client its own process has to serialise approvals through the filesystem, and
-  ends up refusing the second one.
-- It returns **structured input**, not a yes/no. A tool can ask *which* theme, or
-  *how many* minutes, and receive a typed answer inside the same call. A boolean
-  approval gate in front of a call cannot do that, and this is the capability
-  that makes elicitation worth more than a confirm dialog.
-
 `blocked` stays unaskable. No sudo command becomes reachable by answering a
-question — decision 4, unchanged.
+question — decision 4, unchanged. **`policy.deny` stays unaskable too**: a route
+the user demoted by hand is a decision already taken, and re-asking it would
+turn their *no* into a question. `decide` therefore returns a `Verdict` that
+says whether a refusal is askable, rather than leaving the caller to infer it
+from `tier` and `allowed`.
 
-#### What the SDK gives us
+#### Two askers, because elicitation does not reach this client
 
-Verified against the pinned `mcp` 2.x in the dev virtualenv, not from
-documentation:
+MCP elicitation was the plan, and it is still the right mechanism where it
+works. It does not work here: Claude Code negotiates protocol `2026-07-28`,
+whose transport has **no back-channel at all**, so `ctx.elicit` fails inside
+this process before anything reaches the wire. F22–F24 are the whole story.
 
-| Thing | Shape |
-|-------|-------|
-| `Context.elicit(message, schema)` | `schema` is a **Pydantic model with primitive fields only** — the spec forbids nesting |
-| Return | `AcceptedElicitation(action, data)`, `DeclinedElicitation(action)`, or `CancelledElicitation(action)` |
-| `Context.client_capabilities` | `ClientCapabilities | None`; `None` when the client declared none |
-| `ElicitationCapability` | Has **separate `form` and `url` sub-capabilities**. A client may support one and not the other — check `form`, which is what this needs |
-| `Context.elicit_url(...)` | URL mode. Not wanted here |
-| `Context.notify_tools_changed()` | Also the mechanism N7 needs |
+So the question goes to the desktop instead, through a mechanism Omarchy already
+has. `omarchy notification send --exec` runs a command when the notification is
+clicked (F25):
+
+```
+omarchy notification send -u critical \
+  "Approval needed: omarchy install (#7)" \
+  "Click to approve. Ignoring this refuses it." \
+  --exec <plugin>/bin/omarchy-mcp-consent approve <token>
+```
+
+The helper writes the token into
+`$XDG_RUNTIME_DIR/io.github.bruce-forte.mcp-server/consent/`, and the parked
+call is watching for it. There is one action, so **a click is yes and silence is
+no** — which is the rule N3 already fails closed on.
+
+This is better than it looks. The roadmap's own objection to elicitation was
+that *"the prompt appears where the client is, and this project exists because
+the user is looking at a desktop rather than a terminal."* The desktop asker has
+no such weakness, works in every protocol era, and works for clients that
+declare no elicitation capability at all.
+
+`consent.ask` already takes any awaitable as the asker — that seam was built in
+N3 precisely so the mechanism could change without the rule changing. The gate
+picks one:
+
+```python
+asker = (
+    (lambda: ctx.elicit(message, Approval))
+    if ctx.session.can_send_request
+    else (lambda: desktop_ask(message, token))
+)
+answer = await consent.ask(asker, what=label, timeout_s=config.ask_timeout_s)
+```
+
+#### The gate
+
+One place decides, and both paths reach it. `_shared.run_route` and
+`omarchy_run` currently duplicate the policy check and the resolver call; a
+third duplicated branch — the one that decides whether a command runs — is the
+one that must not drift. `gate.py` joins `policy.py`, `auth.py` and
+`execute.py` as a boundary file:
+
+```python
+async def authorize(cmd, args, *, config, ctx, log) -> Allowed | Refused
+```
+
+**Resolution happens before the question, and only on the ask path.** N2 exists
+so the prompt can name *Tokyo Night* rather than `omarchy theme set`; a prompt
+answered *yes* and then refused as unresolvable has spent the user's attention
+for nothing. A refusal that will not ask still never pays for a resolver
+subprocess:
+
+| Verdict | Order |
+|---------|-------|
+| allowed | resolve, run |
+| refused, askable, `ask = true` | resolve (refuse silently if unresolvable), ask, run on accept |
+| refused otherwise | refuse; never resolves |
 
 #### The refactor this implies
 
-`elicit` is a coroutine on `Context`, and **every tool in this project is
-currently a sync function with no `Context` parameter**. So:
+`elicit` is a coroutine on `Context`, and waiting for a click is a coroutine
+too, so **every tool becomes `async def`** — they are sync functions with no
+`Context` parameter today.
 
-- Curated tools and `omarchy_run` become `async def` and take `ctx: Context`.
-- `_shared.run_route` becomes `async` and takes `ctx`.
-- `execute.run` stays sync and blocking — it is called through a thread, not
-  awaited. Do not casually make it async; its timeout, process-group kill, and
-  detach behaviour are tested and subtle (decision 5, F14).
+The trap: the SDK runs a **sync** tool through `anyio.to_thread.run_sync`
+(`func_metadata.py:164`), and an `async` tool loses that for free thread. This
+codebase blocks in four modules, and OCR is a 30-second subprocess. So each
+tool keeps its current body as a private `_impl` and the registered tool is one
+hop:
+
+```python
+async def omarchy_screenshot(monitor="", ...) -> str:
+    return await to_thread.run_sync(partial(_screenshot, monitor, ...))
+```
+
+Gate-path tools split: await the gate on the loop, thread the execution.
+`execute.run` stays sync and blocking — do not casually make it async; its
+timeout, process-group kill, and detach behaviour are tested and subtle
+(decision 5, F14).
 
 This is mechanical but touches every tool module. It is the bulk of the work and
-should be its own commit, landed and green *before* any elicitation logic goes
-in.
+should be its own commit, landed and green *before* any consent logic goes in.
 
-#### Where it hooks in
+#### A click has to be unforgeable
 
-One place. `_shared.run_route` already funnels every curated tool, and
-`decide(cmd, config)` returns the verdict:
+The agent is the untrusted party here, and `omarchy_run` can pass arbitrary
+arguments to any of hundreds of safe commands. If the existence of a file were
+consent, an agent that talked *any* of them into writing a path would approve
+its own guarded call, and a sequential id could be pre-created for every future
+ask.
 
-```
-verdict = decide(cmd, config)
-if not verdict.allowed and verdict.tier is Tier.GUARDED and config.ask:
-    → elicit → on accept, proceed; otherwise return the refusal
-```
+So the token is `secrets.token_urlsafe(16)`, it is both the filename and the
+file's contents, the gate accepts only when both match, and it unlinks either
+way. **The token never reaches the model** — not in a result, not in a refusal.
+Directory `0700`, files `0600`. Named in the README's uninstall section.
 
-`omarchy_run` needs the same branch. `blocked` never reaches it.
+The prompt text needs the same suspicion. `omarchy install` has no resolver by
+design, so its arguments are model-supplied strings that may have been read off
+a hostile page by `omarchy_screen_text`, and they are rendered to a human who is
+about to click. The message is assembled from a fixed frame; every argument is
+stripped of control characters and newlines, truncated, and quoted, so nothing
+an argument contains can add a line or forge the frame.
 
-#### Four outcomes, four distinct reasons
+#### Outcomes
 
-The agent must be able to tell these apart, because they mean different things
-about whether to try something else:
+N3's six stand unchanged. The desktop asker can only produce two of them,
+because one action cannot express a *no*, and the wording says so rather than
+telling the agent nobody was there:
 
-| Outcome | Agent is told |
-|---------|---------------|
-| `accept` | — proceeds |
-| `decline` | The user refused this specific call |
-| `cancel` | The user dismissed the prompt without deciding |
-| timeout (N3) | Nobody answered; assume nobody was there |
+> The approval notification for (`omarchy install` — ripgrep) was not clicked
+> within 60s. That may mean the user refused it or was not there. Nothing ran.
+> Ask the user directly rather than repeating it.
 
-A fifth case: **the client does not support elicitation.** Check
-`ctx.client_capabilities` and fall back to today's behaviour — refuse, naming
-`config.toml` — rather than hanging on a request nothing will answer. Never
-treat an unsupported client as consent.
+The notification is dismissed on **every** exit path, in a `finally` under
+`anyio.CancelScope(shield=True)`: a client disconnect cancels the task, and a
+`-u critical` notification has no expiry, so an unshielded dismissal leaves a
+prompt on screen forever. A click does not dismiss it either (F26).
 
-#### Reaching the person
+**One pending ask per client session.** An agent issues tool calls in parallel,
+and five guarded calls in a batch would mean five dialogs and five permanent
+notifications. A second concurrent ask from the same session refuses
+immediately, without eliciting or notifying. Two *clients* still ask at once,
+which is the property decision 1 rests on.
 
-The weakness is the mirror of the strength: the prompt appears where the
-*client* is, and this project exists because the user is looking at a desktop
-rather than a terminal. Fire `omarchy notification send -u critical` alongside
-the elicitation.
+#### Discovery has to admit the feature exists
 
-Critical notifications have no expiry, which is right while a request is live
-and wrong the moment it is answered — **dismiss on every exit path**, or prompts
-accumulate one per call. That includes the timeout path and the path where the
-connection drops mid-elicit.
+`omarchy_search_commands` and the commands resource both publish
+`runnable = verdict.allowed`. With `ask = true` a guarded route would still
+report `runnable: false` plus a refusal telling the model to edit
+`config.toml` — so a well-behaved agent never calls it and the prompt never
+fires. Both sites report `runnable: true` and a separate `asks: true`, from one
+derivation, so they cannot drift. `TOOLS.md` regenerates.
 
-#### Spike it first
-
-F3 and F8 are both cases where Claude Code did not do what the spec permits, so
-confirm before building:
-
-1. Does Claude Code declare `elicitation.form` in `client_capabilities`?
-2. Does it render the prompt, and what does a decline versus a dismiss produce?
-3. Does a parked elicitation on one session block other sessions? It should not
-   — that is the claim decision 1 rests on. Verify with two clients attached.
-4. What happens to an in-flight elicitation when the client disconnects?
-
-Record the answers as phase 6 findings, the way phase 0 recorded the transport.
+`ask` defaults to **false**: installing this plugin must not make a guarded
+command reachable that was not reachable before. The rot that N10 describes —
+nobody edits the arrays, so `guarded` means *never* — is answered instead by the
+guarded refusal naming both ways out, `policy.allow` and `policy.ask`, where an
+agent will read it and can tell the user.
 
 #### Tests
 
 `policy.py` is the security boundary and this changes what it permits, so tests
 land in the same commit:
 
-- Every `blocked` route still refuses **without** eliciting. Assert `elicit` is
+- Every `blocked` route still refuses **without asking**. Assert the asker is
   never called for sudo — this is the one that must never regress.
-- `guarded` with `ask = false` refuses exactly as today. Default behaviour is
-  unchanged for anyone who does not opt in.
-- `guarded` with `ask = true` elicits, and each of accept / decline / cancel /
-  timeout produces its own reason string.
-- A client without the capability refuses and does not hang.
-- The notification is dismissed on all four exit paths.
+- `policy.deny` refuses without asking.
+- `guarded` with `ask = false` refuses exactly as today.
+- `guarded` with `ask = true` asks, and accept / decline / cancel / timeout each
+  produce their own reason string.
+- A forged consent file — right name, wrong contents — does not approve. A
+  replayed one does not approve twice.
+- A client with no back-channel gets the desktop asker, not a hang.
+- The notification is dismissed on every exit path, including the cancelled one.
+- An argument containing newlines cannot add a line to the prompt.
 
 ### N5 — An activity log on disk
 
@@ -454,10 +513,15 @@ the user is asked, and the answer can be remembered:
 
 ```
 guarded route → in the store? → yes: run
-                             → no:  elicit → accept + "always" → write to store
-                                           → accept            → run once
-                                           → decline           → refuse
+                             → no:  ask → accept + "always" → write to store
+                                        → accept            → run once
+                                        → decline           → refuse
 ```
+
+**One thing N4 cannot hand this.** A notification has a single action (F25), so
+the desktop asker can express *yes* but not *yes, always*. Either the store is
+filled from a second surface — the widget of N6 — or "always" is offered only to
+clients that can elicit a form. Decide when N10 is built, not before.
 
 So the store is a **record of consent already given**, accumulated through use.
 Not a configuration task presented up front. That inverts the cost: the user
@@ -498,7 +562,7 @@ Wanted, but not phase 6.
 
 | Thing | Where it stands |
 |-------|-----------------|
-| Desktop-side approval surface (a panel, not just a notification) | Only if N4 ships and elicitation proves not to reach the user reliably. It is a large QML surface plus a file protocol between panel and daemon, and it duplicates a mechanism the spec already defines |
+| Desktop-side approval surface (a panel, not just a notification) | Elicitation did prove not to reach the user — F23 — but N4 answers that with a notification's `--exec`, not a panel. A panel is still a large QML surface for a question one click already answers. Revisit only if the notification proves too easy to miss |
 | Anything for the voice-driven path beyond N4 and N5 | The controller-support flow is controller → dictation → agent → this server. The last leg is an ordinary MCP client, so **nothing new is needed here to support it**. What that path does is raise the priority of two things already listed: N4's desktop notification stops being a nicety, because a user who dictated is by definition not watching the terminal where an elicitation would appear; and N5 becomes the only way to see what a lossy transcript actually caused. Revisit adding curated tools only if profiling shows the search-then-run round trip is the latency the user feels |
 | More curated tools by default | No. The 15 exist for token economy, not coverage — `omarchy_run` already reaches everything, and every added schema is charged to every client on every session. The bar stays: the generic runner structurally cannot do it, or it is called constantly |
 
@@ -508,7 +572,7 @@ Wanted, but not phase 6.
 |-------|---------|
 | One tool per omarchy command | Decision 2 |
 | Hand-curated allowlist of commands | Defeats the self-maintaining registry; rots every Omarchy release |
-| `ask_user` via `omarchy menu select` | Blocks the HTTP request until the user answers. MCP elicitation is the right mechanism, and N4 now takes it up |
+| `ask_user` via `omarchy menu select` | Blocks the HTTP request until the user answers — which N4 does too, deliberately, because a parked async request costs one connection and nothing else. Elicitation was the better mechanism and is unreachable over this transport (F23); N4 asks through a notification instead. `menu select` stays rejected: it steals focus, and it is not where a critical prompt belongs |
 | Per-tool `allow`/`ask`/`deny` map in config | 19 rows a person maintains by hand, and one more every time a tool is added. N4 hangs the same behaviour off the tier that derives itself, so it cannot rot — decision 4 |
 | `power` tool (lock/logout/reboot/shutdown) | Irreversible from an agent's hands. Still reachable through `omarchy_run` if deliberately allowed in config |
 | `plugin_manage` tool | An agent editing the shell it runs inside |
@@ -564,3 +628,18 @@ Found by running the plugin in a live shell. None of these are visible to
 | F19 | The daemon wrote `__pycache__` **into the installed plugin directory** — 22 `.pyc` files. Python caches bytecode next to the source it imports, and the source is in the directory Omarchy watches, so the daemon made the shell reload itself simply by starting | `PYTHONPYCACHEPREFIX` points the cache at the state directory. `tests/test_bootstrap.py` now reads the wrapper and fails if anything writes into the plugin directory. **The plugin was violating the rule its own `CLAUDE.md` states** |
 | F20 | `hyprctl`'s per-workspace window count disagrees with its client list — it counts a group as one window — and `desktop_state` reported both | Found by an agent using the tool, which flagged the contradiction and had to pick which to believe. Counts are now derived from the windows actually returned |
 | F21 | Several tests shelled out to the installed `omarchy`, so the suite could not run in CI and would change meaning on the next Omarchy update | An autouse fixture pins every test to the committed registry snapshot |
+
+## Phase 6 findings
+
+Verified against `mcp` 2.1.1 and a live Claude Code session attached to the
+running daemon, by patching the installed plugin, restarting it, and calling a
+tool from the client itself. The patch was reverted; nothing here was committed.
+
+| # | Finding | Consequence |
+|---|---------|-------------|
+| F22 | Claude Code declares `elicitation: {}` — `ElicitationCapability(form=None, url=None)`. It names neither sub-mode, though the type's own docstring says *"Clients must support at least one mode"* | N3's `supports_asking` checks `form is not None` and therefore **refuses the client this project exists for**. A bare `elicitation` object has to count as form mode |
+| F23 | Claude Code negotiates protocol **`2026-07-28`**, the *modern* era, whose streamable-HTTP transport stamps `can_send_request=False` at every construction site: *"the back-channel is closed by construction: a 2026-07-28 server cannot send requests to the client"*. `ctx.elicit` raises `NoBackChannelError` **inside our own process**, before anything reaches the wire | **Elicitation cannot work over this transport.** Not a client gap and not a spec gap to wait out — it is the negotiated revision. N4's stated mechanism had to change |
+| F24 | The legacy era does have a back-channel (`can_send_request = not is_json_response_enabled`). A server can decline the modern era by overriding `server/discover` to advertise no modern version; clients then fall back to `initialize()` — `_probe.py` does this, and says the ts and go clients do too | An escape hatch exists and was **not taken**: pinning this server's protocol backwards to move a prompt into a terminal is the wrong trade for a daemon whose user is looking at a desktop. Untested besides — Claude Code re-probes only on a fresh connection |
+| F25 | `omarchy notification send --exec` carries argv as an `omarchy-exec-argv` hint that the shell runs **on click**. Verified end to end: a critical notification's `--exec` ran within 6s of the click. `actions` is empty, so there is exactly one action | A desktop consent surface already exists, works in every protocol era and for every client, and puts the question where the person is. One action means **click is yes and silence is no** — which is precisely N3's rule |
+| F26 | A click does not dismiss the notification — `omarchy notification dismiss` exists for exactly that, and matches a **summary substring**, not an id | Every ask needs a distinct headline, or two concurrent prompts dismiss each other |
+| F27 | `omarchy-shell <id> restart` left the daemon in `Waiting for connections to close` **indefinitely**, port unbound and process alive, because an attached client still held its stream open. It took `kill -9` | The reload rule `CLAUDE.md` documents can hang whenever a client is attached, which is whenever it matters. Worth a forced-shutdown path in `Service.qml` |
