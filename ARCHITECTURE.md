@@ -150,6 +150,7 @@ In dependency order, shallowest first:
 | `stats.py` | In-memory call counters, published through `/health` for the bar tooltip |
 | `policy.py` | The security boundary. Pure, takes the registry as an argument, tested against every route Omarchy ships |
 | `resolve.py` | Turns an identifier an agent supplied into the thing it names, or refuses. See below |
+| `consent.py` | The six ways a call can fail to get a yes, and a wait that fails closed. See below |
 | `execute.py` | `argv` only, never a shell. Timeouts, process-group termination, output caps, detaching |
 | `token.py` | The bearer token, created `0600` |
 | `auth.py` | Bearer authentication as **pure ASGI** — see below |
@@ -175,11 +176,12 @@ future consent check hooks in (`ROADMAP.md` N4).
 
 ## Resolution: naming the target before doing anything
 
-A call passes three gates, in this order:
+A call passes these gates, in this order:
 
 ```
   policy.decide   may this route run at all?          -> tier, and a reason
   resolve         does its argument name anything?    -> Target, or a refusal
+  consent.ask     does the user say yes, in time?     -> Answer   (N4 wires it)
   execute.run     argv, no shell, bounded             -> Result
 ```
 
@@ -210,6 +212,44 @@ Three properties are load-bearing:
 Resolution is validation, not policy, so it has no configuration key. It refuses
 exactly the calls that would have failed anyway, one step earlier and with a
 better message.
+
+## Consent, and what silence means
+
+`consent.py` is the third gate. It has no caller yet — N4 owns the asking, via
+MCP elicitation — but the rule it enforces is the part that must not be got
+wrong, so it exists and is tested first, against a fake asker rather than a
+client.
+
+Six outcomes, and exactly one of them runs the command:
+
+| Outcome | The agent is told |
+|---------|-------------------|
+| `accepted` | — proceeds, carrying whatever the user typed |
+| `declined` | The user refused this specific call |
+| `cancelled` | The user dismissed the prompt without deciding |
+| `timed_out` | Nobody answered; assume nobody is at the desk |
+| `unsupported` | This client cannot ask anyone; allow the route in `config.toml` |
+| `unreachable` | The client disconnected mid-question |
+
+They are distinct because each implies a different next move. An agent that
+cannot tell *the user said no* from *nobody was there* will either give up on a
+call the user would have allowed, or keep re-asking an empty room.
+
+Two properties are load-bearing, and neither should be relaxed when N4 lands:
+
+- **The deadline is the decision.** At `policy.ask_timeout_s` (60s by default,
+  bounded 5–600) the awaitable is cancelled and its result is never read. A
+  click that arrives a second late has nowhere to go: the agent has already been
+  told the call was refused and may have done something else since. This daemon
+  starts with the session and outlives whoever walked away, so a prompt that
+  granted on expiry would grant to an empty room.
+- **A client that cannot ask is not a client that said yes.** `supports_asking`
+  checks `elicitation.form` specifically — url-mode elicitation answers in a
+  browser tab, and this project exists because the person is looking at a
+  desktop. No capability means refuse, never hang and never assume.
+
+An exception from the asker is caught, not propagated: a broken prompt surfacing
+as a tool-call traceback would bury the reason the command did not run.
 
 ## Three traps worth knowing about
 
