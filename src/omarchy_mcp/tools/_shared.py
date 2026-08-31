@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 
-from .. import execute, registry
+from .. import execute, registry, resolve
 from ..config import Config
 from ..policy import decide
 from ..stats import Stats
@@ -54,10 +54,17 @@ def run_route(
         stats.record(tool, route=route, ok=False)
         return json.dumps({"error": verdict.reason, "tier": verdict.tier.value}, indent=2)
 
+    try:
+        call = resolve.resolve_call(cmd.route, args)
+    except resolve.Unresolvable as exc:
+        stats.record(tool, route=route, ok=False)
+        log.info("%s route=%r unresolved=%s", tool, route, exc.kind)
+        return json.dumps(exc.as_dict(), indent=2)
+
     if detach is None:
         detach = execute.should_detach(cmd.group, cmd.route)
 
-    argv = [*cmd.argv_prefix, *args]
+    argv = [*cmd.argv_prefix, *call.args]
     result = execute.run(
         argv,
         timeout_ms=timeout_ms or config.timeout_ms,
@@ -65,9 +72,17 @@ def run_route(
         detach=detach,
     )
     stats.record(tool, route=route, ok=result.exit_code in (0, None))
-    log.info("%s route=%r exit=%s", tool, route, result.exit_code)
+    log.info(
+        "%s route=%r target=%r exit=%s",
+        tool,
+        route,
+        call.target.label if call.target else None,
+        result.exit_code,
+    )
 
     payload: dict[str, object] = {"command": execute.quote(argv), **result.as_dict()}
+    if call.target is not None:
+        payload["target"] = call.target.label
     if result.exit_code not in (0, None):
         payload["hint"] = "Run omarchy_search_commands for this route's accepted arguments."
     return json.dumps(payload, indent=2)

@@ -1,0 +1,32 @@
+[
+  {
+    "id": 0,
+    "name": "HDMI-A-1",
+    "description": "Samsung Electric Company Odyssey G85SB",
+    "make": "Samsung Electric Company",
+    "model": "Odyssey G85SB",
+    "width": 3440,
+    "height": 1440,
+    "refreshRate": 59.959,
+    "x": 0,
+    "y": 0,
+    "scale": 1.25,
+    "focused": true,
+    "disabled": false
+  },
+  {
+    "id": 1,
+    "name": "DP-1",
+    "description": "Dell Inc. DELL U2723QE",
+    "make": "Dell Inc.",
+    "model": "DELL U2723QE",
+    "width": 3840,
+    "height": 2160,
+    "refreshRate": 59.997,
+    "x": 3440,
+    "y": 0,
+    "scale": 1.5,
+    "focused": false,
+    "disabled": false
+  }
+]

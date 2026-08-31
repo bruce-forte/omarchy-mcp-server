@@ -149,6 +149,7 @@ In dependency order, shallowest first:
 | `status.py` | The system-status aggregate: several probes gathered into one answer |
 | `stats.py` | In-memory call counters, published through `/health` for the bar tooltip |
 | `policy.py` | The security boundary. Pure, takes the registry as an argument, tested against every route Omarchy ships |
+| `resolve.py` | Turns an identifier an agent supplied into the thing it names, or refuses. See below |
 | `execute.py` | `argv` only, never a shell. Timeouts, process-group termination, output caps, detaching |
 | `token.py` | The bearer token, created `0600` |
 | `auth.py` | Bearer authentication as **pure ASGI** — see below |
@@ -167,10 +168,48 @@ The tools are a package, split by what they are for:
 | `tools/_shared.py` | `run_route`, the one path every curated tool takes to reach the executor |
 
 `_shared.run_route` matters more than its size suggests. Every curated tool goes
-through the same `policy.decide` and the same `execute.run` as `omarchy_run`: a
-curated tool is a better-shaped door onto the same room, never a way around the
-lock. It is also the single place where a future consent check hooks in
-(`ROADMAP.md` N4).
+through the same `policy.decide`, the same `resolve.resolve_call` and the same
+`execute.run` as `omarchy_run`: a curated tool is a better-shaped door onto the
+same room, never a way around the lock. It is also the single place where a
+future consent check hooks in (`ROADMAP.md` N4).
+
+## Resolution: naming the target before doing anything
+
+A call passes three gates, in this order:
+
+```
+  policy.decide   may this route run at all?          -> tier, and a reason
+  resolve         does its argument name anything?    -> Target, or a refusal
+  execute.run     argv, no shell, bounded             -> Result
+```
+
+`resolve.py` is the middle one. It exists because an unchecked argument fails
+inside a subprocess, where the failure arrives as somebody else's stderr — and
+because N4 will put a call in front of a person for approval, where *"an agent
+wants to switch the theme"* is not consent if the user cannot see which theme.
+So an identifier is resolved against live system state before anything is
+spawned, and what comes back is a `Target`: the value the command receives, and
+a human name for it, which lands in the log and the response today and in the
+approval prompt later.
+
+Three properties are load-bearing:
+
+- **It matches the way Omarchy matches.** `omarchy-theme-set` lowercases its
+  argument and turns spaces into dashes before looking for the directory, so
+  `resolve.slug` does the same. Anything looser would accept a name the command
+  then rejects. A near miss is refused with the near misses named, never
+  corrected into a different theme.
+- **Not found and could not look are different answers.** A wrong name is worth
+  retrying; a compositor that is not answering is not. The refusal says which,
+  in `reason`, because they imply different next moves for the agent.
+- **The table is small on purpose.** A route resolves its arguments only where
+  there is cheap, authoritative local truth: themes, monitors, image paths,
+  URLs. Package names have none — refusing one that is not installed yet would
+  refuse every install — so they pass through untouched.
+
+Resolution is validation, not policy, so it has no configuration key. It refuses
+exactly the calls that would have failed anyway, one step earlier and with a
+better message.
 
 ## Three traps worth knowing about
 
