@@ -12,6 +12,7 @@ from starlette.responses import JSONResponse
 from . import __version__
 from .auth import BearerAuth
 from .config import Config
+from . import resources
 from .stats import Stats
 from .tools import control, desktop, feedback, generic, system
 
@@ -56,6 +57,7 @@ def build(config: Config, token: str, log: logging.Logger, *, stats: Stats | Non
     system.register(mcp, config, log, stats)
     feedback.register(mcp, config, log, stats)
     control.register(mcp, config, log, stats)
+    resources.register(mcp, config, log)
 
     @mcp.custom_route("/health", methods=["GET"])
     async def health(_request):

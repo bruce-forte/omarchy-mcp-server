@@ -6,7 +6,7 @@ of them, so each shape is pinned.
 
 from __future__ import annotations
 
-from omarchy_mcp.tools.system import PROBES, _parse
+from omarchy_mcp.status import PROBES, parse as _parse
 
 
 def test_json_output_is_parsed():
