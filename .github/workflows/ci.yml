@@ -13,9 +13,9 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
 
@@ -46,14 +46,20 @@ jobs:
           } || true
 
       - name: No virtualenv committed
-        # `omarchy plugin validate` rejects symlinks inside a plugin folder.
-        run: test ! -e .venv
+        # `omarchy plugin validate` rejects symlinks inside a plugin folder, so
+        # a committed .venv makes the plugin uninstallable. Asks git rather than
+        # the filesystem: the step above creates a .venv here on purpose.
+        run: |
+          test -z "$(git ls-files .venv)" || {
+            echo "::error::.venv is tracked by git. Remove it and keep it ignored."
+            exit 1
+          }
 
   shell:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
       - name: Parse the bootstrap wrapper
         run: bash -n bin/omarchy-mcpd
       - name: shellcheck
