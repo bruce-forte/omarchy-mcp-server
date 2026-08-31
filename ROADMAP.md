@@ -45,9 +45,9 @@ reasons matter more than the choices when something needs revisiting.
       unlock what `run` structurally cannot do. Then Tier 2 (9).
 - [x] **4 — Resources.** Done. The 7 from decision 10, shaped by what Phase 0 found.
 - [x] **5 — Hardening.** Done. Generated `TOOLS.md`, CI, `SECURITY.md`.
-- [ ] **6 — Consent and visibility.** Next. The user can see what an agent did,
-      answer for the calls that warrant it, and stop the thing. See
-      [Next steps](#next-steps).
+- [ ] **6 — Consent and visibility.** In progress: N1 and N2 done. The user can
+      see what an agent did, answer for the calls that warrant it, and stop the
+      thing. See [Next steps](#next-steps).
 
 Tests are not a phase. `policy.py` and the auth checks are tested in the phase
 that creates them — they are the security boundary, and tests retrofitted to a
@@ -87,18 +87,53 @@ having; it is not worth trusting. `SECURITY.md` says so under *What the server
 does not defend against*, and names what actually bounds the damage: the policy
 tier and the client's own approval prompt.
 
-### N2 — Resolve and name the target before asking about it
+### N2 — Resolve and name the target before asking about it — done
 
 Prerequisite for N4, and worth stating separately because it is the part that is
 easy to get wrong. An approval prompt reading *"an agent wants to close a
 window"* is not consent — the user cannot tell which window, so the only rational
 answers are always-yes or always-no.
 
-Validate arguments and resolve identifiers to human labels *before* the prompt
-goes up: *"close **Firefox — GitHub**"*, *"switch the theme to **Tokyo Night**"*,
-*"run **omarchy update**"*. If resolution fails, refuse rather than ask; an
-argument that does not name anything real should never reach a person as a
-question.
+Arguments are validated and identifiers resolved to human labels *before*
+anything is spawned, in `resolve.py`. Resolution failure refuses; an argument
+that does not name anything real never reaches a person as a question.
+
+**It refuses now, at every tier, rather than only where N4 will ask.** A theme
+typo used to be a subprocess exiting non-zero with somebody else's stderr; it is
+now a refusal naming the near misses, and the resolved label lands in the log
+and the response until N4 has a prompt to put it in. Built for N4 and paying for
+itself before N4 exists.
+
+What is resolved, and against what:
+
+| Kind | Source | Rule |
+|------|--------|------|
+| Theme | `omarchy theme list` | Slug-exact, mirroring `omarchy-theme-set`'s own lowercase-and-dash. A near miss refuses with suggestions; a prefix is not a match |
+| Monitor | `hyprctl -j monitors` | Exact name; labelled with its description |
+| Image path | Filesystem | `~` expanded, absolute required, must exist and be a file |
+| Editor path | Filesystem | `~` expanded, absolute required, parent directory must exist — opening a new file is normal |
+| URL | — | `http://` or `https://` only |
+
+Package names get no resolver: there is no cheap local truth for one that is not
+installed yet, and refusing it would refuse every `omarchy install`.
+
+Three decisions worth keeping:
+
+- **Not found and could not look are distinct reasons.** A wrong name is worth
+  retrying; a compositor that is not answering is not. Same shape as N3's rule
+  that a timeout must not read as a refusal.
+- **One gate, both paths.** `_shared.run_route` and `omarchy_run` call the same
+  `resolve_call`, so reaching a command by its route cannot skip a check that
+  reaching it by a curated tool applies. `omarchy_screenshot` and
+  `omarchy_screen_text` bypass that gate structurally, so they call the monitor
+  resolver themselves.
+- **No config key.** Resolution is validation, not policy: it refuses exactly
+  the calls that would have failed anyway. A knob whose only effect is worse
+  error messages is not worth documenting forever.
+
+Not built: a window resolver. The roadmap's own *"close **Firefox — GitHub**"*
+example has no caller — no tool takes a window identifier, and the perception
+tools act on the focused one. It lands when something needs it.
 
 ### N3 — No answer means denied
 
