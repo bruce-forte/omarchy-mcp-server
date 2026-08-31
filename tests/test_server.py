@@ -94,15 +94,52 @@ def test_initialize_advertises_tools(client):
     assert result["serverInfo"]["name"] == "omarchy"
 
 
-def test_all_generic_tools_are_listed(client, session):
+#: Every tool the server advertises. Pinned so that adding one is a deliberate
+#: act with a documentation regeneration attached, rather than a surprise.
+EXPECTED_TOOLS = {
+    # Generic: these reach everything Omarchy has.
+    "omarchy_search_commands",
+    "omarchy_run",
+    "omarchy_shell_targets",
+    "omarchy_shell_call",
+    # Curated: each does something the generic tools structurally cannot.
+    "omarchy_screenshot",
+    "omarchy_desktop_state",
+    "omarchy_screen_text",
+    "omarchy_clipboard_read",
+    "omarchy_clipboard_write",
+    "omarchy_system_status",
+}
+
+
+def test_all_tools_are_listed(client, session):
     tools = parse(rpc(client, "tools/list", session=session))["result"]["tools"]
-    names = {t["name"] for t in tools}
-    assert names == {
-        "omarchy_search_commands",
-        "omarchy_run",
-        "omarchy_shell_targets",
-        "omarchy_shell_call",
-    }
+    assert {t["name"] for t in tools} == EXPECTED_TOOLS
+
+
+def test_tools_can_be_disabled_by_config():
+    """A curated tool the user has switched off must not be advertised at all;
+    advertising it and then refusing would waste a call to learn that."""
+    app = build(
+        Config(disabled_tools=("omarchy_screenshot", "omarchy_clipboard_write")),
+        TOKEN,
+        logging.getLogger("test"),
+    )
+    with TestClient(app, base_url=BASE_URL) as client:
+        response = rpc(
+            client,
+            "initialize",
+            {"protocolVersion": PROTOCOL, "capabilities": {},
+             "clientInfo": {"name": "pytest", "version": "1"}},
+        )
+        sid = response.headers["mcp-session-id"]
+        rpc(client, "notifications/initialized", session=sid)
+        names = {t["name"] for t in parse(rpc(client, "tools/list", session=sid))["result"]["tools"]}
+
+    assert "omarchy_screenshot" not in names
+    assert "omarchy_clipboard_write" not in names
+    # The generic tools are not disableable: they are the fallback path.
+    assert "omarchy_run" in names
 
 
 def test_every_tool_has_a_description_and_schema(client, session):
