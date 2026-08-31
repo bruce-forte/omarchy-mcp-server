@@ -44,12 +44,6 @@ class TestSearch:
     """Search is deliberately simple; these pin the ordering that makes it
     usable, because a model reads the first few rows and stops."""
 
-    @pytest.fixture(autouse=True)
-    def _patch(self, monkeypatch, commands):
-        import omarchy_mcp.registry as reg
-
-        monkeypatch.setattr(reg, "all_commands", lambda: commands)
-
     def test_exact_route_ranks_first(self):
         from omarchy_mcp.registry import search
 

@@ -14,13 +14,6 @@ import pytest
 from omarchy_mcp.tools import control
 
 
-@pytest.fixture(autouse=True)
-def _registry(monkeypatch, commands):
-    import omarchy_mcp.registry as reg
-
-    monkeypatch.setattr(reg, "all_commands", lambda: commands)
-
-
 class TestToggleStates:
     """The toggle routes are not consistent with each other, and the mapping is
     read from the registry rather than hardcoded so it cannot drift."""
