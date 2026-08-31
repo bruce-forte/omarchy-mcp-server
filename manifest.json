@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.bruce-forte.mcp-server",
+  "name": "MCP Server",
+  "version": "0.1.0",
+  "author": "bruce-forte",
+  "license": "AGPL-3.0",
+  "description": "Exposes Omarchy's commands and shell IPC to local AI agents over MCP",
+  "kinds": [
+    "service",
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "MCP",
+    "description": "Shows whether the MCP server is serving, and its port",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "showWhenStopped": true
+    },
+    "schema": [
+      {
+        "key": "showWhenStopped",
+        "type": "bool",
+        "label": "Keep the icon visible while the server is stopped"
+      }
+    ]
+  },
+  "keepLoaded": true
+}

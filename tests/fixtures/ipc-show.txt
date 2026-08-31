@@ -1,0 +1,159 @@
+target image-selector
+  function cancel(doneFile: string): string
+  function open(imageDirs: string, imageRowsB64: string, selectedImage: string, selectionFile: string, doneFile: string, showLabels: string, filterable: string): string
+  function ping(): string
+  function preload(imageRowsB64: string, selectedImage: string, showLabels: string, filterable: string): string
+target nightlight
+  function toggle(): string
+  function refresh(): void
+  function disable(): string
+  function status(): string
+  function enable(): string
+target idle
+  function toggle(): string
+  function disable(): string
+  function debug(): string
+  function status(): string
+  function enable(): string
+target omarchy.clock
+  function hide(): void
+  function toggle(): void
+  function cycleFormat(): void
+  function toggleWeekStart(): void
+  function refresh(): void
+  function open(): void
+  function show(): void
+  function close(): void
+target lock
+  function hidePreview(): string
+  function lock(): string
+  function isLocked(): string
+  function preview(): string
+  function status(): string
+target media
+  function playPause(): string
+  function play(): string
+  function sourcePrevious(): string
+  function sourceNext(): string
+  function ping(): string
+  function sourceSwitch(): string
+  function next(): string
+  function pause(): string
+  function previous(): string
+  function status(): string
+  function sourceSwitchPrevious(): string
+target omarchy.tailscale
+  function hide(): void
+  function toggle(): void
+  function up(): string
+  function refresh(): string
+  function open(): void
+  function toggleTailscale(): string
+  function show(): void
+  function status(): string
+  function close(): void
+  function down(): string
+target io.github.bruce-forte.controller-support
+  function running(): string
+  function status(): string
+  function reload(): string
+  function restart(): string
+target omarchy.agents
+  function hide(): void
+  function toggle(): void
+  function refresh(): string
+  function open(): void
+  function next(): string
+  function show(): void
+  function close(): void
+target shell
+  function setPluginEnabled(id: string, enabled: string): string
+  function hide(id: string): void
+  function toggle(id: string, payloadJson: string): void
+  function listShellConfig(): string
+  function applyTheme(colorsB64: string, shellB64: string): string
+  function debugBarGeometry(): string
+  function summon(id: string, payloadJson: string): string
+  function moveBarWidget(id: string, placementJson: string): string
+  function enablePlugin(id: string, placementJson: string): string
+  function rescanPlugins(): void
+  function putBarWidget(id: string, placementJson: string): string
+  function togglePanelAt(section: string, index: string): string
+  function call(id: string, method: string, arg: string): string
+  function listPlugins(): string
+  function setBarWidget(id: string, key: string, valueJson: string, selectorJson: string): string
+  function ping(): string
+  function toggleBarTransparency(): string
+  function reloadConfig(): string
+target notifications
+  function dndState(): string
+  function setDnd(value: string): string
+  function dismissAll(): string
+  function toggleDnd(): string
+  function dismiss(summary: string): string
+  function dismissOne(): string
+  function ping(): string
+  function invokeLast(): string
+  function clear(): string
+  function showHistory(): string
+  function isDnd(): string
+target omarchy.bluetooth
+  function hide(): void
+  function toggle(): void
+  function open(): void
+  function show(): void
+  function toggleBluetooth(): void
+  function close(): void
+target omarchy.audio
+  function hide(): void
+  function toggle(): void
+  function open(): void
+  function show(): void
+  function close(): void
+target omarchy.weather
+  function hide(): void
+  function toggle(): void
+  function edit(): void
+  function open(): void
+  function show(): void
+  function close(): void
+target omarchy.monitor
+  function hide(): void
+  function toggle(): void
+  function brightness(percent: string): string
+  function open(): void
+  function state(): string
+  function show(): void
+  function close(): void
+target omarchy.system-update
+  function refresh(): void
+  function clear(): void
+target omarchy.network
+  function hide(): void
+  function toggle(): void
+  function showQr(): void
+  function open(): void
+  function toggleNetwork(): void
+  function show(): void
+  function speedTest(): void
+  function close(): void
+target osd
+  function state(): string
+  function ping(): string
+  function show(payloadJson: string): string
+  function close(): string
+target omarchy.power
+  function hide(): void
+  function toggle(): void
+  function open(): void
+  function show(): void
+  function togglePercentage(): void
+  function close(): void
+target omarchy.indicators
+  function refresh(): void
+target background
+  function set(path: string): void
+  function transition(fromPath: string, path: string): void
+  function refresh(): void
+  function themeTransition(fromPath: string, path: string, finalPath: string, colorsB64: string, shellB64: string): void
+  function setInstant(path: string): void

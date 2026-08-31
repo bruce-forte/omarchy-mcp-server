@@ -1,0 +1,57 @@
+# Omarchy MCP Server -- configuration
+#
+# This file is optional; everything works without it. Every key below is
+# commented out and shows its default, so uncommenting is the only thing that
+# changes behaviour, and keys you leave alone keep tracking the defaults as the
+# plugin is updated.
+#
+# Reload without restarting the server:
+#   omarchy-shell io.github.bruce-forte.mcp-server reloadConfig
+
+[server]
+# Port the MCP server listens on. Changing it breaks any client already
+# configured against the old port; re-run the setup command afterwards:
+#   omarchy-shell io.github.bruce-forte.mcp-server clientConfig
+# port = 8765
+
+# How long a command may run before it is terminated, in milliseconds. A tool
+# call can override this per call.
+# timeout_ms = 30000
+
+# Cap on captured output per call, in bytes. Longer output keeps its head and
+# tail and drops the middle.
+# max_output_b = 262144
+
+# The listen address is always 127.0.0.1 and is deliberately not configurable.
+# This server runs commands on your desktop; putting that on the network would
+# leave a single bearer token between your machine and everything else on it.
+
+[policy]
+# Commands are classified automatically from `omarchy commands --json`:
+#
+#   blocked   Requires sudo. Refused always -- the server has no terminal, so a
+#             password prompt could never be answered. Not overridable here.
+#   guarded   Installs, removes, migrates, or otherwise changes the system in a
+#             way that is hard to undo. Refused unless allowed below.
+#   safe      Everything else. Runs.
+#
+# See how any command is classified with the omarchy_search_commands tool.
+
+# Allow specific guarded routes:
+# allow = ["omarchy theme remove", "omarchy system reboot"]
+
+# Allow every command in a group. Groups are shown in search results.
+# allow_groups = ["install", "remove"]
+
+# Demote otherwise-safe routes to guarded, so they are refused:
+# deny = ["omarchy launch browser"]
+
+[tools]
+# Curated tools to switch off by name. Anything disabled here can still be
+# reached through omarchy_run, subject to [policy].
+# disabled = ["screen_text"]
+
+[log]
+# debug logs the arguments of every tool call, which is useful when an agent is
+# doing something surprising and noisy the rest of the time.
+# level = "info"
