@@ -30,10 +30,19 @@ This file is the working agreement.
 - Regenerate `TOOLS.md` with `make tools` whenever a tool's name, description,
   schema, or annotations change. It is generated; never edit it by hand, and
   `make check` fails if it is stale.
-- Tests read `tests/fixtures/commands.json`, a committed snapshot of
-  `omarchy commands --all --json`, never the installed Omarchy. That is what
-  lets the suite run in CI, and it stops tests changing meaning the next time
-  `omarchy update` renames a route. Refresh it deliberately, in its own commit.
+- Tests read committed snapshots in `tests/fixtures/`, never the installed
+  Omarchy: `commands.json` (`omarchy commands --all --json`), `themes.txt`
+  (`omarchy theme list`), `monitors.json` (`hyprctl -j monitors`, trimmed by
+  hand), `ipc-show.txt` (`qs ipc show`). Autouse fixtures pin all of them. That
+  is what lets the suite run in CI, and it stops tests changing meaning the next
+  time `omarchy update` renames a route. Refresh one deliberately, in its own
+  commit.
+- A tool argument that names something — a theme, a monitor, a path, a URL —
+  gets a resolver in `resolve.py` and a route in its table, so the refusal
+  happens before anything is spawned and the call carries a human label for the
+  approval prompt N4 will put on screen. No resolver without a source of truth:
+  package names have none, and refusing one that is not installed yet would
+  refuse every install.
 
 ## The security boundary
 
