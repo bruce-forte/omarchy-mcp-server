@@ -15,7 +15,7 @@ from mcp.types import ImageContent, TextContent, ToolAnnotations
 from .. import desktop, resolve
 from ..config import Config
 from ..stats import Stats
-from ._shared import UNTRUSTED
+from ._shared import UNTRUSTED, threaded
 
 TARGETS = "screen (the focused monitor), window (the focused window), monitor, or region"
 
@@ -43,6 +43,7 @@ def register(mcp, config: Config, log, stats: Stats) -> None:
                 openWorldHint=False,
             ),
         )
+        @threaded
         def omarchy_screenshot(
             target: str = "screen",
             monitor: str = "",
@@ -99,6 +100,7 @@ def register(mcp, config: Config, log, stats: Stats) -> None:
                 openWorldHint=False,
             ),
         )
+        @threaded
         def omarchy_desktop_state() -> str:
             stats.record("omarchy_desktop_state")
             try:
@@ -122,6 +124,7 @@ def register(mcp, config: Config, log, stats: Stats) -> None:
                 openWorldHint=False,
             ),
         )
+        @threaded
         def omarchy_screen_text(
             target: str = "screen", monitor: str = "", region: str = "", lang: str = ""
         ) -> str:
@@ -162,6 +165,7 @@ def register(mcp, config: Config, log, stats: Stats) -> None:
                 openWorldHint=False,
             ),
         )
+        @threaded
         def omarchy_clipboard_read(mime: str = "") -> str:
             stats.record("omarchy_clipboard_read")
             try:
@@ -190,6 +194,7 @@ def register(mcp, config: Config, log, stats: Stats) -> None:
                 openWorldHint=False,
             ),
         )
+        @threaded
         def omarchy_clipboard_write(text: str) -> str:
             stats.record("omarchy_clipboard_write")
             try:

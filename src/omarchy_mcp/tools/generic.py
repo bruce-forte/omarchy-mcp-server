@@ -20,7 +20,7 @@ from .. import execute, registry, resolve, shell
 from ..config import Config
 from ..policy import decide
 from ..stats import Stats
-from ._shared import UNTRUSTED
+from ._shared import UNTRUSTED, offload, threaded
 
 
 def register(mcp, config: Config, log, stats: Stats | None = None) -> None:
@@ -38,6 +38,7 @@ def register(mcp, config: Config, log, stats: Stats | None = None) -> None:
             readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False
         ),
     )
+    @threaded
     def omarchy_search_commands(
         query: str = "",
         limit: int = 20,
@@ -72,7 +73,7 @@ def register(mcp, config: Config, log, stats: Stats | None = None) -> None:
             readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=True
         ),
     )
-    def omarchy_run(
+    async def omarchy_run(
         route: str,
         args: list[str] | None = None,
         timeout_ms: int | None = None,
@@ -98,7 +99,7 @@ def register(mcp, config: Config, log, stats: Stats | None = None) -> None:
         # The same gate the curated tools pass through. Reaching a command by
         # its route must not skip a check that reaching it by a tool applies.
         try:
-            call = resolve.resolve_call(cmd.route, args)
+            call = await offload(resolve.resolve_call, cmd.route, args)
         except resolve.Unresolvable as exc:
             log.info("run route=%r unresolved=%s", cmd.route, exc.kind)
             return json.dumps(exc.as_dict(), indent=2)
@@ -107,7 +108,8 @@ def register(mcp, config: Config, log, stats: Stats | None = None) -> None:
             detach = execute.should_detach(cmd.group, cmd.route)
 
         argv = [*cmd.argv_prefix, *call.args]
-        result = execute.run(
+        result = await offload(
+            execute.run,
             argv,
             timeout_ms=timeout_ms or config.timeout_ms,
             max_output_b=config.max_output_b,
@@ -139,6 +141,7 @@ def register(mcp, config: Config, log, stats: Stats | None = None) -> None:
             readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False
         ),
     )
+    @threaded
     def omarchy_shell_targets(target: str = "", refresh: bool = False) -> str:
         stats.record("omarchy_shell_targets")
         try:
@@ -170,6 +173,7 @@ def register(mcp, config: Config, log, stats: Stats | None = None) -> None:
             readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True
         ),
     )
+    @threaded
     def omarchy_shell_call(
         target: str,
         method: str,

@@ -35,7 +35,7 @@ def register(mcp, config: Config, log, stats: Stats) -> None:
                 openWorldHint=False,
             ),
         )
-        def omarchy_notify(
+        async def omarchy_notify(
             headline: str,
             description: str = "",
             urgency: str = "normal",
@@ -58,7 +58,7 @@ def register(mcp, config: Config, log, stats: Stats) -> None:
             if description:
                 args.append(description)
 
-            return run_route(
+            return await run_route(
                 "omarchy notification send", args,
                 config=config, stats=stats, log=log, tool="omarchy_notify",
             )
@@ -78,7 +78,7 @@ def register(mcp, config: Config, log, stats: Stats) -> None:
                 openWorldHint=False,
             ),
         )
-        def omarchy_osd(
+        async def omarchy_osd(
             message: str = "",
             icon: str = "",
             progress: int = -1,
@@ -98,7 +98,7 @@ def register(mcp, config: Config, log, stats: Stats) -> None:
                     {"error": "give at least one of message, icon, or progress"}, indent=2
                 )
 
-            return run_route(
+            return await run_route(
                 "omarchy osd", args,
                 config=config, stats=stats, log=log, tool="omarchy_osd",
             )

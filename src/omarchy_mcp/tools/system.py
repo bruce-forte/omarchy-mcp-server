@@ -9,6 +9,7 @@ from mcp.types import ToolAnnotations
 from ..config import Config
 from ..stats import Stats
 from ..status import gather
+from ._shared import threaded
 
 # Re-exported for tests and for the resource, which answer the same question.
 __all__ = ["register"]
@@ -33,6 +34,7 @@ def register(mcp, config: Config, log, stats: Stats) -> None:
             readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False
         ),
     )
+    @threaded
     def omarchy_system_status() -> str:
         stats.record("omarchy_system_status")
         return json.dumps(gather(), indent=2)
