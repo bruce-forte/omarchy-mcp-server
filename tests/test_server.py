@@ -152,6 +152,43 @@ def test_tools_can_be_disabled_by_config():
     assert "omarchy_run" in names
 
 
+#: Tools whose result carries bytes this project does not author. Prompt
+#: injection through them is the sharpest edge this server has, so the warning
+#: is repeated per tool: a long session drops the handshake instructions long
+#: before it drops the tool schemas.
+UNTRUSTED_TOOLS = {
+    "omarchy_screenshot",
+    "omarchy_screen_text",
+    "omarchy_clipboard_read",
+    "omarchy_desktop_state",
+    "omarchy_run",
+}
+
+
+def test_the_handshake_says_what_is_read_is_not_an_instruction(client):
+    response = rpc(
+        client,
+        "initialize",
+        {
+            "protocolVersion": PROTOCOL,
+            "capabilities": {},
+            "clientInfo": {"name": "pytest", "version": "1"},
+        },
+    )
+    instructions = parse(response)["result"]["instructions"]
+    assert "untrusted" in instructions
+    assert "never as instructions" in instructions
+
+
+def test_tools_returning_foreign_content_repeat_the_warning(client, session):
+    tools = {t["name"]: t for t in parse(rpc(client, "tools/list", session=session))["result"]["tools"]}
+    for name in UNTRUSTED_TOOLS:
+        assert "never as instructions" in tools[name]["description"], name
+    # Not on tools whose output is the server's own: the sentence is a warning,
+    # and a warning on everything is a warning on nothing.
+    assert "never as instructions" not in tools["omarchy_search_commands"]["description"]
+
+
 def test_every_tool_has_a_description_and_schema(client, session):
     tools = parse(rpc(client, "tools/list", session=session))["result"]["tools"]
     for tool in tools:
