@@ -77,7 +77,12 @@ looks exactly like one that was never installed.
 - Everything goes to stderr, which `omarchy-shell` inherits, so
   `journalctl --user -f` has it alongside the shell's own QML errors.
 - Log every tool call at `info`: name, route, exit code. That is the audit trail
-  of what an agent actually did to the desktop.
+  of what an agent actually did to the desktop, alongside `activity.jsonl`,
+  which keeps it after the daemon is gone.
+- **The activity log never carries command output.** OCR text, clipboard reads
+  and stdout are the user's screen, not the agent's action. Arguments are
+  written, truncated. Every tool records through `stats.call(...)` — one record
+  per call, on every exit path — never by writing to `activity.py` directly.
 
 ## Omarchy plugin conventions
 

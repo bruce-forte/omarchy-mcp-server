@@ -8,9 +8,9 @@ install step, and no separate package. The plugin supervises a small daemon; the
 daemon starts with your session and stops with it.
 
 > **Status: Phase 6.** Nineteen tools, seven resources, a supervised daemon, a
-> bar widget that says whether it is serving, and approval prompts that reach
-> the desktop. What is left is an activity log and the surfaces that read it;
-> see [`ROADMAP.md`](ROADMAP.md).
+> bar widget that says whether it is serving, approval prompts that reach the
+> desktop, and an activity log of everything an agent did. What is left is the
+> surfaces that read it; see [`ROADMAP.md`](ROADMAP.md).
 
 ## Documentation
 
@@ -32,6 +32,7 @@ daemon starts with your session and stops with it.
 - [Checking it works](#checking-it-works)
 - [Configuration](#configuration)
 - [What an agent is allowed to run](#what-an-agent-is-allowed-to-run)
+- [Seeing what it did](#seeing-what-it-did)
 - [Development](#development)
 - [Troubleshooting](#troubleshooting)
 - [Uninstall](#uninstall)
@@ -297,6 +298,43 @@ The same applies to monitor names, wallpaper paths, and URLs. `reason` tells an
 agent whether the name was wrong (`not_found`, worth retrying with another) or
 whether nothing could be checked (`source_unavailable`, retrying will not help).
 
+## Seeing what it did
+
+Every tool call is appended to an activity log, so *what did that agent do to my
+desktop* has an answer after the daemon is gone:
+
+```
+~/.local/state/io.github.bruce-forte.mcp-server/activity.jsonl
+```
+
+One JSON object per line — what was called, what it was understood to be acting
+on, whether you approved it, how it ended, and how long it took:
+
+```jsonc
+{"ts":"2026-08-31T14:22:07+02:00","tool":"omarchy_run","route":"omarchy theme set",
+ "args":["tokyo-night"],"target":"Tokyo Night","tier":"guarded","consent":"accepted",
+ "outcome":"ok","exit":0,"ms":142}
+```
+
+Refusals are in there too — a guarded route that was stopped is more interesting
+than a safe one that ran. `outcome` is one of `ok`, `failed`, `timed_out`,
+`refused`, `not_installed` or `error`.
+
+Read the end of it without `jq`:
+
+```bash
+~/.config/omarchy/plugins/io.github.bruce-forte.mcp-server/bin/omarchy-mcpd --tail 20
+```
+
+**What is never written there:** command output. No OCR text, no clipboard
+reads, nothing a tool returned. Arguments are written, truncated — they are what
+the agent asked for, and they are the point — so the file can contain text you
+copied, and it is created `0600` in a `0700` directory. It rotates at 1 MiB
+keeping one previous generation, so it costs at most 2 MiB.
+
+Switch it off, resize it, or rename it under `[log]` in your config; see
+[`config.example.toml`](config.example.toml).
+
 ## Development
 
 Work on a checkout, then point Omarchy at it:
@@ -338,7 +376,7 @@ anywhere inside a plugin folder and a virtualenv is largely symlinks.
 
 ```bash
 omarchy plugin remove io.github.bruce-forte.mcp-server
-rm -rf ~/.local/state/io.github.bruce-forte.mcp-server   # venv and bearer token
+rm -rf ~/.local/state/io.github.bruce-forte.mcp-server   # venv, bearer token, activity log
 rm -rf ~/.config/omarchy/mcp                             # your configuration
 rm -rf "$XDG_RUNTIME_DIR/io.github.bruce-forte.mcp-server"   # pending approvals
 claude mcp remove omarchy                                # if you added it there

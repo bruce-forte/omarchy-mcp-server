@@ -16,7 +16,8 @@ def test_starts_empty():
 
 def test_records_a_call():
     stats = Stats()
-    stats.record("omarchy_run", route="omarchy theme current")
+    with stats.call("omarchy_run") as rec:
+        rec.route = "omarchy theme current"
     snapshot = stats.snapshot()
     assert snapshot["calls"] == 1
     assert snapshot["failures"] == 0
@@ -25,8 +26,10 @@ def test_records_a_call():
 
 def test_failures_are_counted_separately():
     stats = Stats()
-    stats.record("omarchy_run", ok=False)
-    stats.record("omarchy_run", ok=True)
+    with stats.call("omarchy_run") as rec:
+        rec.exit = 1
+    with stats.call("omarchy_run") as rec:
+        rec.exit = 0
     snapshot = stats.snapshot()
     assert snapshot["calls"] == 2
     assert snapshot["failures"] == 1
@@ -41,7 +44,8 @@ def test_concurrent_records_do_not_lose_counts():
 
     def hammer():
         for _ in range(200):
-            stats.record("t")
+            with stats.call("t"):
+                pass
 
     threads = [threading.Thread(target=hammer) for _ in range(8)]
     for t in threads:

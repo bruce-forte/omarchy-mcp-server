@@ -204,6 +204,20 @@ class TestEveryAnswer:
         )
         assert isinstance(decision, gate.Allowed)
         assert len(ctx.elicited) == 1
+        # The activity log has to tell an approval apart from a pre-allowed
+        # route, and cannot derive it: both are guarded, and both ran.
+        assert decision.consent == "accepted"
+
+    @pytest.mark.anyio
+    async def test_a_pre_allowed_route_records_no_consent(self, commands):
+        """Nobody was asked, so nothing was answered."""
+        cmd = guarded(commands)
+        config = Config(allow=(cmd.route,))
+        decision = await gate.authorize(
+            cmd, [], config=config, ctx=self._ctx(None), log=LOG, offload=offload
+        )
+        assert isinstance(decision, gate.Allowed)
+        assert decision.consent is None
 
     @pytest.mark.anyio
     async def test_decline_refuses_and_says_the_user_refused(self, commands, quiet_notifications):

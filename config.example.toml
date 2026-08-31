@@ -69,3 +69,24 @@
 # debug logs the arguments of every tool call, which is useful when an agent is
 # doing something surprising and noisy the rest of the time.
 # level = "info"
+
+# Append one JSON line per tool call to
+# ~/.local/state/io.github.bruce-forte.mcp-server/activity.jsonl -- what was
+# run, what it was understood to act on, whether you approved it, and how it
+# ended. This is the only record of what an agent did that outlives the daemon.
+# Read the last few with:
+#   ~/.config/omarchy/plugins/io.github.bruce-forte.mcp-server/bin/omarchy-mcpd --tail
+#
+# Command output is never written there: no OCR text, no clipboard reads.
+# Arguments are, truncated -- so the file can contain text you copied, and it
+# is created 0600. Switch it off if you would rather it did not exist.
+# activity = true
+
+# Rotate at this size, keeping one previous generation beside it, so the log
+# costs at most twice this on disk. 64 KiB to 64 MiB.
+# activity_max_bytes = 1048576
+
+# The name of that file. A name, not a path: it is always created in the state
+# directory, because Omarchy reloads the shell on any write inside a plugin
+# directory and a log there would reload it once per tool call.
+# activity_file = "activity.jsonl"

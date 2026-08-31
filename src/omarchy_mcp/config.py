@@ -10,7 +10,7 @@ import tomllib
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from .paths import CONFIG_FILE
+from .paths import ACTIVITY_FILE, CONFIG_FILE
 
 #: Anything above this and a single call could bury the agent's context.
 DEFAULT_MAX_OUTPUT_B = 256 * 1024
@@ -23,6 +23,12 @@ DEFAULT_PORT = 8765
 #: on a desk nobody is at.
 DEFAULT_ASK_TIMEOUT_S = 60
 ASK_TIMEOUT_BOUNDS = (5, 600)
+
+#: Roughly 3-5k calls live, and one rotated generation kept beside it. Weeks of
+#: ordinary use, bounded so that a hand-edited value cannot quietly fill a small
+#: home partition, and floored so a rotation is not a thing that happens hourly.
+DEFAULT_ACTIVITY_MAX_B = 1024 * 1024
+ACTIVITY_MAX_B_BOUNDS = (64 * 1024, 64 * 1024 * 1024)
 
 
 @dataclass(frozen=True)
@@ -53,6 +59,15 @@ class Config:
     disabled_tools: tuple[str, ...] = ()
 
     log_level: str = "info"
+
+    #: Whether tool calls are appended to the activity log. On by default: it is
+    #: the only record of what an agent did that outlives the daemon. Off is
+    #: offered because the file holds command arguments, which can be text the
+    #: user typed or copied.
+    activity: bool = True
+    activity_max_bytes: int = DEFAULT_ACTIVITY_MAX_B
+    #: A filename, never a path -- see `_name`.
+    activity_file: str = ACTIVITY_FILE
 
     #: Problems found while loading, for the caller to report. Loading never
     #: raises: a broken file yields defaults plus an explanation.
@@ -92,6 +107,29 @@ def _int(raw: object, key: str, default: int, problems: list[str], lo: int, hi: 
         problems.append(f"{key} must be between {lo} and {hi}; using {default}")
         return default
     return raw
+
+
+def _name(raw: object, key: str, default: str, problems: list[str]) -> str:
+    """A bare filename, joined onto the state directory by the caller.
+
+    Not a path. Omarchy reloads the shell on any write inside the plugin
+    directory, so a log that could be pointed there would reload the shell once
+    per tool call -- which reads as a broken plugin, not as a bad setting. A
+    name with no separator in it cannot address anywhere at all.
+    """
+    if raw is None:
+        return default
+    if not isinstance(raw, str) or not raw.strip():
+        problems.append(f"{key} must be a filename; using {default}")
+        return default
+    name = raw.strip()
+    if "/" in name or "\\" in name or name in (".", ".."):
+        problems.append(
+            f"{key} must be a bare filename, not a path; it is always created in "
+            f"the state directory. Using {default}"
+        )
+        return default
+    return name
 
 
 def load(path: Path | None = None) -> Config:
@@ -142,5 +180,16 @@ def load(path: Path | None = None) -> Config:
         ),
         disabled_tools=_strs(tools.get("disabled"), "tools.disabled", problems),
         log_level=level,
+        activity=_bool(log.get("activity"), "log.activity", True, problems),
+        activity_max_bytes=_int(
+            log.get("activity_max_bytes"),
+            "log.activity_max_bytes",
+            DEFAULT_ACTIVITY_MAX_B,
+            problems,
+            *ACTIVITY_MAX_B_BOUNDS,
+        ),
+        activity_file=_name(
+            log.get("activity_file"), "log.activity_file", ACTIVITY_FILE, problems
+        ),
     )
     return replace(cfg, problems=tuple(problems))

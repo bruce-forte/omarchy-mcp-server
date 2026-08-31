@@ -39,6 +39,12 @@ class Allowed:
 
     call: resolve.Call
     verdict: Verdict
+    #: How the user answered, when they were asked at all. ``None`` means
+    #: nothing was put to them -- the route was safe, or it was guarded and
+    #: already in `policy.allow`. Not derivable by the caller from tier and
+    #: config, and the activity log has to tell those two apart: one is a
+    #: decision the user took just now, the other one they took months ago.
+    consent: str | None = None
 
 
 @dataclass(frozen=True)
@@ -143,7 +149,7 @@ async def authorize(
     log.info("consent %s route=%r", answer.outcome.value, cmd.route)
     if not answer.accepted:
         return Refused(answer.reason, verdict.tier.value, outcome=answer.outcome.value)
-    return Allowed(call, verdict)
+    return Allowed(call, verdict, consent=answer.outcome.value)
 
 
 async def _ask(cmd, call, *, config, ctx, log, offload) -> consent.Answer:

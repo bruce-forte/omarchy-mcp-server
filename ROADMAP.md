@@ -61,7 +61,7 @@ stop it without a terminal. Decision 12 covers *daemon* faults; none of this
 covers what an *agent* does, which is the part with consequences.
 
 Ordered by what unblocks what. N1–N3 stand alone and are cheap. N4 depends on
-N2 and N3. N5–N7 depend on N4's log.
+N2 and N3. N6 depends on N5's log.
 
 ### N1 — Tell the model that what it reads is data, not instructions — done
 
@@ -386,28 +386,110 @@ land in the same commit:
 - The notification is dismissed on every exit path, including the cancelled one.
 - An argument containing newlines cannot add a line to the prompt.
 
-### N5 — An activity log on disk
+### N5 — An activity log on disk — done
 
-`stats.py` keeps five counters in memory and `/health` publishes them. That is
-enough for "is it serving" and nothing else: it cannot answer *what did the
-agent just do to my desktop*, and it dies with the daemon.
+`stats.py` kept five counters in memory and `/health` published them. That was
+enough for "is it serving" and nothing else: it could not answer *what did the
+agent just do to my desktop*, and it died with the daemon.
 
-Append one JSON object per tool call to
-`${XDG_STATE_HOME:-~/.local/state}/io.github.bruce-forte.mcp-server/activity.jsonl`
-— timestamp, tool, route, exit code, duration, outcome, and the resolved summary
-from N2. Include refusals; a `guarded` route that was blocked is more interesting
-than a `safe` one that ran. This is the audit trail `CLAUDE.md` already asks
-stderr to carry, in a form something other than `journalctl` can read.
+One JSON object per tool call now lands in
+`${XDG_STATE_HOME:-~/.local/state}/io.github.bruce-forte.mcp-server/activity.jsonl`:
 
-Two things to get right:
+```jsonc
+{"ts":"2026-08-31T14:22:07+02:00","tool":"omarchy_run","route":"omarchy theme set",
+ "args":["tokyo-night"],"target":"Tokyo Night","tier":"guarded","consent":"accepted",
+ "outcome":"ok","exit":0,"ms":142}
+```
 
-- **Cap and rotate it**, but note that rotation renames the inode and silently
-  kills any `inotify` watch on the path (N6 depends on one). Append and rotate
-  under a single lock, and have the reader re-watch on rename.
-- **Mode `0600`, directory `0700`.** Clipboard and OCR summaries end up in here.
+`outcome` is one of `ok`, `failed`, `timed_out`, `refused`, `not_installed`,
+`error`. Refusals are included, and they are the interesting half: a guarded
+route that was stopped says more than a safe one that ran.
 
-Name the file in the README's uninstall section — `omarchy plugin remove` takes
-the plugin directory only.
+#### One seam, which fixed two bugs on the way
+
+The fields the log wants — exit code, duration, resolved target, how the user
+answered — were spread across 22 `stats.record` call sites that each knew a
+different subset. Rather than a second recorder beside the counters, `Stats`
+grew a context manager:
+
+```python
+with stats.call("omarchy_run") as rec:
+    rec.route = route
+    rec.tier, rec.consent = decision.verdict.tier.value, decision.consent
+    rec.exit = result.exit_code
+```
+
+It times the call and records it exactly once on the way out, including on an
+exception. Two long-standing bugs stopped being representable: `omarchy_run`
+recorded *before* the gate ran, so every refusal was counted as a success, and
+the desktop tools recorded once per branch.
+
+One thing the gate could not hand it. `Refused` already carried the consent
+outcome, but `Allowed` was `(call, verdict)` — so an *approved* call looked
+identical to a pre-allowed one, and it is not derivable: a guarded route in
+`policy.allow` runs without anyone being asked. `Allowed` now carries `consent`
+too, which is a boundary change and shipped with its tests.
+
+#### Nothing waits for the disk
+
+`record()` puts the event on a bounded queue and returns; one writer thread
+drains it. That thread is the file's only writer, so **there is no lock on the
+file at all** — the queue is the serialisation. It starts in `__main__` around
+`uvicorn.run` and stops with a sentinel and a bounded join, which has to fit
+between uvicorn's own 3s grace and `Service.qml`'s SIGKILL 5s after SIGTERM
+(F27).
+
+The sentinel is the one `put` in the module that may block. Dropping it left the
+writer parked on `get` with nothing coming and everything behind it unwritten —
+found by a test, not by reasoning.
+
+Loss is bounded and never silent: a full queue drops the record, counts it,
+warns once on stderr, and the writer emits `{"event":"dropped","n":N}` into the
+file as soon as it catches up. An unexplained gap in an audit trail is worse
+than no audit trail. A write that fails outright logs every time, raises exactly
+one notification — a daemon-level fault, decision 12 — and keeps serving.
+
+#### What is not in it
+
+**Command output.** Not OCR text, not clipboard reads, nothing a tool returned.
+Arguments are written, truncated to 120 characters each with the elision named,
+because they are what the agent asked for. That distinction is the whole
+boundary between an audit trail and a log of the user's screen. The file is
+`0600` in a `0700` directory anyway, since an argument can be text they copied.
+
+#### Rotation, and the shape it forces on N6
+
+At 1 MiB the file is renamed to `activity.jsonl.1` and a fresh one started; one
+generation is kept, so 2 MiB at worst. The rename breaks an `inotify` watch on
+the path, which is N6's problem to handle: watch the directory and reopen, which
+it needs anyway for the first-ever create.
+
+Rotation happens *before* the write that would cross the cap rather than after,
+so the file is never over it and a record is never split across generations.
+
+#### Reading it back
+
+`activity.tail(n)` reads across a rotation, and `omarchy-mcpd --tail N` renders
+it for a person. Deliberately **not** on `/health`: that route is tokenless by
+design, and these lines carry command arguments. An unauthenticated endpoint is
+not where the clipboard goes.
+
+#### Configuration
+
+```toml
+[log]
+# activity = true                # off: nothing is written at all
+# activity_max_bytes = 1048576   # 64 KiB - 64 MiB
+# activity_file = "activity.jsonl"
+```
+
+`activity_file` is a **name, not a path**, always joined onto the state
+directory. A configurable path could be pointed at the plugin directory, and
+Omarchy reloads the shell on any write inside one — which would mean a shell
+reload per tool call, reading as a broken plugin rather than a bad setting.
+
+Named in the README's uninstall section; `omarchy plugin remove` takes the
+plugin directory only.
 
 ### N6 — Show it in the widget, and let the widget stop the daemon
 

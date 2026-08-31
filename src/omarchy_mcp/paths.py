@@ -28,6 +28,11 @@ RUNTIME_DIR = Path(os.environ.get("XDG_RUNTIME_DIR") or "/tmp")
 
 TOKEN_FILE = STATE_DIR / "token"
 
+#: The activity log, and the one generation kept beside it. A filename rather
+#: than a path everywhere it is configurable: a log inside the plugin directory
+#: would make Omarchy reload the shell once per tool call.
+ACTIVITY_FILE = "activity.jsonl"
+
 #: Where a clicked approval notification drops its token. Dies with the
 #: session, which is right: an approval that outlived the desktop it was granted
 #: on would be a stale yes.

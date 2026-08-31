@@ -69,59 +69,74 @@ async def run_route(
     timeout_ms: int | None = None,
 ) -> str:
     """Run an Omarchy route on behalf of a curated tool."""
-    cmd = registry.get(route)
-    if cmd is None:
-        stats.record(tool, route=route, ok=False)
-        return json.dumps(
-            {
-                "error": f"`{route}` is not a command on this Omarchy. "
-                f"It may have been renamed; try omarchy_search_commands.",
-            },
-            indent=2,
+    with stats.call(tool) as rec:
+        rec.route = route
+        rec.args = tuple(args)
+
+        cmd = registry.get(route)
+        if cmd is None:
+            rec.outcome = "error"
+            return json.dumps(
+                {
+                    "error": f"`{route}` is not a command on this Omarchy. "
+                    f"It may have been renamed; try omarchy_search_commands.",
+                },
+                indent=2,
+            )
+
+        decision = await gate.authorize(
+            cmd, args, config=config, ctx=ctx, log=log, offload=offload
+        )
+        if isinstance(decision, gate.Refused):
+            rec.outcome = "refused"
+            rec.tier = decision.tier
+            rec.consent = decision.outcome
+            log.info("%s route=%r refused", tool, route)
+            return json.dumps(decision.as_dict(), indent=2)
+
+        call = decision.call
+        rec.tier = decision.verdict.tier.value
+        rec.consent = decision.consent
+        # The resolved arguments, not the ones asked for: what actually ran.
+        rec.args = tuple(call.args)
+        if call.target is not None:
+            rec.target = call.target.label
+
+        if detach is None:
+            detach = execute.should_detach(cmd.group, cmd.route)
+
+        argv = [*cmd.argv_prefix, *call.args]
+        try:
+            result = await offload(
+                execute.run,
+                argv,
+                timeout_ms=timeout_ms or config.timeout_ms,
+                max_output_b=config.max_output_b,
+                detach=detach,
+            )
+        except execute.NotInstalled as exc:
+            rec.outcome = "not_installed"
+            log.warning("%s route=%r %s", tool, route, exc)
+            return json.dumps(exc.as_dict(), indent=2)
+
+        rec.exit = result.exit_code
+        rec.detached = result.detached
+        rec.timed_out = result.timed_out
+        log.info(
+            "%s route=%r target=%r exec=%s exit=%s",
+            tool,
+            route,
+            call.target.label if call.target else None,
+            result.executable,
+            result.exit_code,
         )
 
-    decision = await gate.authorize(
-        cmd, args, config=config, ctx=ctx, log=log, offload=offload
-    )
-    if isinstance(decision, gate.Refused):
-        stats.record(tool, route=route, ok=False)
-        log.info("%s route=%r refused", tool, route)
-        return json.dumps(decision.as_dict(), indent=2)
-    call = decision.call
-
-    if detach is None:
-        detach = execute.should_detach(cmd.group, cmd.route)
-
-    argv = [*cmd.argv_prefix, *call.args]
-    try:
-        result = await offload(
-            execute.run,
-            argv,
-            timeout_ms=timeout_ms or config.timeout_ms,
-            max_output_b=config.max_output_b,
-            detach=detach,
-        )
-    except execute.NotInstalled as exc:
-        stats.record(tool, route=route, ok=False)
-        log.warning("%s route=%r %s", tool, route, exc)
-        return json.dumps(exc.as_dict(), indent=2)
-
-    stats.record(tool, route=route, ok=result.exit_code in (0, None))
-    log.info(
-        "%s route=%r target=%r exec=%s exit=%s",
-        tool,
-        route,
-        call.target.label if call.target else None,
-        result.executable,
-        result.exit_code,
-    )
-
-    payload: dict[str, object] = {"command": execute.quote(argv), **result.as_dict()}
-    if call.target is not None:
-        payload["target"] = call.target.label
-    if result.exit_code not in (0, None):
-        payload["hint"] = "Run omarchy_search_commands for this route's accepted arguments."
-    return json.dumps(payload, indent=2)
+        payload: dict[str, object] = {"command": execute.quote(argv), **result.as_dict()}
+        if call.target is not None:
+            payload["target"] = call.target.label
+        if result.exit_code not in (0, None):
+            payload["hint"] = "Run omarchy_search_commands for this route's accepted arguments."
+        return json.dumps(payload, indent=2)
 
 
 def enabled(config: Config, name: str) -> bool:
