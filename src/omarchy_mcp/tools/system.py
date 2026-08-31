@@ -36,5 +36,5 @@ def register(mcp, config: Config, log, stats: Stats) -> None:
     )
     @threaded
     def omarchy_system_status() -> str:
-        stats.record("omarchy_system_status")
-        return json.dumps(gather(), indent=2)
+        with stats.call("omarchy_system_status"):
+            return json.dumps(gather(), indent=2)

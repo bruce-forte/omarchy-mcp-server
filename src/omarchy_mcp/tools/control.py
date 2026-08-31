@@ -204,13 +204,19 @@ def register(mcp, config: Config, log, stats: Stats) -> None:
                     {"error": f"action must be one of {', '.join(MEDIA_ACTIONS)}"}, indent=2
                 )
 
-            stats.record("omarchy_media", route=f"media.{action}")
-            argv = shell.call_argv("media", action, [])
-            result = await offload(
-                execute.run, argv, timeout_ms=config.timeout_ms, max_output_b=config.max_output_b
-            )
-            log.info("omarchy_media %s exit=%s", action, result.exit_code)
-            return json.dumps({"command": execute.quote(argv), **result.as_dict()}, indent=2)
+            with stats.call("omarchy_media") as rec:
+                rec.route = f"media.{action}"
+                argv = shell.call_argv("media", action, [])
+                result = await offload(
+                    execute.run,
+                    argv,
+                    timeout_ms=config.timeout_ms,
+                    max_output_b=config.max_output_b,
+                )
+                rec.exit = result.exit_code
+                rec.timed_out = result.timed_out
+                log.info("omarchy_media %s exit=%s", action, result.exit_code)
+                return json.dumps({"command": execute.quote(argv), **result.as_dict()}, indent=2)
 
     # -------------------------------------------------------------- toggles
 

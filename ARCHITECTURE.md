@@ -53,7 +53,7 @@ time it does, which at worst is a loop. So:
 | Kind of file | Goes in |
 |--------------|---------|
 | User config | `~/.config/omarchy/mcp/` |
-| Virtualenv, bearer token, bootstrap stamp, bytecode cache | `~/.local/state/io.github.bruce-forte.mcp-server/` |
+| Virtualenv, bearer token, bootstrap stamp, bytecode cache, activity log | `~/.local/state/io.github.bruce-forte.mcp-server/` |
 | The state file the bar widget reads | `$XDG_RUNTIME_DIR/omarchy-mcp.state` |
 | Never | the plugin directory |
 
@@ -147,7 +147,8 @@ In dependency order, shallowest first:
 | `shell.py` | Parses `qs ipc show` into targets and typed method signatures |
 | `desktop.py` | Hyprland's monitors, workspaces, windows and focus, via `hyprctl -j` |
 | `status.py` | The system-status aggregate: several probes gathered into one answer |
-| `stats.py` | In-memory call counters, published through `/health` for the bar tooltip |
+| `stats.py` | The one seam every tool call passes through: counters for `/health`, and a record for the activity log |
+| `activity.py` | One JSON line per call on disk, written by a thread nothing waits for. See below |
 | `policy.py` | The security boundary. Pure, takes the registry as an argument, tested against every route Omarchy ships |
 | `resolve.py` | Turns an identifier an agent supplied into the thing it names, or refuses. See below |
 | `consent.py` | The six ways a call can fail to get a yes, and a wait that fails closed. See below |
@@ -214,6 +215,45 @@ Three properties are load-bearing:
 Resolution is validation, not policy, so it has no configuration key. It refuses
 exactly the calls that would have failed anyway, one step earlier and with a
 better message.
+
+## The activity log, and what a tool call waits for
+
+`stats.py` counts calls in memory; `/health` publishes the counters. That says
+*is it serving* and nothing else — it cannot say what an agent did ten minutes
+ago, and it dies with the process. `activity.py` appends one JSON object per
+tool call to `activity.jsonl` in the state directory.
+
+**One seam.** `stats.call(tool)` is a context manager. A tool opens one, fills
+in what it learns — the route, the resolved target, the tier, how the user
+answered, the exit code — and exactly one record is written when it leaves,
+including when it leaves by raising. That shape is what makes two long-standing
+bugs unrepresentable: `omarchy_run` used to count *before* the gate ran, so
+every refusal was recorded as a success, and the desktop tools recorded once per
+branch.
+
+**A tool call never waits for the disk.** `append()` puts the record on a
+bounded queue and returns; one writer thread drains it. Because that thread is
+the file's only writer, there is no lock on the file at all — the queue is the
+serialisation. It is started in `__main__` around `uvicorn.run` and stopped with
+a sentinel and a bounded join, which has to fit between uvicorn's own three
+second grace and `Service.qml`'s SIGKILL five seconds after SIGTERM.
+
+**Loss is bounded and never silent.** A full queue drops the record, counts it,
+warns once on stderr, and the writer emits `{"event":"dropped","n":N}` into the
+file as soon as it catches up. An unexplained gap in an audit trail is worse
+than no audit trail. A write that fails outright says so on stderr every time,
+raises one notification, and keeps serving: the daemon's job is not the log.
+
+**Output is never written.** Arguments are, truncated — they are what the agent
+asked for. OCR text and clipboard reads are the contents of the user's screen,
+and a record of those is a different and much worse artefact than a record of
+actions. The file is still `0600` in a `0700` directory, because an argument can
+be text the user copied.
+
+**The filename is configurable; the directory is not.** `log.activity_file` is a
+name with no separator in it, always joined onto the state directory. A log
+inside the plugin directory would make Omarchy reload the shell once per tool
+call.
 
 ## Consent, and what silence means
 
@@ -395,6 +435,13 @@ classifies `blocked` and no configuration can promote it, `argv` never reaches a
 shell, a foreign `Origin` gets 403 and a foreign `Host` gets 421, nothing that
 must not be asked about is asked about, and a consent file that merely exists is
 not a click. Changes there need tests in the same commit.
+
+`tests/test_activity.py` pins the log's own promises, which are properties
+rather than examples: OCR text and clipboard reads never reach the file while a
+clipboard *write* does, one line is written per call however the call ended, a
+refusal is recorded as a refusal rather than a success, the file is `0600` in a
+`0700` directory and stays bounded, and a broken disk neither raises into a tool
+call nor toasts more than once.
 
 The suite reads committed snapshots rather than the installed system, and
 autouse fixtures enforce it. That is what lets the tests run in CI at all, and

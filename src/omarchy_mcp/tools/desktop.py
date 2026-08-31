@@ -50,38 +50,41 @@ def register(mcp, config: Config, log, stats: Stats) -> None:
             region: str = "",
             max_width: int = desktop.DEFAULT_MAX_WIDTH,
         ) -> list:
-            stats.record("omarchy_screenshot", route=target)
-            max_width = max(64, min(max_width, 3840))
-            try:
-                named = _monitor(target, monitor)
-                shot = desktop.capture(
-                    target=target,
-                    monitor=named.value if named else monitor,
-                    region=region,
-                    max_width=max_width,
-                )
-            except resolve.Unresolvable as exc:
-                stats.record("omarchy_screenshot", ok=False)
-                return [TextContent(type="text", text=json.dumps(exc.as_dict()))]
-            except desktop.DesktopError as exc:
-                stats.record("omarchy_screenshot", ok=False)
-                return [TextContent(type="text", text=json.dumps({"error": str(exc)}))]
+            with stats.call("omarchy_screenshot") as rec:
+                rec.route = target
+                max_width = max(64, min(max_width, 3840))
+                try:
+                    named = _monitor(target, monitor)
+                    shot = desktop.capture(
+                        target=target,
+                        monitor=named.value if named else monitor,
+                        region=region,
+                        max_width=max_width,
+                    )
+                except resolve.Unresolvable as exc:
+                    rec.outcome = "error"
+                    return [TextContent(type="text", text=json.dumps(exc.as_dict()))]
+                except desktop.DesktopError as exc:
+                    rec.outcome = "error"
+                    return [TextContent(type="text", text=json.dumps({"error": str(exc)}))]
+                if named:
+                    rec.target = named.label
 
-            where = f", {named.label}" if named else ""
-            log.info(
-                "screenshot target=%s monitor=%r %dx%d",
-                target,
-                named.label if named else None,
-                shot.width,
-                shot.height,
-            )
-            return [
-                ImageContent(type="image", data=shot.as_base64(), mimeType="image/png"),
-                TextContent(
-                    type="text",
-                    text=f"{shot.width}x{shot.height}, target={target}{where}",
-                ),
-            ]
+                where = f", {named.label}" if named else ""
+                log.info(
+                    "screenshot target=%s monitor=%r %dx%d",
+                    target,
+                    named.label if named else None,
+                    shot.width,
+                    shot.height,
+                )
+                return [
+                    ImageContent(type="image", data=shot.as_base64(), mimeType="image/png"),
+                    TextContent(
+                        type="text",
+                        text=f"{shot.width}x{shot.height}, target={target}{where}",
+                    ),
+                ]
 
     if enabled("omarchy_desktop_state"):
 
@@ -102,12 +105,12 @@ def register(mcp, config: Config, log, stats: Stats) -> None:
         )
         @threaded
         def omarchy_desktop_state() -> str:
-            stats.record("omarchy_desktop_state")
-            try:
-                return json.dumps(desktop.state(), indent=2)
-            except desktop.DesktopError as exc:
-                stats.record("omarchy_desktop_state", ok=False)
-                return json.dumps({"error": str(exc)}, indent=2)
+            with stats.call("omarchy_desktop_state") as rec:
+                try:
+                    return json.dumps(desktop.state(), indent=2)
+                except desktop.DesktopError as exc:
+                    rec.outcome = "error"
+                    return json.dumps({"error": str(exc)}, indent=2)
 
     if enabled("omarchy_screen_text"):
 
@@ -128,27 +131,32 @@ def register(mcp, config: Config, log, stats: Stats) -> None:
         def omarchy_screen_text(
             target: str = "screen", monitor: str = "", region: str = "", lang: str = ""
         ) -> str:
-            stats.record("omarchy_screen_text", route=target)
-            try:
-                named = _monitor(target, monitor)
-                text = desktop.ocr(
-                    target=target,
-                    monitor=named.value if named else monitor,
-                    region=region,
-                    lang=lang,
-                )
-            except resolve.Unresolvable as exc:
-                stats.record("omarchy_screen_text", ok=False)
-                return json.dumps(exc.as_dict(), indent=2)
-            except desktop.DesktopError as exc:
-                stats.record("omarchy_screen_text", ok=False)
-                return json.dumps({"error": str(exc)}, indent=2)
+            with stats.call("omarchy_screen_text") as rec:
+                rec.route = target
+                try:
+                    named = _monitor(target, monitor)
+                    text = desktop.ocr(
+                        target=target,
+                        monitor=named.value if named else monitor,
+                        region=region,
+                        lang=lang,
+                    )
+                except resolve.Unresolvable as exc:
+                    rec.outcome = "error"
+                    return json.dumps(exc.as_dict(), indent=2)
+                except desktop.DesktopError as exc:
+                    rec.outcome = "error"
+                    return json.dumps({"error": str(exc)}, indent=2)
+                if named:
+                    rec.target = named.label
 
-            capped, truncated = _cap(text, config.max_output_b)
-            payload: dict[str, object] = {"text": capped, "truncated": truncated}
-            if named:
-                payload["target"] = named.label
-            return json.dumps(payload, indent=2)
+                # The extracted text is never logged: it is the contents of the
+                # screen, and a record of that is a different thing entirely.
+                capped, truncated = _cap(text, config.max_output_b)
+                payload: dict[str, object] = {"text": capped, "truncated": truncated}
+                if named:
+                    payload["target"] = named.label
+                return json.dumps(payload, indent=2)
 
     if enabled("omarchy_clipboard_read"):
 
@@ -167,15 +175,17 @@ def register(mcp, config: Config, log, stats: Stats) -> None:
         )
         @threaded
         def omarchy_clipboard_read(mime: str = "") -> str:
-            stats.record("omarchy_clipboard_read")
-            try:
-                text = desktop.clipboard_read(mime=mime)
-            except desktop.DesktopError as exc:
-                stats.record("omarchy_clipboard_read", ok=False)
-                return json.dumps({"error": str(exc)}, indent=2)
+            with stats.call("omarchy_clipboard_read") as rec:
+                try:
+                    text = desktop.clipboard_read(mime=mime)
+                except desktop.DesktopError as exc:
+                    rec.outcome = "error"
+                    return json.dumps({"error": str(exc)}, indent=2)
 
-            capped, truncated = _cap(text, config.max_output_b)
-            return json.dumps({"text": capped, "truncated": truncated}, indent=2)
+                # What was on the clipboard is not logged, for the same reason OCR
+                # text is not: it is the user's data, not the agent's action.
+                capped, truncated = _cap(text, config.max_output_b)
+                return json.dumps({"text": capped, "truncated": truncated}, indent=2)
 
     if enabled("omarchy_clipboard_write"):
 
@@ -196,13 +206,17 @@ def register(mcp, config: Config, log, stats: Stats) -> None:
         )
         @threaded
         def omarchy_clipboard_write(text: str) -> str:
-            stats.record("omarchy_clipboard_write")
-            try:
-                desktop.clipboard_write(text)
-            except desktop.DesktopError as exc:
-                stats.record("omarchy_clipboard_write", ok=False)
-                return json.dumps({"error": str(exc)}, indent=2)
-            return json.dumps({"ok": True, "bytes": len(text.encode())})
+            with stats.call("omarchy_clipboard_write") as rec:
+                # Logged, truncated: this one *is* the action. What the agent
+                # put on the clipboard is the thing a user would come back to
+                # the log to find out.
+                rec.args = (text,)
+                try:
+                    desktop.clipboard_write(text)
+                except desktop.DesktopError as exc:
+                    rec.outcome = "error"
+                    return json.dumps({"error": str(exc)}, indent=2)
+                return json.dumps({"ok": True, "bytes": len(text.encode())})
 
 
 def _monitor(target: str, monitor: str) -> resolve.Target | None:

@@ -1,15 +1,27 @@
 """What the server has been asked to do.
 
-Surfaced through /health so the supervising QML can put it in the bar tooltip.
-This is the only feedback loop a user has: the client is a language model, and
-nothing else on the desktop reveals that an agent just did something.
+Two consumers of the same event. The counters are surfaced through `/health`,
+so the supervising QML can put them in the bar tooltip -- the only feedback loop
+a user has, since the client is a language model and nothing else on the desktop
+reveals that an agent just did something. The same event also goes to
+`activity.py`, which keeps it after the daemon is gone.
+
+`call()` is the seam. A tool opens one, fills in what it learns, and exactly one
+record is written when it leaves -- including when it leaves by exception. That
+is what makes the two long-standing bugs unrepresentable: `omarchy_run` used to
+count before the gate ran, so a refusal was recorded as a success, and the
+desktop tools recorded once per branch.
 """
 
 from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
+
+from .activity import Record
 
 
 @dataclass
@@ -20,15 +32,40 @@ class Stats:
     last_tool: str = ""
     last_route: str = ""
 
+    #: Where records go after they are counted. ``None`` is counters only,
+    #: which is what a test gets and what `log.activity = false` produces.
+    sink: object | None = None
+
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
-    def record(self, tool: str, *, route: str = "", ok: bool = True) -> None:
+    @contextmanager
+    def call(self, tool: str) -> Iterator[Record]:
+        """One tool call. Times it, and records it once however it ends."""
+        rec = Record(tool=tool)
+        started = time.monotonic()
+        try:
+            yield rec
+        except BaseException:
+            # The tool raised, or the call was cancelled under it. Either way
+            # nothing completed, and that is a fault in this daemon rather than
+            # a command that exited non-zero -- the two want different
+            # reactions, so they get different outcomes.
+            if not rec.outcome:
+                rec.outcome = "error"
+            raise
+        finally:
+            rec.ms = round((time.monotonic() - started) * 1000)
+            self._finish(rec)
+
+    def _finish(self, rec: Record) -> None:
         with self._lock:
             self.calls += 1
-            if not ok:
+            if not rec.ok:
                 self.failures += 1
-            self.last_tool = tool
-            self.last_route = route
+            self.last_tool = rec.tool
+            self.last_route = rec.route
+        if self.sink is not None:
+            self.sink.append(rec.as_dict())
 
     def snapshot(self) -> dict[str, object]:
         with self._lock:

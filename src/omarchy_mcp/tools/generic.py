@@ -45,29 +45,30 @@ def register(mcp, config: Config, log, stats: Stats | None = None) -> None:
         limit: int = 20,
         include_hidden: bool = False,
     ) -> str:
-        stats.record("omarchy_search_commands")
-        limit = max(1, min(limit, 100))
-        hits = registry.search(query, limit=limit, include_hidden=include_hidden)
-        rows = []
-        for cmd in hits:
-            verdict = decide(cmd, config)
-            row = registry.as_dict(cmd)
-            row["tier"] = verdict.tier.value
-            # One derivation, shared with the commands resource. A route that
-            # will ask is runnable, or a careful agent reads "refused", never
-            # calls it, and the question is never put to anyone.
-            asks = gate.asks(verdict, config)
-            row["runnable"] = verdict.allowed or asks
-            if asks:
-                row["asks"] = True
-                row["note"] = (
-                    "This call pauses while the user is asked to approve it, and is "
-                    "refused if they decline or do not answer."
-                )
-            elif not verdict.allowed:
-                row["refusal"] = verdict.reason
-            rows.append(row)
-        return json.dumps({"query": query, "count": len(rows), "commands": rows}, indent=2)
+        with stats.call("omarchy_search_commands") as rec:
+            rec.args = (query,) if query else ()
+            limit = max(1, min(limit, 100))
+            hits = registry.search(query, limit=limit, include_hidden=include_hidden)
+            rows = []
+            for cmd in hits:
+                verdict = decide(cmd, config)
+                row = registry.as_dict(cmd)
+                row["tier"] = verdict.tier.value
+                # One derivation, shared with the commands resource. A route that
+                # will ask is runnable, or a careful agent reads "refused", never
+                # calls it, and the question is never put to anyone.
+                asks = gate.asks(verdict, config)
+                row["runnable"] = verdict.allowed or asks
+                if asks:
+                    row["asks"] = True
+                    row["note"] = (
+                        "This call pauses while the user is asked to approve it, and is "
+                        "refused if they decline or do not answer."
+                    )
+                elif not verdict.allowed:
+                    row["refusal"] = verdict.reason
+                rows.append(row)
+            return json.dumps({"query": query, "count": len(rows), "commands": rows}, indent=2)
 
     @mcp.tool(
         name="omarchy_run",
@@ -92,58 +93,74 @@ def register(mcp, config: Config, log, stats: Stats | None = None) -> None:
         ctx: Context = None,
     ) -> str:
         args = list(args or [])
-        cmd = registry.get(route.strip())
-        stats.record("omarchy_run", route=route.strip(), ok=cmd is not None)
-        if cmd is None:
-            close = registry.suggest(route)
-            return json.dumps(
-                {
-                    "error": f"no such route: {route!r}",
-                    "did_you_mean": [c.route for c in close],
-                },
-                indent=2,
+        with stats.call("omarchy_run") as rec:
+            rec.route = route.strip()
+            rec.args = tuple(args)
+            cmd = registry.get(route.strip())
+            if cmd is None:
+                rec.outcome = "error"
+                close = registry.suggest(route)
+                return json.dumps(
+                    {
+                        "error": f"no such route: {route!r}",
+                        "did_you_mean": [c.route for c in close],
+                    },
+                    indent=2,
+                )
+
+            # The same gate the curated tools pass through. Reaching a command by
+            # its route must not skip a check that reaching it by a tool applies --
+            # including the one that asks the user.
+            decision = await gate.authorize(
+                cmd, args, config=config, ctx=ctx, log=log, offload=offload
             )
+            if isinstance(decision, gate.Refused):
+                rec.outcome = "refused"
+                rec.tier = decision.tier
+                rec.consent = decision.outcome
+                log.info("run route=%r refused", cmd.route)
+                return json.dumps(decision.as_dict(), indent=2)
 
-        # The same gate the curated tools pass through. Reaching a command by
-        # its route must not skip a check that reaching it by a tool applies --
-        # including the one that asks the user.
-        decision = await gate.authorize(
-            cmd, args, config=config, ctx=ctx, log=log, offload=offload
-        )
-        if isinstance(decision, gate.Refused):
-            log.info("run route=%r refused", cmd.route)
-            return json.dumps(decision.as_dict(), indent=2)
-        call = decision.call
+            call = decision.call
+            rec.tier = decision.verdict.tier.value
+            rec.consent = decision.consent
+            rec.args = tuple(call.args)
+            if call.target is not None:
+                rec.target = call.target.label
 
-        if detach is None:
-            detach = execute.should_detach(cmd.group, cmd.route)
+            if detach is None:
+                detach = execute.should_detach(cmd.group, cmd.route)
 
-        argv = [*cmd.argv_prefix, *call.args]
-        try:
-            result = await offload(
-                execute.run,
-                argv,
-                timeout_ms=timeout_ms or config.timeout_ms,
-                max_output_b=config.max_output_b,
-                detach=detach,
+            argv = [*cmd.argv_prefix, *call.args]
+            try:
+                result = await offload(
+                    execute.run,
+                    argv,
+                    timeout_ms=timeout_ms or config.timeout_ms,
+                    max_output_b=config.max_output_b,
+                    detach=detach,
+                )
+            except execute.NotInstalled as exc:
+                rec.outcome = "not_installed"
+                log.warning("run route=%r %s", cmd.route, exc)
+                return json.dumps(exc.as_dict(), indent=2)
+
+            rec.exit = result.exit_code
+            rec.detached = result.detached
+            rec.timed_out = result.timed_out
+            log.info(
+                "run route=%r target=%r exec=%s exit=%s detached=%s timed_out=%s",
+                cmd.route,
+                call.target.label if call.target else None,
+                result.executable,
+                result.exit_code,
+                result.detached,
+                result.timed_out,
             )
-        except execute.NotInstalled as exc:
-            log.warning("run route=%r %s", cmd.route, exc)
-            return json.dumps(exc.as_dict(), indent=2)
-
-        log.info(
-            "run route=%r target=%r exec=%s exit=%s detached=%s timed_out=%s",
-            cmd.route,
-            call.target.label if call.target else None,
-            result.executable,
-            result.exit_code,
-            result.detached,
-            result.timed_out,
-        )
-        payload: dict[str, object] = {"command": execute.quote(argv), **result.as_dict()}
-        if call.target is not None:
-            payload["target"] = call.target.label
-        return json.dumps(payload, indent=2)
+            payload: dict[str, object] = {"command": execute.quote(argv), **result.as_dict()}
+            if call.target is not None:
+                payload["target"] = call.target.label
+            return json.dumps(payload, indent=2)
 
     @mcp.tool(
         name="omarchy_shell_targets",
@@ -160,23 +177,26 @@ def register(mcp, config: Config, log, stats: Stats | None = None) -> None:
     )
     @threaded
     def omarchy_shell_targets(target: str = "", refresh: bool = False) -> str:
-        stats.record("omarchy_shell_targets")
-        try:
-            found = shell.targets(refresh=refresh)
-        except shell.ShellError as exc:
-            return json.dumps({"error": str(exc)}, indent=2)
+        with stats.call("omarchy_shell_targets") as rec:
+            rec.args = (target,) if target else ()
+            try:
+                found = shell.targets(refresh=refresh)
+            except shell.ShellError as exc:
+                return json.dumps({"error": str(exc)}, indent=2)
 
-        if target:
-            one = found.get(target)
-            if one is None:
-                return json.dumps(
-                    {"error": f"no such target: {target!r}", "targets": sorted(found)}, indent=2
-                )
-            return json.dumps(shell.as_dict(one), indent=2)
+            if target:
+                one = found.get(target)
+                if one is None:
+                    return json.dumps(
+                        {"error": f"no such target: {target!r}", "targets": sorted(found)},
+                        indent=2,
+                    )
+                return json.dumps(shell.as_dict(one), indent=2)
 
-        return json.dumps(
-            {"count": len(found), "targets": [shell.as_dict(t) for t in found.values()]}, indent=2
-        )
+            return json.dumps(
+                {"count": len(found), "targets": [shell.as_dict(t) for t in found.values()]},
+                indent=2,
+            )
 
     @mcp.tool(
         name="omarchy_shell_call",
@@ -198,29 +218,32 @@ def register(mcp, config: Config, log, stats: Stats | None = None) -> None:
         timeout_ms: int | None = None,
     ) -> str:
         args = list(args or [])
-        stats.record("omarchy_shell_call", route=f"{target}.{method}")
-        try:
-            known = shell.targets()
-        except shell.ShellError as exc:
-            return json.dumps({"error": str(exc)}, indent=2)
+        with stats.call("omarchy_shell_call") as rec:
+            rec.route = f"{target}.{method}"
+            rec.args = tuple(args)
+            try:
+                known = shell.targets()
+            except shell.ShellError as exc:
+                return json.dumps({"error": str(exc)}, indent=2)
 
-        found = known.get(target)
-        if found is None:
-            return json.dumps(
-                {"error": f"no such target: {target!r}", "targets": sorted(known)}, indent=2
-            )
-        if method not in {m.name for m in found.methods}:
-            return json.dumps(
-                {
-                    "error": f"target {target!r} has no method {method!r}",
-                    "methods": [m.signature for m in found.methods],
-                },
-                indent=2,
-            )
+            found = known.get(target)
+            if found is None:
+                return json.dumps(
+                    {"error": f"no such target: {target!r}", "targets": sorted(known)}, indent=2
+                )
+            if method not in {m.name for m in found.methods}:
+                return json.dumps(
+                    {
+                        "error": f"target {target!r} has no method {method!r}",
+                        "methods": [m.signature for m in found.methods],
+                    },
+                    indent=2,
+                )
 
-        argv = shell.call_argv(target, method, args)
-        result = execute.run(
-            argv, timeout_ms=timeout_ms or config.timeout_ms, max_output_b=config.max_output_b
-        )
-        log.info("shell_call %s.%s exit=%s", target, method, result.exit_code)
-        return json.dumps({"command": execute.quote(argv), **result.as_dict()}, indent=2)
+            argv = shell.call_argv(target, method, args)
+            result = execute.run(
+                argv, timeout_ms=timeout_ms or config.timeout_ms, max_output_b=config.max_output_b
+            )
+            log.info("shell_call %s.%s exit=%s", target, method, result.exit_code)
+            return json.dumps({"command": execute.quote(argv), **result.as_dict()}, indent=2)
+

@@ -1,0 +1,367 @@
+"""The activity log, which is the only record of what an agent did that
+outlives the daemon.
+
+What this pins, in the order it matters:
+
+- output never reaches the file; arguments do, truncated
+- a tool call never blocks on the log, and a full queue loses events *loudly*
+- exactly one line per call, however the call ended
+- the file is 0600 in a 0700 directory, and it stays bounded
+- a broken disk does not break the server
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import queue
+import stat
+
+import pytest
+
+from omarchy_mcp import activity
+from omarchy_mcp.activity import Record, Sink
+from omarchy_mcp.config import Config
+from omarchy_mcp.stats import Stats
+
+LOG = logging.getLogger("test")
+
+
+@pytest.fixture(autouse=True)
+def quiet_notifications(monkeypatch):
+    """No test may raise a real desktop notification."""
+    sent: list[tuple[str, str]] = []
+    monkeypatch.setattr(activity, "_notify", lambda h, b: sent.append((h, b)))
+    return sent
+
+
+@pytest.fixture
+def sink(tmp_path):
+    s = Sink(tmp_path / "activity.jsonl", max_bytes=1 << 20, log=LOG)
+    s.start()
+    yield s
+    s.stop()
+
+
+def lines(path) -> list[dict]:
+    return [json.loads(ln) for ln in path.read_text().splitlines() if ln]
+
+
+class TestTheRecord:
+    def test_absent_fields_are_omitted_rather_than_null(self):
+        body = Record(tool="omarchy_desktop_state").as_dict()
+        assert set(body) == {"ts", "tool", "outcome", "ms"}
+
+    def test_outcome_is_derived_from_the_exit_code(self):
+        assert Record(tool="t", exit=0).result == "ok"
+        assert Record(tool="t", exit=1).result == "failed"
+
+    def test_a_detached_command_is_not_a_failure(self):
+        """A detached run has no exit code by definition; it is not a failure."""
+        assert Record(tool="t", exit=None, detached=True).result == "ok"
+
+    def test_a_timeout_outranks_the_exit_code(self):
+        assert Record(tool="t", exit=-15, timed_out=True).result == "timed_out"
+
+    def test_an_explicit_outcome_wins(self):
+        """`refused` and `not_installed` are not derivable from an exit code:
+        nothing ran, so there is none."""
+        for outcome in ("refused", "not_installed", "error"):
+            assert Record(tool="t", outcome=outcome).result == outcome
+
+    def test_a_long_argument_is_truncated_and_says_by_how_much(self):
+        body = Record(tool="t", args=("x" * 500,)).as_dict()
+        arg = body["args"][0]
+        assert arg.startswith("x" * activity.MAX_ARG_CHARS)
+        assert arg.endswith(f"…(+{500 - activity.MAX_ARG_CHARS})")
+
+    def test_an_argument_list_is_capped(self):
+        body = Record(tool="t", args=tuple(str(i) for i in range(100))).as_dict()
+        assert len(body["args"]) == activity.MAX_ARGS
+
+
+class TestTheLine:
+    def test_an_ordinary_line_is_left_alone(self):
+        body = Record(tool="omarchy_run", route="omarchy theme set", args=("tokyo-night",))
+        assert json.loads(activity.line_of(body.as_dict()))["args"] == ["tokyo-night"]
+
+    def test_an_oversized_line_elides_its_arguments(self):
+        body = Record(tool="t", args=tuple("y" * 100 for _ in range(activity.MAX_ARGS)))
+        line = activity.line_of(body.as_dict())
+        assert len(line.encode()) <= activity.MAX_LINE_B
+
+    def test_a_huge_argument_cannot_displace_the_history_around_it(self):
+        body = {"ts": "t", "tool": "t", "args": ["z" * 4000], "outcome": "ok", "ms": 1}
+        line = activity.line_of(body)
+        assert len(line.encode()) <= activity.MAX_LINE_B
+        assert json.loads(line)["args"][0].startswith("z" * activity.HARD_ARG_CHARS)
+
+
+class TestWriting:
+    def test_a_record_reaches_the_file(self, sink):
+        sink.append(Record(tool="omarchy_run", route="omarchy theme set").as_dict())
+        sink.stop()
+
+        (written,) = lines(sink.path)
+        assert written["tool"] == "omarchy_run"
+        assert written["route"] == "omarchy theme set"
+
+    def test_the_file_is_0600_in_a_0700_directory(self, tmp_path):
+        """It states what an agent did, and its arguments can be text the user
+        copied."""
+        s = Sink(tmp_path / "sub" / "activity.jsonl", max_bytes=1 << 20, log=LOG)
+        s.start()
+        s.append(Record(tool="t").as_dict())
+        s.stop()
+
+        assert stat.S_IMODE(s.path.stat().st_mode) == 0o600
+        assert stat.S_IMODE(s.path.parent.stat().st_mode) == 0o700
+
+    def test_the_file_rotates_and_keeps_one_generation(self, tmp_path):
+        s = Sink(tmp_path / "activity.jsonl", max_bytes=200, log=LOG)
+        s.start()
+        for i in range(40):
+            s.append(Record(tool=f"tool{i}").as_dict())
+        s.stop()
+
+        assert activity.rotated(s.path).exists()
+        assert s.path.stat().st_size < 200 * 3
+
+    def test_appends_go_to_the_new_file_after_a_rotation(self, tmp_path):
+        s = Sink(tmp_path / "activity.jsonl", max_bytes=120, log=LOG)
+        s.start()
+        s.append(Record(tool="first").as_dict())
+        s.append(Record(tool="second").as_dict())
+        s.stop()
+
+        assert [r["tool"] for r in lines(activity.rotated(s.path))] == ["first"]
+        assert [r["tool"] for r in lines(s.path)] == ["second"]
+
+
+class TestLosingEvents:
+    """A full queue must lose events rather than block a tool call -- and must
+    never lose them quietly."""
+
+    def test_append_never_blocks_or_raises_when_full(self, tmp_path):
+        s = Sink(tmp_path / "activity.jsonl", max_bytes=1 << 20, log=LOG)
+        s._q = queue.Queue(maxsize=2)
+        for _ in range(50):
+            s.append(Record(tool="t").as_dict())  # no thread draining it
+
+    def test_a_gap_is_written_into_the_file(self, tmp_path):
+        s = Sink(tmp_path / "activity.jsonl", max_bytes=1 << 20, log=LOG)
+        s._q = queue.Queue(maxsize=2)
+        for _ in range(5):
+            s.append(Record(tool="lost").as_dict())
+
+        s.start()
+        s.stop()
+
+        written = lines(s.path)
+        assert _dropped(written)["n"] == 3
+        assert [r["tool"] for r in written if "tool" in r] == ["lost", "lost"]
+
+
+def _dropped(written: list[dict]) -> dict:
+    return next(r for r in written if r.get("event") == "dropped")
+
+
+class TestABrokenDisk:
+    """The daemon's job is not the log. A log that cannot be written says so and
+    gets out of the way."""
+
+    def test_a_write_failure_does_not_reach_the_caller(self, tmp_path, monkeypatch):
+        s = Sink(tmp_path / "activity.jsonl", max_bytes=1 << 20, log=LOG)
+        monkeypatch.setattr(Sink, "_open", lambda self: (_ for _ in ()).throw(OSError("nope")))
+        s.start()
+        s.append(Record(tool="t").as_dict())
+        s.append(Record(tool="t").as_dict())
+        s.stop()  # no exception anywhere
+
+    def test_the_user_is_told_once(self, tmp_path, monkeypatch, quiet_notifications):
+        s = Sink(tmp_path / "activity.jsonl", max_bytes=1 << 20, log=LOG)
+        monkeypatch.setattr(Sink, "_open", lambda self: (_ for _ in ()).throw(OSError("nope")))
+        s.start()
+        for _ in range(5):
+            s.append(Record(tool="t").as_dict())
+        s.stop()
+
+        assert len(quiet_notifications) == 1
+
+
+class TestTheWriterLifecycle:
+    def test_switched_off_yields_no_sink_and_writes_nothing(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(activity, "STATE_DIR", tmp_path)
+        with activity.writer(Config(activity=False), LOG) as sink:
+            assert sink is None
+        assert not any(tmp_path.iterdir())
+
+    def test_a_session_is_bracketed_by_started_and_stopped(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(activity, "STATE_DIR", tmp_path)
+        with activity.writer(Config(), LOG) as sink:
+            sink.append(Record(tool="omarchy_run").as_dict())
+
+        written = lines(tmp_path / "activity.jsonl")
+        assert written[0]["event"] == "started"
+        assert written[-1]["event"] == "stopped"
+
+    def test_the_log_is_always_inside_the_state_directory(self, tmp_path, monkeypatch):
+        """A log in the plugin directory would reload the shell once per call."""
+        monkeypatch.setattr(activity, "STATE_DIR", tmp_path)
+        path = activity.path_for(Config(activity_file="elsewhere.jsonl"))
+        assert path == tmp_path / "elsewhere.jsonl"
+
+
+class TestReadingItBack:
+    def test_tail_reads_across_a_rotation_oldest_first(self, tmp_path):
+        """One generation is kept, so a tail spanning a rotation reads both."""
+        s = Sink(tmp_path / "activity.jsonl", max_bytes=200, log=LOG)
+        s.start()
+        for i in range(4):
+            s.append(Record(tool=f"tool{i}").as_dict())
+        s.stop()
+
+        assert activity.rotated(s.path).exists()
+        assert [r["tool"] for r in activity.tail(10, s.path)] == [f"tool{i}" for i in range(4)]
+
+    def test_tail_of_a_missing_file_is_empty(self, tmp_path):
+        assert activity.tail(10, tmp_path / "nothing.jsonl") == []
+
+    def test_a_corrupt_line_is_skipped_rather_than_fatal(self, tmp_path):
+        path = tmp_path / "activity.jsonl"
+        path.write_text('{"ts":"x","tool":"good"}\nnot json at all\n')
+        assert [r["tool"] for r in activity.tail(10, path)] == ["good"]
+
+    def test_a_record_renders_as_one_readable_line(self):
+        body = Record(
+            tool="omarchy_run",
+            route="omarchy theme set",
+            args=("tokyo-night",),
+            target="Tokyo Night",
+            tier="guarded",
+            consent="accepted",
+            exit=0,
+            ms=142,
+        ).as_dict()
+        rendered = activity.render(body)
+        assert "omarchy theme set" in rendered
+        assert "Tokyo Night" in rendered
+        assert "consent=accepted" in rendered
+        assert "142ms" in rendered
+
+
+class TestStatsAsTheSeam:
+    """One record per call, whatever the call does."""
+
+    def test_a_call_is_recorded_once(self, sink):
+        stats = Stats(sink=sink)
+        with stats.call("omarchy_run") as rec:
+            rec.route = "omarchy theme current"
+        sink.stop()
+
+        assert len(lines(sink.path)) == 1
+        assert stats.snapshot()["calls"] == 1
+
+    def test_a_raising_tool_is_recorded_as_an_error_and_still_raises(self, sink):
+        stats = Stats(sink=sink)
+        with pytest.raises(ZeroDivisionError):
+            with stats.call("omarchy_run"):
+                1 / 0
+        sink.stop()
+
+        (written,) = lines(sink.path)
+        assert written["outcome"] == "error"
+        assert stats.snapshot()["failures"] == 1
+
+    def test_a_refusal_is_a_failure_rather_than_a_success(self, sink):
+        """omarchy_run used to count before the gate ran, so every refusal was
+        recorded as a successful call."""
+        stats = Stats(sink=sink)
+        with stats.call("omarchy_run") as rec:
+            rec.route = "omarchy system reboot"
+            rec.outcome = "refused"
+            rec.tier = "guarded"
+        sink.stop()
+
+        (written,) = lines(sink.path)
+        assert written["outcome"] == "refused"
+        assert written["tier"] == "guarded"
+        assert stats.snapshot()["failures"] == 1
+
+    def test_a_call_is_timed(self, sink):
+        stats = Stats(sink=sink)
+        with stats.call("omarchy_run"):
+            pass
+        sink.stop()
+
+        assert "ms" in lines(sink.path)[0]
+
+    def test_no_sink_means_counters_only(self):
+        stats = Stats()
+        with stats.call("omarchy_run") as rec:
+            rec.route = "omarchy theme current"
+        assert stats.snapshot()["last_route"] == "omarchy theme current"
+
+
+class TestWhatTheToolsWrite:
+    """The properties that only hold end to end: what reaches the file when a
+    real tool runs, and -- more importantly -- what does not."""
+
+    @pytest.fixture
+    def tools(self, monkeypatch, sink):
+        from mcp.server.mcpserver import MCPServer
+
+        from omarchy_mcp import desktop as desktop_layer
+        from omarchy_mcp.tools import desktop as desktop_tools, generic
+
+        monkeypatch.setattr(desktop_layer, "ocr", lambda **kw: "SECRET on the screen")
+        monkeypatch.setattr(desktop_layer, "clipboard_read", lambda **kw: "SECRET copied")
+        monkeypatch.setattr(desktop_layer, "clipboard_write", lambda text: None)
+
+        mcp = MCPServer(name="t")
+        stats = Stats(sink=sink)
+        desktop_tools.register(mcp, Config(), LOG, stats)
+        generic.register(mcp, Config(), LOG, stats)
+        return mcp
+
+    async def _log_of(self, mcp, sink, name, args):
+        await mcp.call_tool(name, args)
+        sink.stop()
+        return sink.path.read_text()
+
+    @pytest.mark.anyio
+    async def test_ocr_text_never_reaches_the_file(self, tools, sink):
+        """What is on the screen is the user's, not the agent's action."""
+        written = await self._log_of(tools, sink, "omarchy_screen_text", {"target": "screen"})
+        assert "SECRET" not in written
+        assert '"tool": "omarchy_screen_text"' in written
+
+    @pytest.mark.anyio
+    async def test_clipboard_contents_never_reach_the_file(self, tools, sink):
+        written = await self._log_of(tools, sink, "omarchy_clipboard_read", {})
+        assert "SECRET" not in written
+
+    @pytest.mark.anyio
+    async def test_what_was_put_on_the_clipboard_does(self, tools, sink):
+        """This one is the action: it is what a user would come back to find."""
+        written = await self._log_of(
+            tools, sink, "omarchy_clipboard_write", {"text": "ssh-rsa AAAA"}
+        )
+        assert json.loads(written.splitlines()[0])["args"] == ["ssh-rsa AAAA"]
+
+    @pytest.mark.anyio
+    async def test_a_refused_run_is_logged_as_refused(self, tools, sink):
+        """A guarded route that was blocked is more interesting than a safe one
+        that ran, and it must not be recorded as a success."""
+        written = await self._log_of(
+            tools, sink, "omarchy_run", {"route": "omarchy system reboot"}
+        )
+        record = json.loads(written.splitlines()[0])
+        assert record["outcome"] == "refused"
+        assert record["tier"] == "guarded"
+        assert record["route"] == "omarchy system reboot"
+
+    @pytest.mark.anyio
+    async def test_a_route_that_does_not_exist_is_an_error_not_a_failure(self, tools, sink):
+        written = await self._log_of(tools, sink, "omarchy_run", {"route": "omarchy nonsense"})
+        assert json.loads(written.splitlines()[0])["outcome"] == "error"
