@@ -14,6 +14,7 @@ from mcp.server.mcpserver import MCPServer
 
 from omarchy_mcp import __version__
 from omarchy_mcp.config import Config
+from omarchy_mcp.settings import Settings
 from omarchy_mcp.policy import GUARDED_GROUPS, GUARDED_ROUTES
 from omarchy_mcp.stats import Stats
 from omarchy_mcp import resources
@@ -73,12 +74,12 @@ async def render() -> str:
     mcp = MCPServer(name="omarchy", version=__version__)
     log = logging.getLogger("doc")
     stats = Stats()
-    generic.register(mcp, Config(), log, stats)
-    desktop.register(mcp, Config(), log, stats)
-    system.register(mcp, Config(), log, stats)
-    feedback.register(mcp, Config(), log, stats)
-    control.register(mcp, Config(), log, stats)
-    resources.register(mcp, Config(), log)
+    generic.register(mcp, Settings(Config()), log, stats)
+    desktop.register(mcp, Settings(Config()), log, stats)
+    system.register(mcp, Settings(Config()), log, stats)
+    feedback.register(mcp, Settings(Config()), log, stats)
+    control.register(mcp, Settings(Config()), log, stats)
+    resources.register(mcp, Settings(Config()), log)
     tools = await mcp.list_tools()
 
     out = [HEADER, f"## The {len(tools)} tools\n"]

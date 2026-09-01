@@ -14,14 +14,15 @@ from mcp.types import ImageContent, TextContent, ToolAnnotations
 
 from .. import desktop, resolve
 from ..config import Config
+from ..settings import Settings
 from ..stats import Stats
 from ._shared import UNTRUSTED, threaded
 
 TARGETS = "screen (the focused monitor), window (the focused window), monitor, or region"
 
 
-def register(mcp, config: Config, log, stats: Stats) -> None:
-    disabled = set(config.disabled_tools)
+def register(mcp, settings: Settings, log, stats: Stats) -> None:
+    disabled = set(settings.current.disabled_tools)
 
     def enabled(name: str) -> bool:
         return name not in disabled
@@ -152,7 +153,7 @@ def register(mcp, config: Config, log, stats: Stats) -> None:
 
                 # The extracted text is never logged: it is the contents of the
                 # screen, and a record of that is a different thing entirely.
-                capped, truncated = _cap(text, config.max_output_b)
+                capped, truncated = _cap(text, settings.current.max_output_b)
                 payload: dict[str, object] = {"text": capped, "truncated": truncated}
                 if named:
                     payload["target"] = named.label
@@ -184,7 +185,7 @@ def register(mcp, config: Config, log, stats: Stats) -> None:
 
                 # What was on the clipboard is not logged, for the same reason OCR
                 # text is not: it is the user's data, not the agent's action.
-                capped, truncated = _cap(text, config.max_output_b)
+                capped, truncated = _cap(text, settings.current.max_output_b)
                 return json.dumps({"text": capped, "truncated": truncated}, indent=2)
 
     if enabled("omarchy_clipboard_write"):

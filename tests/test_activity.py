@@ -22,6 +22,7 @@ import pytest
 from omarchy_mcp import activity
 from omarchy_mcp.activity import Record, Sink
 from omarchy_mcp.config import Config
+from omarchy_mcp.settings import Settings
 from omarchy_mcp.stats import Stats
 
 LOG = logging.getLogger("test")
@@ -363,8 +364,8 @@ class TestWhatTheToolsWrite:
 
         mcp = MCPServer(name="t")
         stats = Stats(sink=sink)
-        desktop_tools.register(mcp, Config(), LOG, stats)
-        generic.register(mcp, Config(), LOG, stats)
+        desktop_tools.register(mcp, Settings(Config()), LOG, stats)
+        generic.register(mcp, Settings(Config()), LOG, stats)
         return mcp
 
     async def _log_of(self, mcp, sink, name, args):

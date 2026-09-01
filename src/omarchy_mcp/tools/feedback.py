@@ -13,13 +13,15 @@ from mcp.server.mcpserver import Context
 from mcp.types import ToolAnnotations
 
 from ..config import Config
+from ..settings import Settings
 from ..stats import Stats
 from ._shared import enabled, run_route
 
 URGENCIES = ("low", "normal", "critical")
 
 
-def register(mcp, config: Config, log, stats: Stats) -> None:
+def register(mcp, settings: Settings, log, stats: Stats) -> None:
+    config = settings.current
     if enabled(config, "omarchy_notify"):
 
         @mcp.tool(
@@ -62,7 +64,7 @@ def register(mcp, config: Config, log, stats: Stats) -> None:
 
             return await run_route(
                 "omarchy notification send", args,
-                config=config, stats=stats, log=log, tool="omarchy_notify", ctx=ctx,
+                config=settings.current, stats=stats, log=log, tool="omarchy_notify", ctx=ctx,
             )
 
     if enabled(config, "omarchy_osd"):
@@ -103,5 +105,5 @@ def register(mcp, config: Config, log, stats: Stats) -> None:
 
             return await run_route(
                 "omarchy osd", args,
-                config=config, stats=stats, log=log, tool="omarchy_osd", ctx=ctx,
+                config=settings.current, stats=stats, log=log, tool="omarchy_osd", ctx=ctx,
             )

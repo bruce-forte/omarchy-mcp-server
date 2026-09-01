@@ -20,12 +20,14 @@ from mcp.types import ToolAnnotations
 from .. import execute, gate, registry, shell
 from ..config import Config
 from ..policy import decide
+from ..settings import Settings
 from ..stats import Stats
 from ._shared import UNTRUSTED, offload, threaded
 
 
-def register(mcp, config: Config, log, stats: Stats | None = None) -> None:
+def register(mcp, settings: Settings, log, stats: Stats | None = None) -> None:
     stats = stats or Stats()
+    config = settings.current
     @mcp.tool(
         name="omarchy_search_commands",
         title="Search Omarchy commands",
@@ -46,6 +48,9 @@ def register(mcp, config: Config, log, stats: Stats | None = None) -> None:
         include_hidden: bool = False,
     ) -> str:
         with stats.call("omarchy_search_commands") as rec:
+            # One snapshot per call: what this reports about a route -- its tier,
+            # whether it is runnable -- is a claim about the config in force now.
+            config = settings.current
             rec.args = (query,) if query else ()
             limit = max(1, min(limit, 100))
             hits = registry.search(query, limit=limit, include_hidden=include_hidden)
@@ -94,6 +99,10 @@ def register(mcp, config: Config, log, stats: Stats | None = None) -> None:
     ) -> str:
         args = list(args or [])
         with stats.call("omarchy_run") as rec:
+            # The whole call -- gate, resolve, execute -- runs under one config.
+            # A reload landing halfway through cannot authorize by one set of
+            # rules and execute under another.
+            config = settings.current
             rec.route = route.strip()
             rec.args = tuple(args)
             cmd = registry.get(route.strip())
@@ -219,6 +228,7 @@ def register(mcp, config: Config, log, stats: Stats | None = None) -> None:
     ) -> str:
         args = list(args or [])
         with stats.call("omarchy_shell_call") as rec:
+            config = settings.current
             rec.route = f"{target}.{method}"
             rec.args = tuple(args)
             try:
