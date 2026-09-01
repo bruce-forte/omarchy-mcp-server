@@ -73,6 +73,16 @@ class Config:
     #: raises: a broken file yields defaults plus an explanation.
     problems: tuple[str, ...] = field(default=(), compare=False)
 
+    #: Whether the file parsed at all. False means every value here is a
+    #: default standing in for a file that could not be read.
+    #:
+    #: At startup that distinction does not matter -- defaults are the safe
+    #: floor and a daemon that refuses to start over a typo is a daemon that
+    #: looks uninstalled. At *reload* it is the whole question: an unparseable
+    #: file is not an instruction to empty `policy.deny` and switch every
+    #: disabled tool back on. See `reload.py`.
+    parsed: bool = field(default=True, compare=False)
+
     # The listen address is deliberately absent. This server executes commands
     # on the desktop; binding beyond loopback would put that behind a single
     # bearer token. If it is ever wanted it is a named, documented feature.
@@ -142,7 +152,10 @@ def load(path: Path | None = None) -> Config:
     try:
         raw = tomllib.loads(path.read_text())
     except (OSError, tomllib.TOMLDecodeError) as exc:
-        return Config(problems=(f"{path} could not be read ({exc}); using defaults",))
+        return Config(
+            problems=(f"{path} could not be read ({exc}); using defaults",),
+            parsed=False,
+        )
 
     server = raw.get("server") or {}
     policy = raw.get("policy") or {}

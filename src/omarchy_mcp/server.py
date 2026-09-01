@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from pathlib import Path
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
@@ -13,6 +14,7 @@ from . import __version__
 from .auth import BearerAuth
 from .config import Config
 from . import resources
+from .reload import Reloader, lifespan_for
 from .settings import Settings
 from .stats import Stats
 from .tools import control, desktop, feedback, generic, system
@@ -43,16 +45,32 @@ def build(
     log: logging.Logger,
     *,
     stats: Stats | None = None,
+    reload_from: Path | None = None,
 ):
     """Build the ASGI application for the MCP server.
 
     Takes the live `Settings` holder, or a bare `Config` for a server that will
     never reload -- the tests and `make tools` build one of those.
+
+    `reload_from` names the config file to watch. None means this server never
+    reloads: nothing polls, and the configuration it was built with is the one
+    it dies with.
     """
     stats = stats or Stats()
     settings = Settings.of(config)
     config = settings.current
+    # Declared first, because the reloader needs the catalogue and the server
+    # needs the reloader's lifespan. Nothing is registered until `apply` below.
+    catalogue = Catalogue()
+    reloader: Reloader | None = None
+
+    def lifespan(server):
+        # `reloader` is built after the server it reloads, so this reads it at
+        # call time rather than closing over the None it is now.
+        return lifespan_for(reloader)(server)
+
     mcp = MCPServer(
+        lifespan=(lifespan if reload_from is not None else None),
         name=SERVER_NAME,
         title="Omarchy",
         version=__version__,
@@ -74,7 +92,6 @@ def build(
 
     # Declared, then applied. `apply` is the only thing that registers a tool,
     # and a reload calls the same function with a new config.
-    catalogue = Catalogue()
     generic.register(catalogue, settings, log, stats)
     desktop.register(catalogue, settings, log, stats)
     system.register(catalogue, settings, log, stats)
@@ -83,6 +100,9 @@ def build(
     catalogue.apply(mcp, config)
 
     resources.register(mcp, settings, log)
+
+    if reload_from is not None:
+        reloader = Reloader(settings, catalogue, mcp, log, path=reload_from)
 
     @mcp.custom_route("/health", methods=["GET"])
     async def health(_request):
