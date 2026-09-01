@@ -12,10 +12,16 @@ import Quickshell.Io
 // session. A systemd unit would have to import them and would race the session
 // at boot.
 //
-// The daemon prints one JSON line to stdout whenever its state changes, and
-// logs to stderr. State is mirrored into a file because Omarchy routes
-// inter-plugin calls to panels and overlays but not to services, so the bar
-// widget cannot ask this object anything.
+// The daemon prints one JSON line to stdout per state change, and per tool
+// call, and logs to stderr.
+//
+// State is also mirrored into a file, but no longer because it has to be. A
+// bar widget cannot be reached by `shell call` -- that routes to panels and
+// overlays only -- but it can reach *this object*, through
+// `bar.shell.serviceFor(pluginId)`, which has no first-party restriction. The
+// file remains because the widget is constructed before this service exists,
+// so `serviceFor` returns null on every startup for as long as it takes the
+// service host to catch up. Verified on a live desktop; see ROADMAP.md N6.
 Item {
   id: root
 
@@ -24,6 +30,8 @@ Item {
   readonly property string pluginId: "io.github.bruce-forte.mcp-server"
   readonly property string pluginDir: Qt.resolvedUrl(".").toString().replace("file://", "")
   readonly property string statePath: (Quickshell.env("XDG_RUNTIME_DIR") || "/tmp") + "/omarchy-mcp.state"
+  readonly property string stateDir: (Quickshell.env("XDG_STATE_HOME")
+    || (Quickshell.env("HOME") + "/.local/state")) + "/" + root.pluginId
 
   // What the daemon last told us, and what we last observed ourselves.
   property string phase: "starting"      // starting | building | listening | failed | stopped
@@ -35,6 +43,26 @@ Item {
 
   property bool   wantRunning: true
   property int    failures: 0
+
+  // The last few calls, read from the activity log when a panel asks for them.
+  // Not kept live: the log is the thing that survives a crash, and merging it
+  // with the frames below would mean deduplicating two accounts of one call.
+  property var    recent: []
+  property bool   recentLoading: false
+  property bool   activityLogged: true     // false when log.activity is off
+
+  // An agent just did something. The bar learns it here rather than from the
+  // /health poll, which is up to ten seconds behind -- by which time the
+  // desktop has already changed in front of the user.
+  signal callSeen(string tool, string outcome)
+
+  // The setup line reached the clipboard. The panel says so for a moment.
+  signal clientConfigCopied()
+
+  // Whether a Stop survives a shell restart. Held in the state directory
+  // rather than in memory: an off switch that turns itself back on at the next
+  // login is not an off switch.
+  property bool   autostartDecided: false
 
   // A restart is "start once the old one is actually gone", not "start in 250ms
   // and hope". The daemon can take seconds to exit -- it stops accepting, then
@@ -48,7 +76,21 @@ Item {
   // failure still recovers without a shell restart.
   readonly property int backoffMs: Math.min(1000 * Math.pow(2, Math.min(failures, 6)), 60000)
 
+  // Public start and stop carry intent, and intent is what persists. A restart
+  // is not a stop, so it goes through the private pair and leaves the marker
+  // alone -- otherwise a crash mid-restart would leave the daemon switched off
+  // and nothing would say why.
   function start() {
+    setAutostart(true)
+    beginRunning()
+  }
+
+  function stop() {
+    setAutostart(false)
+    halt()
+  }
+
+  function beginRunning() {
     if (daemon.running)
       return
     wantRunning = true
@@ -56,7 +98,7 @@ Item {
     daemon.running = true
   }
 
-  function stop() {
+  function halt() {
     wantRunning = false
     if (daemon.running) {
       daemon.running = false   // SIGTERM
@@ -70,12 +112,51 @@ Item {
   function restart() {
     restartPending = true
     const wasRunning = daemon.running
-    stop()
+    halt()
     // Nothing will exit if it was already down, so nothing would start it.
     if (!wasRunning) {
       restartPending = false
-      start()
+      beginRunning()
     }
+  }
+
+  // Empty means "start me"; anything else means a person switched this off.
+  // Written rather than deleted because FileView can write a file and cannot
+  // remove one, and a marker whose contents say which is which needs no rm.
+  function setAutostart(on) {
+    autostartDecided = true
+    stopMarker.setText(on ? "" : "stopped\n")
+  }
+
+  function decideAutostart(stopped) {
+    if (autostartDecided)
+      return
+    autostartDecided = true
+    if (stopped) {
+      phase = "stopped"
+      serving = false
+      writeState()
+      console.log("omarchy-mcp: not starting; stopped by the user. Start it from the"
+        + " bar panel, or with: omarchy-shell " + root.pluginId + " start")
+      return
+    }
+    beginRunning()
+  }
+
+  // Read the activity log for a panel that just opened. Spawned here rather
+  // than in the widget because a bar surface exists per monitor and this is
+  // one file: three screens would otherwise mean three readers of it.
+  function refreshRecent() {
+    if (tail.running)
+      return
+    recentLoading = true
+    tail.running = true
+  }
+
+  // The setup line carries the bearer token, so it goes to the clipboard the
+  // user is about to paste from and never to the screen.
+  function copyClientConfig() {
+    copyProc.running = true
   }
 
   function writeState() {
@@ -93,7 +174,15 @@ Item {
   onPhaseChanged: writeState()
   onServingChanged: writeState()
 
-  Component.onCompleted: start()
+  // Not `start()`: whether to start at all is a question the state directory
+  // answers, and the answer arrives asynchronously.
+  FileView {
+    id: stopMarker
+    path: root.stateDir + "/autostart-off"
+    printErrors: false
+    onLoaded: root.decideAutostart(text().trim() !== "")
+    onLoadFailed: root.decideAutostart(false)
+  }
 
   Process {
     id: daemon
@@ -107,6 +196,18 @@ Item {
           return
         try {
           const frame = JSON.parse(line)
+
+          // A call is not a lifecycle state: the daemon is still listening.
+          // Counted here so the bar reflects it now; the next /health poll
+          // carries the daemon's own count and corrects any drift.
+          if (frame.state === "call") {
+            root.calls += 1
+            root.lastTool = frame.tool || ""
+            root.callSeen(frame.tool || "", frame.outcome || "")
+            root.writeState()
+            return
+          }
+
           if (frame.state)
             root.phase = frame.state
           if (frame.port)
@@ -137,7 +238,7 @@ Item {
 
       if (root.restartPending) {
         root.restartPending = false
-        root.start()
+        root.beginRunning()
         return
       }
 
@@ -272,7 +373,20 @@ Item {
 
     function stop(): string {
       root.stop()
-      return "stopped"
+      return "stopped; it will stay stopped across a restart until you start it again"
+    }
+
+    function recent(): string {
+      // The panel's list, for a terminal. Reads the log directly, so it
+      // answers whether or not the daemon is running.
+      root.refreshRecent()
+      return "reading the activity log; see the bar panel, or run:\n"
+           + "  " + root.pluginDir + "bin/omarchy-mcpd --tail 20"
+    }
+
+    function copyClientConfig(): string {
+      root.copyClientConfig()
+      return "the client setup command is on the clipboard"
     }
 
     function restart(): string {
@@ -298,6 +412,84 @@ Item {
     command: ["omarchy", "notification", "send", "-u", "critical",
       "MCP server", "The Omarchy MCP server keeps failing to start. "
       + "See journalctl --user -f, or run: omarchy-shell io.github.bruce-forte.mcp-server rebuild"]
+  }
+
+  // Reads the log for a panel. `--tail --json` answers with an envelope rather
+  // than a bare array: an empty list alone cannot say whether nothing has
+  // happened or the log is switched off, and the panel has to tell a user
+  // which one they are looking at.
+  Process {
+    id: tail
+    command: [root.pluginDir + "bin/omarchy-mcpd", "--tail", "8", "--json"]
+
+    stdout: StdioCollector {
+      id: tailOut
+      waitForEnd: true
+    }
+
+    onExited: function (exitCode) {
+      root.recentLoading = false
+      if (exitCode !== 0) {
+        root.recent = []
+        console.warn("omarchy-mcp: could not read the activity log; --tail exited", exitCode)
+        return
+      }
+      try {
+        const body = JSON.parse(tailOut.text)
+        root.activityLogged = body.activity !== false
+        root.recent = body.records || []
+      } catch (e) {
+        root.recent = []
+        console.warn("omarchy-mcp: could not parse the activity log:", e)
+      }
+    }
+  }
+
+  // The setup line carries the bearer token, so it goes to the clipboard the
+  // user is about to paste from and never to the screen: a bar popup is on
+  // screen, in screenshots, and in screen shares.
+  //
+  // Two processes and a pipe rather than `wl-copy <text>`, because argv is
+  // world-readable through /proc. The same reason `panels/network/Panel.qml`
+  // sends a wifi password over stdin.
+  Process {
+    id: copyProc
+    command: [root.pluginDir + "bin/omarchy-mcpd", "--print-client-config"]
+
+    stdout: StdioCollector {
+      id: copyOut
+      waitForEnd: true
+    }
+
+    onExited: function (exitCode) {
+      if (exitCode !== 0) {
+        console.warn("omarchy-mcp: could not read the client config; exited", exitCode)
+        return
+      }
+      clipboard.payload = copyOut.text
+      clipboard.running = true
+    }
+  }
+
+  Process {
+    id: clipboard
+    property string payload: ""
+    command: ["wl-copy"]
+    stdinEnabled: true
+
+    onStarted: {
+      write(payload)
+      payload = ""
+      // wl-copy reads to EOF, so the write has to be finished, not just sent.
+      stdinEnabled = false
+    }
+
+    onExited: function (exitCode) {
+      if (exitCode === 0)
+        root.clientConfigCopied()
+      else
+        console.warn("omarchy-mcp: could not reach the clipboard; wl-copy exited", exitCode)
+    }
   }
 
   Process {

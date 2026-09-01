@@ -76,11 +76,27 @@ class TestTheSupervisorCanInsist:
         and nothing ever came back."""
         assert "restartTimer" not in service, "a timer cannot know when a process exited"
         assert "restartPending" in service
-        assert "root.start()" in service.split("onExited:")[1]
+        assert "root.beginRunning()" in service.split("onExited:")[1]
 
     def test_an_already_stopped_daemon_still_restarts(self, service):
         """Nothing will exit, so nothing would start it: the one case the
         exit-driven path cannot cover on its own."""
         body = service.split("function restart()")[1].split("function ")[0]
         assert "wasRunning" in body
-        assert "start()" in body
+        assert "beginRunning()" in body
+
+    def test_a_restart_is_not_a_stop(self, service):
+        """N6 gave `stop()` a side effect that outlives the session: it writes
+        the marker that suppresses the next autostart. A restart that went
+        through it would leave the daemon switched off for good if the shell
+        died between the two halves -- and nothing on the desktop would say
+        why. So restart drives the private pair and never touches intent."""
+        body = service.split("function restart()")[1].split("function ")[0]
+        assert "setAutostart" not in body
+        assert "root.stop()" not in body
+
+    def test_stopping_is_what_persists(self, service):
+        stop = service.split("function stop()")[1].split("function ")[0]
+        assert "setAutostart(false)" in stop
+        start = service.split("function start()")[1].split("function ")[0]
+        assert "setAutostart(true)" in start

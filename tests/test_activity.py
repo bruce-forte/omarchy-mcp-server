@@ -232,6 +232,49 @@ class TestReadingItBack:
         path.write_text('{"ts":"x","tool":"good"}\nnot json at all\n')
         assert [r["tool"] for r in activity.tail(10, path)] == ["good"]
 
+    def test_tail_json_is_one_array_of_whole_records(self, tmp_path, monkeypatch, capsys):
+        """What the bar panel reads. It parses once, or not at all."""
+        from omarchy_mcp import __main__ as entry
+
+        monkeypatch.setattr(activity, "STATE_DIR", tmp_path)
+        s = Sink(tmp_path / "activity.jsonl", max_bytes=1 << 20, log=LOG)
+        s.start()
+        s.append(Record(tool="omarchy_theme", target="Tokyo Night", exit=0).as_dict())
+        s.append(Record(tool="omarchy_run", route="omarchy theme set", outcome="refused").as_dict())
+        s.stop()
+
+        assert entry.main(["--tail", "5", "--json"]) == 0
+        body = json.loads(capsys.readouterr().out)
+        assert body["activity"] is True
+        assert [r["tool"] for r in body["records"]] == ["omarchy_theme", "omarchy_run"]
+        assert body["records"][1]["outcome"] == "refused"
+
+    def test_tail_json_says_when_the_log_is_off(self, tmp_path, monkeypatch, capsys):
+        """Otherwise an empty list reads as "nothing happened" to the panel."""
+        from omarchy_mcp import __main__ as entry
+        from omarchy_mcp import config as config_module
+
+        monkeypatch.setattr(activity, "STATE_DIR", tmp_path)
+        monkeypatch.setattr(config_module, "load", lambda: Config(activity=False))
+
+        assert entry.main(["--tail", "5", "--json"]) == 0
+        body = json.loads(capsys.readouterr().out)
+        assert body == {"activity": False, "records": []}
+
+    def test_tail_without_json_still_renders_for_a_person(self, tmp_path, monkeypatch, capsys):
+        from omarchy_mcp import __main__ as entry
+
+        monkeypatch.setattr(activity, "STATE_DIR", tmp_path)
+        s = Sink(tmp_path / "activity.jsonl", max_bytes=1 << 20, log=LOG)
+        s.start()
+        s.append(Record(tool="omarchy_theme", target="Tokyo Night", exit=0, ms=249).as_dict())
+        s.stop()
+
+        assert entry.main(["--tail", "5"]) == 0
+        out = capsys.readouterr().out
+        assert "omarchy_theme" in out and "Tokyo Night" in out
+        assert not out.lstrip().startswith("[")
+
     def test_a_record_renders_as_one_readable_line(self):
         body = Record(
             tool="omarchy_run",
