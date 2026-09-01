@@ -19,11 +19,12 @@ import json
 
 from . import desktop, gate, registry, shell
 from .config import Config
+from .settings import Settings
 from .policy import decide
 from .status import gather
 
 
-def register(mcp, config: Config, log) -> None:
+def register(mcp, settings: Settings, log) -> None:
     # ------------------------------------------------------------- concrete
 
     @mcp.resource(
@@ -151,13 +152,13 @@ def register(mcp, config: Config, log) -> None:
         """
         rows = []
         for cmd in sorted(commands, key=lambda c: c.route):
-            verdict = decide(cmd, config)
+            verdict = decide(cmd, settings.current)
             row = registry.as_dict(cmd)
             row["tier"] = verdict.tier.value
             # A route that will ask is runnable: reporting it as refused would
             # make a careful agent never call it, so the prompt would never
             # fire and the feature would be invisible to the only caller.
-            asks = gate.asks(verdict, config)
+            asks = gate.asks(verdict, settings.current)
             row["runnable"] = verdict.allowed or asks
             if asks:
                 row["asks"] = True

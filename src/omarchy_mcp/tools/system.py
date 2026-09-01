@@ -7,6 +7,7 @@ import json
 from mcp.types import ToolAnnotations
 
 from ..config import Config
+from ..settings import Settings
 from ..stats import Stats
 from ..status import gather
 from ._shared import threaded
@@ -15,8 +16,8 @@ from ._shared import threaded
 __all__ = ["register"]
 
 
-def register(mcp, config: Config, log, stats: Stats) -> None:
-    if "omarchy_system_status" in set(config.disabled_tools):
+def register(mcp, settings: Settings, log, stats: Stats) -> None:
+    if "omarchy_system_status" in set(settings.current.disabled_tools):
         return
 
     @mcp.tool(

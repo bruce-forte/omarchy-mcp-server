@@ -70,6 +70,7 @@ class TestToolBehaviour:
         from mcp.server.mcpserver import MCPServer
 
         from omarchy_mcp.config import Config
+        from omarchy_mcp.settings import Settings
         from omarchy_mcp.stats import Stats
 
         ran = []
@@ -80,7 +81,7 @@ class TestToolBehaviour:
 
         monkeypatch.setattr(control, "run_route", fake_run)
         mcp = MCPServer(name="t")
-        control.register(mcp, Config(), logging.getLogger("t"), Stats())
+        control.register(mcp, Settings(Config()), logging.getLogger("t"), Stats())
         return mcp, ran
 
     async def _call(self, mcp, name, args):

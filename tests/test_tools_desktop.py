@@ -15,6 +15,7 @@ import pytest
 
 from omarchy_mcp import desktop as desktop_layer
 from omarchy_mcp.config import Config
+from omarchy_mcp.settings import Settings
 from omarchy_mcp.stats import Stats
 from omarchy_mcp.tools import desktop as desktop_tools
 
@@ -38,7 +39,7 @@ def tools(monkeypatch):
     monkeypatch.setattr(desktop_layer, "ocr", fake_ocr)
 
     mcp = MCPServer(name="t")
-    desktop_tools.register(mcp, Config(), logging.getLogger("t"), Stats())
+    desktop_tools.register(mcp, Settings(Config()), logging.getLogger("t"), Stats())
     return mcp, captured
 
 

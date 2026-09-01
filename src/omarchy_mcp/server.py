@@ -13,6 +13,7 @@ from . import __version__
 from .auth import BearerAuth
 from .config import Config
 from . import resources
+from .settings import Settings
 from .stats import Stats
 from .tools import control, desktop, feedback, generic, system
 
@@ -35,9 +36,21 @@ def _transport_security(port: int) -> TransportSecuritySettings:
     )
 
 
-def build(config: Config, token: str, log: logging.Logger, *, stats: Stats | None = None):
-    """Build the ASGI application for the MCP server."""
+def build(
+    config: Config | Settings,
+    token: str,
+    log: logging.Logger,
+    *,
+    stats: Stats | None = None,
+):
+    """Build the ASGI application for the MCP server.
+
+    Takes the live `Settings` holder, or a bare `Config` for a server that will
+    never reload -- the tests and `make tools` build one of those.
+    """
     stats = stats or Stats()
+    settings = Settings.of(config)
+    config = settings.current
     mcp = MCPServer(
         name=SERVER_NAME,
         title="Omarchy",
@@ -58,12 +71,12 @@ def build(config: Config, token: str, log: logging.Logger, *, stats: Stats | Non
         ),
     )
 
-    generic.register(mcp, config, log, stats)
-    desktop.register(mcp, config, log, stats)
-    system.register(mcp, config, log, stats)
-    feedback.register(mcp, config, log, stats)
-    control.register(mcp, config, log, stats)
-    resources.register(mcp, config, log)
+    generic.register(mcp, settings, log, stats)
+    desktop.register(mcp, settings, log, stats)
+    system.register(mcp, settings, log, stats)
+    feedback.register(mcp, settings, log, stats)
+    control.register(mcp, settings, log, stats)
+    resources.register(mcp, settings, log)
 
     @mcp.custom_route("/health", methods=["GET"])
     async def health(_request):

@@ -16,6 +16,7 @@ from mcp.types import ToolAnnotations
 
 from .. import execute, registry, shell
 from ..config import Config
+from ..settings import Settings
 from ..stats import Stats
 from ._shared import enabled, offload, run_route
 
@@ -47,10 +48,14 @@ MEDIA_ACTIONS = (
 )
 
 
-def register(mcp, config: Config, log, stats: Stats) -> None:
+def register(mcp, settings: Settings, log, stats: Stats) -> None:
+    config = settings.current
+
     async def run(route, args, tool, ctx, **kw):
+        # One snapshot per call: a reload between two calls is seen, a reload
+        # during one is not.
         return await run_route(
-            route, args, config=config, stats=stats, log=log, tool=tool, ctx=ctx, **kw
+            route, args, config=settings.current, stats=stats, log=log, tool=tool, ctx=ctx, **kw
         )
 
     # ---------------------------------------------------------------- theme
@@ -205,13 +210,14 @@ def register(mcp, config: Config, log, stats: Stats) -> None:
                 )
 
             with stats.call("omarchy_media") as rec:
+                cfg = settings.current
                 rec.route = f"media.{action}"
                 argv = shell.call_argv("media", action, [])
                 result = await offload(
                     execute.run,
                     argv,
-                    timeout_ms=config.timeout_ms,
-                    max_output_b=config.max_output_b,
+                    timeout_ms=cfg.timeout_ms,
+                    max_output_b=cfg.max_output_b,
                 )
                 rec.exit = result.exit_code
                 rec.timed_out = result.timed_out
