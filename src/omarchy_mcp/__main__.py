@@ -17,6 +17,7 @@ import sys
 from . import __version__, activity, config as config_module, frames, token as token_module
 from .paths import CONFIG_FILE
 from .server import build, client_config_json, client_config_line
+from .settings import Settings
 from .stats import Stats
 
 LOG_LEVELS = {"debug": logging.DEBUG, "info": logging.INFO, "warn": logging.WARNING,
@@ -101,7 +102,9 @@ def main(argv: list[str] | None = None) -> int:
         # is on, because a user who turned the log off did not ask the bar to
         # stop telling them an agent is doing something.
         stats = Stats(sink=sink, on_call=lambda rec: frames.call(rec.tool, rec.result))
-        app = build(cfg, tok, log, stats=stats)
+        # The holder the reloader swaps. Everything downstream reads it.
+        settings = Settings(cfg)
+        app = build(settings, tok, log, stats=stats, reload_from=CONFIG_FILE)
         if sink is not None:
             # The log is closed from the lifespan shutdown, because nothing
             # after uvicorn.run() runs -- it dies by signal (F28).
