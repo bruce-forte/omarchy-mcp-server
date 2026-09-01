@@ -137,7 +137,3 @@ async def run_route(
         if result.exit_code not in (0, None):
             payload["hint"] = "Run omarchy_search_commands for this route's accepted arguments."
         return json.dumps(payload, indent=2)
-
-
-def enabled(config: Config, name: str) -> bool:
-    return name not in set(config.disabled_tools)

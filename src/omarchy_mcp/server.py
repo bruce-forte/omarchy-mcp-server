@@ -16,6 +16,7 @@ from . import resources
 from .settings import Settings
 from .stats import Stats
 from .tools import control, desktop, feedback, generic, system
+from .tools.catalogue import Catalogue
 
 SERVER_NAME = "omarchy"
 
@@ -71,11 +72,16 @@ def build(
         ),
     )
 
-    generic.register(mcp, settings, log, stats)
-    desktop.register(mcp, settings, log, stats)
-    system.register(mcp, settings, log, stats)
-    feedback.register(mcp, settings, log, stats)
-    control.register(mcp, settings, log, stats)
+    # Declared, then applied. `apply` is the only thing that registers a tool,
+    # and a reload calls the same function with a new config.
+    catalogue = Catalogue()
+    generic.register(catalogue, settings, log, stats)
+    desktop.register(catalogue, settings, log, stats)
+    system.register(catalogue, settings, log, stats)
+    feedback.register(catalogue, settings, log, stats)
+    control.register(catalogue, settings, log, stats)
+    catalogue.apply(mcp, config)
+
     resources.register(mcp, settings, log)
 
     @mcp.custom_route("/health", methods=["GET"])
