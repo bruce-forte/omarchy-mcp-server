@@ -6,12 +6,15 @@ import json
 import logging
 from pathlib import Path
 
+from mcp.server.lowlevel.server import NotificationOptions
 from mcp.server.mcpserver import MCPServer
+from mcp.server.subscriptions import InMemorySubscriptionBus, ToolsListChanged
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.responses import JSONResponse
 
 from . import __version__
 from .auth import BearerAuth
+from .clients import Clients
 from .config import Config
 from . import resources
 from .reload import Reloader, lifespan_for
@@ -21,6 +24,34 @@ from .tools import control, desktop, feedback, generic, system
 from .tools.catalogue import Catalogue
 
 SERVER_NAME = "omarchy"
+
+
+def _advertise_tool_list_changed(mcp: MCPServer) -> None:
+    """Tell pre-2026 clients that this server sends `tools/list_changed`.
+
+    A client is entitled to ignore a notification the handshake said would
+    never come, and by default that is exactly what this server said: the
+    capability is derived from a `NotificationOptions` the HTTP path builds
+    with everything off, and `streamable_http_app()` does not thread one
+    through. So the one method that builds it is wrapped.
+
+    Reaching into `_lowlevel_server` is the private part, and it is the reason
+    `tests/test_server.py` asserts the resulting capability over a real
+    handshake: if a future 2.x moves this, that test fails here rather than a
+    client silently never re-listing.
+
+    Modern clients need none of this -- at 2026-07-28 the flag is derived from
+    `subscriptions/listen` being served, which it is.
+    """
+    server = mcp._lowlevel_server
+    build_options = server.create_initialization_options
+
+    def with_tools_changed(notification_options=None, *args, **kwargs):
+        return build_options(
+            notification_options or NotificationOptions(tools_changed=True), *args, **kwargs
+        )
+
+    server.create_initialization_options = with_tools_changed
 
 
 def _transport_security(port: int) -> TransportSecuritySettings:
@@ -63,6 +94,10 @@ def build(
     # needs the reloader's lifespan. Nothing is registered until `apply` below.
     catalogue = Catalogue()
     reloader: Reloader | None = None
+    # The two halves of "the tool list changed": a bus for clients on the
+    # modern wire, a register of sessions for everyone else. See `clients.py`.
+    bus = InMemorySubscriptionBus()
+    clients = Clients(log)
 
     def lifespan(server):
         # `reloader` is built after the server it reloads, so this reads it at
@@ -71,6 +106,8 @@ def build(
 
     mcp = MCPServer(
         lifespan=(lifespan if reload_from is not None else None),
+        subscriptions=bus,
+        middleware=[clients.observe],
         name=SERVER_NAME,
         title="Omarchy",
         version=__version__,
@@ -102,7 +139,13 @@ def build(
     resources.register(mcp, settings, log)
 
     if reload_from is not None:
-        reloader = Reloader(settings, catalogue, mcp, log, path=reload_from)
+        _advertise_tool_list_changed(mcp)
+
+        async def announce() -> None:
+            await bus.publish(ToolsListChanged())
+            await clients.tools_changed()
+
+        reloader = Reloader(settings, catalogue, mcp, log, path=reload_from, announce=announce)
 
     @mcp.custom_route("/health", methods=["GET"])
     async def health(_request):
