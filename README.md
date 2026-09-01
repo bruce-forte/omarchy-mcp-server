@@ -249,11 +249,24 @@ shows its default, so keys you leave alone keep tracking upstream defaults.
 # level = "info"
 ```
 
-After editing:
+Saving the file is enough. The daemon re-reads it within about two seconds:
+tools switch on and off on any client that is already attached, and the policy
+changes apply to the next call. To not wait:
 
 ```bash
 omarchy-shell io.github.bruce-forte.mcp-server reloadConfig
 ```
+
+or press **Reload config** in the bar panel, which does the same thing.
+
+Two exceptions, both needing a restart, because the daemon is already using
+them: `server.port` (the socket is bound) and the `[log]` activity settings (the
+log file is open).
+
+If the file stops parsing, the daemon keeps running the configuration it already
+had rather than falling back to defaults — a stray keystroke must not empty your
+`deny` list or switch disabled tools back on. It says so with a notification,
+and the bar panel says so until the file parses again.
 
 The listen address is always `127.0.0.1` and is deliberately not configurable.
 See [`SECURITY.md`](SECURITY.md).

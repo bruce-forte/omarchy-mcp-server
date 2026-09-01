@@ -257,5 +257,10 @@ call the service rather than build a second channel to the same process.
 - Editing Python: `omarchy-shell io.github.bruce-forte.mcp-server restart`
 - Editing QML: `omarchy restart shell` — the shell holds the object it already
   instantiated, so neither saving the file nor `rescanPlugins` swaps it in
-- Editing `~/.config/omarchy/mcp/config.toml`:
-  `omarchy-shell io.github.bruce-forte.mcp-server reloadConfig`
+- Editing `~/.config/omarchy/mcp/config.toml`: nothing. The daemon re-reads it
+  within two seconds and applies it in place — tools appear and disappear on
+  attached clients, and `[policy]` takes effect on the next call.
+  `omarchy-shell io.github.bruce-forte.mcp-server reloadConfig` sends `SIGHUP`
+  and skips the wait; it is no longer a restart. `server.port` and the `[log]`
+  activity settings still need one, because the socket is bound and the log is
+  open.
