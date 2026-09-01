@@ -238,6 +238,15 @@ serialisation. It is started in `__main__` around `uvicorn.run` and stopped with
 a sentinel and a bounded join, which has to fit between uvicorn's own three
 second grace and `Service.qml`'s SIGKILL five seconds after SIGTERM.
 
+**It is closed from the ASGI lifespan shutdown, not from the end of `main`.**
+Uvicorn restores the default signal handler and re-raises the signal that
+stopped it, so this process dies *by signal* — exit status 143 — and nothing
+after `uvicorn.run()` runs: not a `finally`, not `atexit`, not a non-daemon
+thread. `activity.Closing` is a pure-ASGI wrapper, for the same reason `auth.py`
+is one, that closes the log while uvicorn is still waiting for the lifespan to
+complete. Finding F28, and the reason to run a daemon before believing its
+shutdown path.
+
 **Loss is bounded and never silent.** A full queue drops the record, counts it,
 warns once on stderr, and the writer emits `{"event":"dropped","n":N}` into the
 file as soon as it catches up. An unexplained gap in an audit trail is worse
