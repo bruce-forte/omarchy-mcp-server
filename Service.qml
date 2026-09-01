@@ -41,6 +41,16 @@ Item {
   property int    calls: 0                // tool calls served, from /health
   property string lastTool: ""
 
+  // How many curated tools the daemon is offering, of how many it has. The
+  // answer to "did my edit to config.toml take?", which nothing else on the
+  // desktop could answer. Arrives on a `reloaded` frame at the moment of the
+  // edit, and again on every /health poll so a missed frame heals.
+  property int    tools: 0
+  property int    toolsDeclared: 0
+  // False when the daemon read config.toml and could not parse it. The daemon
+  // keeps running the configuration it had; the bar is where that is visible.
+  property bool   configOk: true
+
   property bool   wantRunning: true
   property int    failures: 0
 
@@ -159,6 +169,16 @@ Item {
     copyProc.running = true
   }
 
+  // The daemon re-reads config.toml by itself within a couple of seconds. This
+  // is the impatient path: SIGHUP makes it look now. Not a restart -- a restart
+  // drops every attached MCP session, which is the thing N7 exists to avoid.
+  function reloadConfig() {
+    if (!daemon.running)
+      return false
+    daemon.signal(1)   // SIGHUP
+    return true
+  }
+
   function writeState() {
     stateFile.setText(JSON.stringify({
       phase: root.phase,
@@ -166,6 +186,9 @@ Item {
       port: root.port,
       calls: root.calls,
       lastTool: root.lastTool,
+      tools: root.tools,
+      toolsDeclared: root.toolsDeclared,
+      configOk: root.configOk,
       error: root.lastError,
       pid: daemon.processId || 0
     }))
@@ -205,6 +228,15 @@ Item {
             root.lastTool = frame.tool || ""
             root.callSeen(frame.tool || "", frame.outcome || "")
             root.writeState()
+            return
+          }
+
+          // Not a lifecycle state either: the daemon re-read its config and
+          // is still whatever it was before.
+          if (frame.state === "reloaded") {
+            root.tools = Number(frame.tools || 0)
+            root.toolsDeclared = Number(frame.declared || 0)
+            root.configOk = frame.config_ok !== false
             return
           }
 
@@ -310,6 +342,8 @@ Item {
         root.serving = body.ok === true
         root.calls = Number(body.calls || 0)
         root.lastTool = String(body.last_tool || "")
+        root.tools = Number(body.tools || 0)
+        root.toolsDeclared = Number(body.tools_declared || 0)
         if (root.serving)
           root.failures = 0
       } catch (e) {
@@ -354,6 +388,9 @@ Item {
         pid: daemon.processId || 0,
         calls: root.calls,
         lastTool: root.lastTool,
+        tools: root.tools,
+        toolsDeclared: root.toolsDeclared,
+        configOk: root.configOk,
         failures: root.failures,
         error: root.lastError
       }, null, 2)
@@ -396,9 +433,12 @@ Item {
     }
 
     function reloadConfig(): string {
-      // The daemon reads its configuration at startup, so a reload is a restart.
-      root.restart()
-      return "reloading configuration (restarting the daemon)"
+      // No longer a restart: the daemon re-reads the file in place and tells
+      // attached clients if the tool set moved. It would do this within two
+      // seconds anyway; SIGHUP is only the impatient path.
+      if (!root.reloadConfig())
+        return "the daemon is not running; start it first"
+      return "re-reading ~/.config/omarchy/mcp/config.toml now"
     }
 
     function rebuild(): string {

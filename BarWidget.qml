@@ -53,6 +53,9 @@ Panel {
   property int    fileCalls: 0
   property string fileLastTool: ""
   property string fileError: ""
+  property int    fileTools: 0
+  property int    fileToolsDeclared: 0
+  property bool   fileConfigOk: true
 
   readonly property string phase: service ? service.phase : filePhase
   readonly property bool   serving: service ? service.serving : fileServing
@@ -60,6 +63,13 @@ Panel {
   readonly property int    calls: service ? service.calls : fileCalls
   readonly property string lastTool: service ? service.lastTool : fileLastTool
   readonly property string lastError: service ? service.lastError : fileError
+
+  // How many curated tools are on, of how many exist, and whether the last
+  // read of config.toml was usable. This is the answer to "did my edit take?",
+  // which nothing else on the desktop gives.
+  readonly property int  tools: service ? service.tools : fileTools
+  readonly property int  toolsDeclared: service ? service.toolsDeclared : fileToolsDeclared
+  readonly property bool configOk: service ? service.configOk : fileConfigOk
 
   readonly property var recent: service ? service.recent : []
   readonly property bool recentLoading: service ? service.recentLoading : false
@@ -149,6 +159,9 @@ Panel {
       fileCalls = Number(data.calls || 0)
       fileLastTool = String(data.lastTool || "")
       fileError = String(data.error || "")
+      fileTools = Number(data.tools || 0)
+      fileToolsDeclared = Number(data.toolsDeclared || 0)
+      fileConfigOk = data.configOk !== false
     } catch (e) {
       // A partial read; the next write brings a whole one.
       fileServing = false
@@ -171,6 +184,18 @@ Panel {
         return "· daemon started"
       if (record.event === "stopped")
         return "· daemon stopped"
+      if (record.event === "reloaded") {
+        var moved = []
+        if (record.added && record.added.length)
+          moved.push("+" + record.added.length)
+        if (record.removed && record.removed.length)
+          moved.push("-" + record.removed.length)
+        if (record.policy)
+          moved.push("policy")
+        return "· config reloaded" + (moved.length ? " (" + moved.join(" ") + ")" : "")
+      }
+      if (record.event === "config_rejected")
+        return "· config not applied"
       return "· " + String(record.event)
     }
 
@@ -287,6 +312,38 @@ Panel {
           font.pixelSize: Style.font.bodySmall
         }
 
+        // Not folded into the line above: that one is about the daemon, this
+        // one is about what an agent can reach, and they change for different
+        // reasons. Hidden until the daemon has said, so a starting server does
+        // not read as "0 tools".
+        Text {
+          width: parent.width
+          wrapMode: Text.WordWrap
+          visible: root.toolsDeclared > 0
+          text: {
+            var line = root.tools + " of " + root.toolsDeclared + " tools offered"
+            if (root.tools < root.toolsDeclared)
+              line += " · " + (root.toolsDeclared - root.tools) + " switched off in config.toml"
+            return line
+          }
+          color: Qt.darker(Color.foreground, 1.4)
+          font.family: Style.font.family
+          font.pixelSize: Style.font.bodySmall
+        }
+
+        // The daemon keeps serving when config.toml stops parsing, on purpose:
+        // a stray keystroke must not empty the policy or switch tools back on.
+        // Which makes this the only place the person finds out.
+        Text {
+          width: parent.width
+          wrapMode: Text.WordWrap
+          visible: !root.configOk
+          text: "config.toml does not parse. Still running the previous configuration."
+          color: Color.urgent
+          font.family: Style.font.family
+          font.pixelSize: Style.font.bodySmall
+        }
+
         PanelSeparator { width: parent.width }
 
         PanelSectionHeader { text: "RECENT" }
@@ -356,6 +413,17 @@ Panel {
             bordered: true
             enabled: root.service !== null
             onClicked: root.service.restart()
+          }
+
+          // The daemon re-reads config.toml by itself within two seconds. This
+          // is here for the case that makes waiting unbearable: the file was
+          // rejected, you have just fixed it, and you want the answer now
+          // rather than a wait you cannot tell from "still broken".
+          Button {
+            text: "Reload config"
+            bordered: true
+            enabled: root.service !== null && root.serving
+            onClicked: root.service.reloadConfig()
           }
 
           Button {

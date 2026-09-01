@@ -58,3 +58,17 @@ def emit(state: str, **fields: object) -> None:
 def call(tool: str, outcome: str) -> None:
     """A tool call finished. See the module docstring for what is not in it."""
     emit("call", tool=tool, outcome=outcome)
+
+
+def reloaded(tools: int, declared: int, config_ok: bool) -> None:
+    """The config file was re-read.
+
+    Counts, never contents. The bar shows "Tools 18 of 19" and whether the file
+    was rejected; which tools, and what the policy says, are answered by the
+    config file the person just edited.
+
+    Like `call`, this exists so the widget learns now rather than at the next
+    ten-second `/health` poll -- the person has just saved a file and is looking
+    at the bar to find out whether it took.
+    """
+    emit("reloaded", tools=tools, declared=declared, config_ok=config_ok)
