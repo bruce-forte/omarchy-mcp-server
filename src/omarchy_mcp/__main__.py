@@ -14,7 +14,7 @@ import json
 import logging
 import sys
 
-from . import __version__, activity, config as config_module, token as token_module
+from . import __version__, activity, config as config_module, frames, token as token_module
 from .paths import CONFIG_FILE
 from .server import build, client_config_json, client_config_line
 from .stats import Stats
@@ -50,7 +50,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="print the client setup command and exit",
     )
-    parser.add_argument("--json", action="store_true", help="with --print-client-config, emit JSON")
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="with --print-client-config or --tail, emit JSON instead of text",
+    )
     parser.add_argument(
         "--tail",
         type=int,
@@ -71,9 +75,19 @@ def main(argv: list[str] | None = None) -> int:
         log.warning("%s: %s", CONFIG_FILE, problem)
 
     if args.tail is not None:
-        # Reads the file directly, so it works whether or not a daemon is running.
-        for body in activity.tail(args.tail, activity.path_for(cfg)):
-            print(activity.render(body))
+        # Reads the file directly, so it works whether or not a daemon is
+        # running -- which is the case the bar panel opens in most often.
+        records = activity.tail(args.tail, activity.path_for(cfg))
+        if args.json:
+            # An envelope rather than a bare array, because an empty list is
+            # ambiguous: nothing has happened yet, or the log is off and never
+            # will. The bar panel has to tell those apart -- "no calls" shown
+            # to someone whose counter reads 42 is a lie the widget would be
+            # telling on the daemon's behalf.
+            print(json.dumps({"activity": cfg.activity, "records": records}))
+        else:
+            for body in records:
+                print(activity.render(body))
         return 0
 
     tok = token_module.ensure()
@@ -83,7 +97,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     with activity.writer(cfg, log) as sink:
-        app = build(cfg, tok, log, stats=Stats(sink=sink))
+        # The frame is not the audit trail: it goes out whether or not the log
+        # is on, because a user who turned the log off did not ask the bar to
+        # stop telling them an agent is doing something.
+        stats = Stats(sink=sink, on_call=lambda rec: frames.call(rec.tool, rec.result))
+        app = build(cfg, tok, log, stats=stats)
         if sink is not None:
             # The log is closed from the lifespan shutdown, because nothing
             # after uvicorn.run() runs -- it dies by signal (F28).
@@ -92,12 +110,7 @@ def main(argv: list[str] | None = None) -> int:
         import uvicorn
 
         log.info("serving on http://127.0.0.1:%d/mcp", cfg.port)
-        # One JSON line on stdout per state change: Service.qml reads this to
-        # decide what the bar widget should say.
-        print(
-            json.dumps({"state": "listening", "port": cfg.port, "version": __version__}),
-            flush=True,
-        )
+        frames.emit("listening", port=cfg.port, version=__version__)
 
         try:
             uvicorn.run(
@@ -110,10 +123,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         except OSError as exc:
             log.error("cannot listen on port %d: %s", cfg.port, exc)
-            print(
-                json.dumps({"state": "failed", "port": cfg.port, "error": str(exc)}),
-                flush=True,
-            )
+            frames.emit("failed", port=cfg.port, error=str(exc))
             return 1
     return 0
 

@@ -6,6 +6,10 @@ a user has, since the client is a language model and nothing else on the desktop
 reveals that an agent just did something. The same event also goes to
 `activity.py`, which keeps it after the daemon is gone.
 
+A third consumer, `frames.py`, gets told on the way out too: the counters only
+reach the bar on a ten-second poll, so the frame is what makes an agent's action
+visible at the moment it happens rather than whenever the widget next asks.
+
 `call()` is the seam. A tool opens one, fills in what it learns, and exactly one
 record is written when it leaves -- including when it leaves by exception. That
 is what makes the two long-standing bugs unrepresentable: `omarchy_run` used to
@@ -17,7 +21,7 @@ from __future__ import annotations
 
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 
@@ -35,6 +39,11 @@ class Stats:
     #: Where records go after they are counted. ``None`` is counters only,
     #: which is what a test gets and what `log.activity = false` produces.
     sink: object | None = None
+
+    #: Told that a call finished, for the stdout frame the shell reads. Separate
+    #: from `sink` because it is not the audit trail and does not follow
+    #: `log.activity`: turning the log off should not blind the bar.
+    on_call: Callable[[Record], None] | None = None
 
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
@@ -66,6 +75,8 @@ class Stats:
             self.last_route = rec.route
         if self.sink is not None:
             self.sink.append(rec.as_dict())
+        if self.on_call is not None:
+            self.on_call(rec)
 
     def snapshot(self) -> dict[str, object]:
         with self._lock:
