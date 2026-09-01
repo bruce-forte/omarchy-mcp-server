@@ -42,7 +42,7 @@ is run by hand outside the shell entirely. `SIGHUP` short-circuits the wait, so
 from __future__ import annotations
 
 import signal
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -111,6 +111,7 @@ class Reloader:
         *,
         path: Path = CONFIG_FILE,
         on_change: Callable[[Reloaded], None] | None = None,
+        announce: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         self._settings = settings
         self._catalogue = catalogue
@@ -118,6 +119,7 @@ class Reloader:
         self._log = log
         self._path = path
         self._on_change = on_change
+        self._announce = announce
 
         # What was on disk when the daemon started, so the first poll does not
         # report the file it has already read as an edit.
@@ -266,7 +268,13 @@ class Reloader:
                     await self._wake.wait()
                 self._wake = anyio.Event()
                 try:
-                    await anyio.to_thread.run_sync(self.poll)
+                    result = await anyio.to_thread.run_sync(self.poll)
+                    if result is not None and result.tools and self._announce is not None:
+                        # Only for a tool-set change: `tools/list_changed` is a
+                        # claim about the tool list, and a policy edit does not
+                        # move it. A client that re-listed on a policy change
+                        # would get the same answer and learn nothing.
+                        await self._announce()
                 except Exception:
                     # A reload must not be able to end the daemon. Whatever went
                     # wrong, the config in force is still a valid one.
