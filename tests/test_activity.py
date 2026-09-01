@@ -365,3 +365,57 @@ class TestWhatTheToolsWrite:
     async def test_a_route_that_does_not_exist_is_an_error_not_a_failure(self, tools, sink):
         written = await self._log_of(tools, sink, "omarchy_run", {"route": "omarchy nonsense"})
         assert json.loads(written.splitlines()[0])["outcome"] == "error"
+
+
+class TestClosingOnShutdown:
+    """Nothing at the end of `main` runs: uvicorn restores the default signal
+    handler and re-raises, so the process dies by signal (F28). The lifespan
+    shutdown is the last hook this daemon actually gets."""
+
+    @pytest.mark.anyio
+    async def test_the_lifespan_shutdown_closes_the_log(self, tmp_path):
+        s = Sink(tmp_path / "activity.jsonl", max_bytes=1 << 20, log=LOG)
+        s.start()
+        s.append(Record(tool="omarchy_run").as_dict())
+
+        await _lifespan(activity.Closing(_app(), s))
+
+        written = lines(s.path)
+        assert written[-1]["event"] == "stopped"
+        assert s._thread is None, "the writer is stopped, not left running"
+
+    @pytest.mark.anyio
+    async def test_ordinary_traffic_passes_straight_through(self, tmp_path):
+        s = Sink(tmp_path / "activity.jsonl", max_bytes=1 << 20, log=LOG)
+        seen: list = []
+
+        async def app(scope, receive, send):
+            seen.append(scope["type"])
+
+        await activity.Closing(app, s)({"type": "http"}, None, None)
+        assert seen == ["http"]
+
+    def test_closing_twice_writes_one_marker(self, tmp_path):
+        """The contextmanager closes too, for anything driven without an ASGI
+        server. Whichever runs first wins."""
+        s = Sink(tmp_path / "activity.jsonl", max_bytes=1 << 20, log=LOG)
+        s.start()
+        s.close()
+        s.close()
+
+        assert [r["event"] for r in lines(s.path)] == ["stopped"]
+
+
+def _app():
+    async def app(scope, receive, send):
+        await send({"type": "lifespan.startup.complete"})
+        await send({"type": "lifespan.shutdown.complete"})
+
+    return app
+
+
+async def _lifespan(app):
+    async def send(message):
+        pass
+
+    await app({"type": "lifespan"}, None, send)

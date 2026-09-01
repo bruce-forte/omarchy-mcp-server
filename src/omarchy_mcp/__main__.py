@@ -84,6 +84,10 @@ def main(argv: list[str] | None = None) -> int:
 
     with activity.writer(cfg, log) as sink:
         app = build(cfg, tok, log, stats=Stats(sink=sink))
+        if sink is not None:
+            # The log is closed from the lifespan shutdown, because nothing
+            # after uvicorn.run() runs -- it dies by signal (F28).
+            app = activity.Closing(app, sink)
 
         import uvicorn
 

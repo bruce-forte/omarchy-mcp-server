@@ -178,6 +178,7 @@ class Sink:
         self._dropped = 0
         self._warned = False
         self._told_user = False
+        self._closed = False
         self._fh = None
         self._size = 0
 
@@ -205,6 +206,22 @@ class Sink:
     def start(self) -> None:
         self._thread = threading.Thread(target=self._drain, name="activity", daemon=True)
         self._thread.start()
+
+    def close(self) -> None:
+        """Write the closing marker and shut the writer down. Idempotent.
+
+        Called from the ASGI lifespan shutdown rather than from the end of
+        `main`, because nothing at the end of `main` runs: uvicorn restores the
+        default signal handler and re-raises the signal that stopped it, so the
+        process dies *by signal*. A `finally`, an `atexit`, a non-daemon thread
+        -- none of them get a turn (F28). The lifespan shutdown does, and it
+        completes before the re-raise.
+        """
+        if self._closed:
+            return
+        self._closed = True
+        self.event("stopped")
+        self.stop()
 
     def stop(self) -> None:
         """Sentinel, then join, both bounded.
@@ -326,8 +343,36 @@ def writer(config, log):
     try:
         yield sink
     finally:
-        sink.event("stopped")
-        sink.stop()
+        # Normally already closed from the lifespan shutdown; this is the path
+        # for anything that drives the writer without an ASGI server.
+        sink.close()
+
+
+class Closing:
+    """Closes the log when the application shuts down.
+
+    A pure-ASGI wrapper for the same reason `auth.py` is one, and because the
+    only shutdown hook this process reliably gets is the lifespan's: see
+    `Sink.close`. Non-lifespan traffic passes straight through untouched.
+    """
+
+    def __init__(self, app, sink: Sink) -> None:
+        self.app = app
+        self._sink = sink
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "lifespan":
+            await self.app(scope, receive, send)
+            return
+
+        async def watched(message):
+            # Before the completion is reported, not after: once uvicorn has
+            # its answer it is free to re-raise and end the process.
+            if message["type"] == "lifespan.shutdown.complete":
+                self._sink.close()
+            await send(message)
+
+        await self.app(scope, receive, watched)
 
 
 def path_for(config) -> Path:

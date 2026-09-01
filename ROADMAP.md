@@ -439,6 +439,12 @@ file at all** — the queue is the serialisation. It starts in `__main__` around
 between uvicorn's own 3s grace and `Service.qml`'s SIGKILL 5s after SIGTERM
 (F27).
 
+It stops from the **ASGI lifespan shutdown**, not from the end of `main`, and
+that distinction is F28: uvicorn re-raises the signal that stopped it, so the
+process dies by signal and nothing after `uvicorn.run()` gets a turn. The first
+live run wrote no `stopped` marker at all and the unit tests were happy, because
+they fake `uvicorn.run` as a function that returns.
+
 The sentinel is the one `put` in the module that may block. Dropping it left the
 writer parked on `get` with nothing coming and everything behind it unwritten —
 found by a test, not by reasoning.
@@ -774,4 +780,5 @@ tool from the client itself. The patch was reverted; nothing here was committed.
 | F24 | The legacy era does have a back-channel (`can_send_request = not is_json_response_enabled`). A server can decline the modern era by overriding `server/discover` to advertise no modern version; clients then fall back to `initialize()` — `_probe.py` does this, and says the ts and go clients do too | An escape hatch exists and was **not taken**: pinning this server's protocol backwards to move a prompt into a terminal is the wrong trade for a daemon whose user is looking at a desktop. Untested besides — Claude Code re-probes only on a fresh connection |
 | F25 | `omarchy notification send --exec` carries argv as an `omarchy-exec-argv` hint that the shell runs **on click**. Verified end to end: a critical notification's `--exec` ran within 6s of the click. `actions` is empty, so there is exactly one action | A desktop consent surface already exists, works in every protocol era and for every client, and puts the question where the person is. One action means **click is yes and silence is no** — which is precisely N3's rule |
 | F26 | A click does not dismiss the notification — `omarchy notification dismiss` exists for exactly that, and matches a **summary substring**, not an id | Every ask needs a distinct headline, or two concurrent prompts dismiss each other |
+| F28 | **Nothing after `uvicorn.run()` runs.** Uvicorn restores the default signal handler and re-raises the signal that stopped it, so the process dies *by signal* — verified, exit status 143 on SIGTERM. A `finally`, an `atexit`, a non-daemon thread: none of them get a turn | The activity log's `stopped` marker was never written and its queue was never flushed, on every ordinary shutdown. Not catchable by unit tests, which fake `uvicorn.run` as a normal return; found by SIGTERMing the real daemon. Shutdown work now hangs off the **ASGI lifespan**, which completes before the re-raise (`activity.Closing`) |
 | F27 | `omarchy-shell <id> restart` left the daemon in `Waiting for connections to close` **indefinitely**, port unbound and process alive, because an attached client still held its stream open. It took `kill -9` | The reload rule `CLAUDE.md` documents hung whenever a client was attached, which is whenever it matters. **Fixed.** Three faults in one bug: uvicorn's `timeout_graceful_shutdown` defaults to waiting forever and an attached client never closes its stream; nothing escalated past `SIGTERM`; and `restart()` guessed 250ms, so `start()` returned early on a process that was still shutting down and left `wantRunning` false — which is why every hang also needed a manual `start`. The daemon now bounds its own shutdown, `Service.qml` puts a deadline on `SIGTERM`, and a restart waits for the actual exit. Verified with a client attached: 600ms, unattended |
