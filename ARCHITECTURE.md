@@ -54,7 +54,8 @@ time it does, which at worst is a loop. So:
 |--------------|---------|
 | User config | `~/.config/omarchy/mcp/` |
 | Virtualenv, bearer token, bootstrap stamp, bytecode cache, activity log | `~/.local/state/io.github.bruce-forte.mcp-server/` |
-| The state file the bar widget reads | `$XDG_RUNTIME_DIR/omarchy-mcp.state` |
+| The state file the bar widget falls back to | `$XDG_RUNTIME_DIR/omarchy-mcp.state` |
+| Whether a Stop survives a restart | `~/.local/state/io.github.bruce-forte.mcp-server/autostart-off` |
 | Never | the plugin directory |
 
 `paths.py` holds every one of these locations, so the rules are enforced by
@@ -95,19 +96,36 @@ fail validation. The `Makefile` sets `UV_PROJECT_ENVIRONMENT` so a bare
     │        └── IpcHandler: status, start, stop, restart,
     │                        reloadConfig, rebuild, clientConfig
     │
-    └── BarWidget.qml ──reads──> the state file
+    └── BarWidget.qml ──serviceFor()──> the service object
+                        ──reads──────────> the state file, until it resolves
 ```
 
 The daemon prints one JSON line to stdout per state change — `listening` with
-the port, or `failed` with the reason. Everything else goes to stderr, which
-`omarchy-shell` inherits, so `journalctl --user -f` carries the daemon's log
-alongside the shell's own QML errors.
+the port, or `failed` with the reason — and one per tool call, carrying the tool
+name and how it ended. Everything else goes to stderr, which `omarchy-shell`
+inherits, so `journalctl --user -f` carries the daemon's log alongside the
+shell's own QML errors. `frames.py` owns that channel.
 
-The bar widget reads a file rather than asking the service, because **Omarchy
-routes inter-plugin calls to panels and overlays but not to services**. A widget
-cannot call a service, so the service publishes. This is a house rule for
-Omarchy plugins generally and it constrains anything that later wants the widget
-to *send* rather than only display — see `ROADMAP.md` N6.
+The call frame exists because the bar otherwise learns of a tool call from the
+`/health` poll up to ten seconds later, by which time the desktop has already
+changed in front of the user. **It carries no arguments**, for the same reason
+the activity log keeps them behind a `0600` file: a clipboard write's argument
+is the clipboard, and this one ends up on a bar.
+
+### The widget reaches the service directly
+
+`shell call <id> <method>` routes through the shell's panel loader map, which
+holds panel, overlay and menu plugins only — so it reaches neither services nor
+bar widgets. That is true, and it is what this project believed was the whole
+story for two phases.
+
+It is not. `shell.serviceFor(pluginId)` returns the live service object, has no
+first-party restriction, and both kinds load into one QML engine, so the widget
+holds the real `Service.qml` root and calls `stop()` on it. The state file
+remains because **the widget is constructed before the service exists**: the
+first evaluation of `serviceFor` is null on every startup, and it resolves only
+because the binding re-runs when the shell's service map changes. Verified on a
+live desktop; see `ROADMAP.md` N6.
 
 ## The IPC surface is documentation
 
@@ -149,6 +167,7 @@ In dependency order, shallowest first:
 | `status.py` | The system-status aggregate: several probes gathered into one answer |
 | `stats.py` | The one seam every tool call passes through: counters for `/health`, and a record for the activity log |
 | `activity.py` | One JSON line per call on disk, written by a thread nothing waits for. See below |
+| `frames.py` | The one thing this process says on stdout: lifecycle and per-call frames the shell parses |
 | `policy.py` | The security boundary. Pure, takes the registry as an argument, tested against every route Omarchy ships |
 | `resolve.py` | Turns an identifier an agent supplied into the thing it names, or refuses. See below |
 | `consent.py` | The six ways a call can fail to get a yes, and a wait that fails closed. See below |

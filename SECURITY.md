@@ -130,6 +130,32 @@ is the language model itself, by accident.
 Verified by `tests/test_execute.py`, which writes a canary file and checks it
 survives.
 
+### The bearer token is never put on screen
+
+The setup line carries the token, so nothing renders it. `clientConfig` prints it
+to the journal rather than returning it, and the bar panel's **Copy client
+config** button puts it on the clipboard without displaying it — a popup on a
+desktop is in every screenshot and every screen share.
+
+That button pipes `omarchy-mcpd --print-client-config` into `wl-copy` over
+stdin. Not `wl-copy <token>`: **argv is world-readable through `/proc`**, so a
+secret passed as an argument is visible to other users on the machine for the
+lifetime of the process, which the file at `0600` is not. The token is also
+never given to the model, in a result or a refusal.
+
+### Arguments stay in the log, not on the screen
+
+The activity log records the arguments a tool was called with, because they are
+what the agent asked for. It keeps them in a `0600` file inside a `0700`
+directory, and `/health` — the one tokenless route — does not carry them.
+
+The bar panel lists the same records and **does not read the `args` field**, nor
+does the per-call frame the daemon writes to stdout. The reasoning is the same
+one that keeps the log off `/health`, applied to a further-out surface: for
+`omarchy_clipboard_write` the argument *is* the clipboard, and a bar popup is
+seen by anyone looking at the screen. Command output — OCR text, clipboard
+reads, anything a tool returned — is in none of the three.
+
 ### The listen address is not configurable
 
 There is no config key for the bind address. Someone will eventually want
