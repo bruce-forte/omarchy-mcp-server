@@ -164,6 +164,40 @@ arbitrary command execution into a network service with a single bearer token in
 front of it. If it is ever supported it will be a named feature with its own
 documentation and its own warnings, not a key someone flips without reading.
 
+### The config file is read while the daemon runs
+
+`config.toml` is re-read within about two seconds of being saved, so a change to
+`policy.allow`, `policy.deny` or `policy.ask` takes effect without a restart and
+without dropping attached sessions.
+
+This does not widen what anybody can do. Anything that could write that file
+could already make it take effect — `omarchy_shell_call` reaches this plugin's
+own IPC target, so a `restart` was always one call away (see below). What
+changed is the latency, and two rules bound it:
+
+- **`blocked` is computed from the command, not from the config.** A route that
+  needs sudo classifies `blocked` whatever the file says, before and after a
+  reload, and no configuration promotes it.
+- **A policy change is announced.** When a reload actually changes
+  `allow`, `allow_groups`, `deny`, `ask` or `ask_timeout_s`, a desktop
+  notification names what moved — a widening because it matters, a narrowing
+  because it explains a refusal that would otherwise look like a bug. Silent
+  widening is the thing that must not exist.
+
+A file that does not parse is refused outright and the running configuration
+stands, precisely because the alternative — falling back to defaults — would
+empty the deny list and re-enable every disabled tool on a typo.
+
+### Known gap: this plugin's own IPC target
+
+`omarchy_shell_call` accepts any target `qs ipc show` lists, and that includes
+`io.github.bruce-forte.mcp-server`. An agent can therefore call this plugin's
+own `stop`, `start`, `restart` and `rebuild` — which means it can stop its own
+audit trail. It is tracked as **N12** in `ROADMAP.md` and is not fixed here;
+the decision it needs is which verbs stay readable (`status`, `recent`) while
+the rest are refused or made guarded, and that is a design question rather than
+a patch.
+
 ## Bounds
 
 | Bound | Value | Why |

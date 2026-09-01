@@ -704,17 +704,179 @@ the same reason.
 | Copy client config | 144 characters on the clipboard, nothing on screen |
 | `make check` | 340 tests, `qmllint`, `shellcheck`, `omarchy plugin validate` |
 
-### N7 — Live tool enable/disable
+### N7 — Live tool enable/disable — done
 
-`enabled(config, …)` is evaluated when tools are registered, so a curated tool
-switched off in `config.toml` is never registered and never appears in
-`tools/list`. That half is already right, and it is the half that matters: a tool
-the model cannot see is one prompt injection cannot talk it into trying.
+`enabled(config, …)` was evaluated when tools were registered, so a curated tool
+switched off in `config.toml` was never registered and never appeared in
+`tools/list`. That half was already right, and it is the half that matters: a
+tool the model cannot see is one prompt injection cannot talk it into trying.
 
-What is missing is that the decision is frozen until a restart. Re-read the
-config on change and emit `notifications/tools/list_changed`, so a session
-started before the change does not keep offering a tool that now refuses, or
-hiding one just granted.
+What was missing is that the decision was frozen until a restart. The config is
+now re-read while the daemon serves, and `notifications/tools/list_changed` goes
+out, so a session started before the change does not keep offering a tool that
+now refuses, or hiding one just granted.
+
+The scope grew by one key group during the grilling and was worth it:
+**`[policy]` reloads too**. The plumbing is identical — both need the config to
+stop being captured by value — and it is the other half of the same edit.
+Somebody switching a tool off is usually in the same file changing `ask`.
+
+#### Nothing may capture the config by value
+
+The blocker was not the tool registry. It was that `Config` is frozen and was
+passed *by value* into `build()`, into every `register()`, and into every tool
+closure, so nothing could ever see a new one.
+
+Three ways to fix that, and the choice matters more than it looks:
+
+- Unfreeze `Config` and mutate it. Zero call-site changes, and a call reading
+  `ask` while a reload writes `deny` sees a torn config.
+- A `__getattr__` facade forwarding to the current snapshot. Also zero changes,
+  and invisible — until someone stashes `config` in a dataclass and it silently
+  stops tracking.
+- A holder, read once per call. Chosen.
+
+**The holder stops at the edge.** `settings.current` is read once at the top of
+a tool body and the resulting frozen `Config` is passed down, so `policy.py`,
+`gate.py`, `consent.py` and `execute.py` still take an immutable value and their
+tests did not change — the security boundary never learns that configuration
+moves. And one call is decided by one config: a reload landing between the gate
+and the executor cannot authorize under one set of rules and run under another.
+
+#### Declaring a tool is not offering it
+
+`if enabled(config, "x"): @mcp.tool(...)` made a tool's existence a fact about
+which decorators ran. `tools/catalogue.py` splits it: `register()` records the
+function and its arguments, `apply()` adds and removes tools on the live server
+to match a config, and it is the same call at startup and at reload.
+
+The alternative — register everything, filter at `tools/list` — was rejected
+because a filtered-out tool is still *callable* by name, so the invisibility
+property would then depend on two places agreeing. A disabled tool stays absent;
+a call naming it gets the SDK's unknown-tool error, and that is the correct
+answer rather than a shortfall.
+
+`TOOLS.md` came out byte-identical, which is the check that the refactor moved
+no schema.
+
+#### A file that does not parse must change nothing
+
+`config.load` answers an unreadable file with defaults plus a list of problems.
+At startup that is right and deliberate: a daemon that refuses to start over a
+typo looks exactly like one that was never installed.
+
+On a **reload** it is the opposite of right. Defaults mean an empty
+`policy.deny` and an empty `tools.disabled` — so one stray keystroke in a file
+saved mid-edit would drop the deny list and switch every disabled tool back on,
+and then announce it to every attached client. `Config` gained a `parsed` flag
+so the two cases are distinguishable, and a reload keeps the running config when
+the file does not parse. A key that merely fails *validation* still applies the
+rest, exactly as at startup: an unparseable file is no answer, a bad key is an
+answer with a footnote.
+
+A file that has simply gone missing waits one further poll. Editors write a
+temporary file and rename it over the target, so absent-once is that gap, not a
+deletion. Absent twice is deliberate, and resets to defaults.
+
+This happened on the very first live edit, unplanned: appending a `[tools]`
+table to a file that already had one is invalid TOML, the daemon refused it,
+and the panel and the journal both said so while it kept serving.
+
+#### The notification had to be built twice
+
+The roadmap line said "emit `notifications/tools/list_changed`" as though it
+were one call. It is two mechanisms, because the transport changed between
+protocol eras:
+
+- **2026-07-28+** has no standing server-to-client stream. Clients opt in with
+  `subscriptions/listen`, and the SDK fans events out over a `SubscriptionBus`
+  passed to `MCPServer(subscriptions=...)`. Public, five lines.
+- **2025-06-18 and earlier** carry it on the standalone `GET` SSE stream, one
+  per connection, and the SDK offers **no way to enumerate connections**. So the
+  server keeps its own register, filled by a `middleware=` hook that sees every
+  inbound message including `initialize`.
+
+**The register holds `Connection`, not `ServerSession`.** The first attempt held
+sessions weakly and announced to nobody: a `ServerSession` is built fresh for
+every inbound message and is garbage as soon as its handler returns. The
+`Connection` behind it lives as long as the client is attached and owns the
+channel a notification travels on.
+
+And the capability had to be turned on, which was the finding that would
+otherwise have shipped silently. Measured against the running daemon before any
+of this was written:
+
+```json
+"tools":{"listChanged":false}
+```
+
+A client is entitled to ignore a notification the handshake said would never
+come. The flag is derived from a `NotificationOptions` the HTTP path builds with
+everything off, and `streamable_http_app()` threads no way to change it — so the
+one method that builds it is wrapped. That plus the connection register are the
+two private attributes this phase leans on, and both are covered by tests over a
+real handshake so an SDK release breaks the suite rather than someone's client.
+
+#### `tools/list_changed` is a claim about the tool list
+
+It is sent only when the tool set actually moves. A policy edit changes what a
+route may do, not what `tools/list` says, and a client that re-listed on one
+would be told exactly what it already knew.
+
+#### A widening that nobody can see is the thing to avoid
+
+Live policy reload means the rules an agent runs under can change ~2 seconds
+after a file write, with nothing on screen. Two things bound that.
+
+First, it is not new capability. `omarchy_shell_call` accepts any target
+`qs ipc show` lists, this plugin's own included, so an agent could already call
+`restart` and make a rewritten config take effect. N7 changed the latency. That
+gap is real, is now written down in `SECURITY.md`, and is **N12** — it wants its
+own decision about which verbs stay readable, not a patch smuggled in here.
+
+Second, an effective policy change notifies, **in both directions**. A widening
+because it matters; a narrowing because it explains a refusal that is about to
+happen and would otherwise look like a bug.
+
+#### The panel answers "did my edit take?"
+
+Nothing else on the desktop could. The panel shows *18 of 19 tools offered*, and
+says when `config.toml` stopped parsing — which matters precisely because the
+daemon keeps serving the old configuration rather than falling back, so that
+state is otherwise invisible. Counts travel on a `reloaded` frame so the bar
+learns at the moment of the edit rather than up to ten seconds later, and
+`/health` carries the same numbers so a missed frame heals on the next poll.
+
+`reloadConfig` stopped being a restart. It sends `SIGHUP`, which the daemon turns
+into an immediate re-read; the panel's **Reload config** button does the same.
+Its real value is the rejected-file case: after fixing the file you want the
+answer now, rather than a two-second wait you cannot tell apart from "still
+broken".
+
+The activity log gained `reloaded` and `config_rejected` events. A reader asking
+why a route was allowed at 14:05 needs to know the rules moved at 14:04.
+
+#### One test could not be written against `TestClient`
+
+The notification test hung and reported nothing: Starlette's `TestClient` will
+not flush a streaming response to a second thread while the first one waits, so
+the frame only surfaced *after* the test had already given up. That test runs
+against a real uvicorn on a real port. The rest still use `TestClient`.
+
+#### Verified on a live desktop
+
+| What | Result |
+|------|--------|
+| `/health` after the shell restart | `tools: 19, tools_declared: 19` |
+| `omarchy-shell <id> status` | Carries `tools`, `toolsDeclared`, `configOk` |
+| An invalid `config.toml` (a second `[tools]` table) | Refused; `configOk: false`; daemon kept serving; journal named the line and column |
+| Fixing it | Applied within 2s, `configOk: true`, 19 → 18 tools |
+| A probe client attached across the edit | `listChanged: true`, `notifications/tools/list_changed` arrived on its GET stream, `tools/list` went 18 → 19 |
+| `reloadConfig` while serving | *"re-reading ~/.config/omarchy/mcp/config.toml now"*, `SIGHUP` in the journal |
+| `reloadConfig` while stopped | *"the daemon is not running; start it first"* |
+| A policy edit | `config reloaded: policy +deny: omarchy launch browser`, one notification |
+| The activity log | `config_rejected`, then `reloaded added=[...] removed=[...] policy=...` |
+| Restoring the user's config | Byte-identical, back to 19 of 19 |
 
 ### N8 — Resolve binaries on a fixed path — done
 
@@ -986,6 +1148,43 @@ Found by running the plugin in a live shell. None of these are visible to
 | F19 | The daemon wrote `__pycache__` **into the installed plugin directory** — 22 `.pyc` files. Python caches bytecode next to the source it imports, and the source is in the directory Omarchy watches, so the daemon made the shell reload itself simply by starting | `PYTHONPYCACHEPREFIX` points the cache at the state directory. `tests/test_bootstrap.py` now reads the wrapper and fails if anything writes into the plugin directory. **The plugin was violating the rule its own `CLAUDE.md` states** |
 | F20 | `hyprctl`'s per-workspace window count disagrees with its client list — it counts a group as one window — and `desktop_state` reported both | Found by an agent using the tool, which flagged the contradiction and had to pick which to believe. Counts are now derived from the windows actually returned |
 | F21 | Several tests shelled out to the installed `omarchy`, so the suite could not run in CI and would change meaning on the next Omarchy update | An autouse fixture pins every test to the committed registry snapshot |
+
+### N12 — An agent should not be able to switch off its own supervisor
+
+Found while writing N7's security note, and not fixed there.
+
+`omarchy_shell_call` accepts any target `qs ipc show` lists, with no exclusion
+for this plugin's own. So an agent can call:
+
+```
+io.github.bruce-forte.mcp-server stop | start | restart | rebuild | reloadConfig
+```
+
+`stop` is the one that matters: **an agent can stop its own audit trail.** Not
+by defeating anything — by asking the supervisor politely, through a tool this
+project ships.
+
+It was never opened by N7. A rewritten `config.toml` could always be made to
+take effect with `restart`; live reload changed how fast, not whether. But that
+is an argument for closing it, not for leaning on it.
+
+What it needs is a decision rather than a patch, which is why it is its own item:
+
+- **Reading stays.** `status` and `recent` are the two verbs an agent has a good
+  reason to call — "am I still connected", "what have I done" — and neither
+  changes anything.
+- **`stop`, `restart`, `rebuild`** are the plugin acting on itself. Refuse them
+  outright, or route them through the guarded tier so N4 puts the question on
+  screen. Guarded is the better answer if a legitimate use exists; refusal is
+  the better answer if none does, and none has turned up yet.
+- **`reloadConfig` is harmless** — it re-reads a file only the user writes — but
+  exempting one verb by name invites the next exemption.
+- The refusal must name the plugin and the reason, the way a guarded refusal
+  names the config file. An agent told only "no" will try the next spelling.
+
+Note that the target list is discovered at runtime from `qs ipc show`, so this
+is a check on the plugin's own id, not a static allow-list — and it belongs in
+`policy.py` or beside it, with tests in the same commit.
 
 ## Phase 6 findings
 

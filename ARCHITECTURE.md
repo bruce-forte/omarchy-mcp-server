@@ -166,7 +166,9 @@ In dependency order, shallowest first:
 | Module | Holds |
 |--------|-------|
 | `paths.py` | Every filesystem location, in one place, so the rules above are enforced by construction |
-| `config.py` | TOML loading. Never raises: a broken file yields defaults plus a list of problems |
+| `config.py` | TOML loading. Never raises: a broken file yields defaults plus a list of problems, and a `parsed` flag saying which it is |
+| `settings.py` | The holder that says which `Config` is in force, so a reload is one assignment rather than a walk over every closure |
+| `notify.py` | Daemon-level facts the person at the desktop has no other way to learn |
 | `registry.py` | Parses `omarchy commands --json`, cached until Omarchy's version changes. Search and suggestions |
 | `shell.py` | Parses `qs ipc show` into targets and typed method signatures |
 | `desktop.py` | Hyprland's monitors, workspaces, windows and focus, via `hyprctl -j` |
@@ -183,6 +185,8 @@ In dependency order, shallowest first:
 | `token.py` | The bearer token, created `0600` |
 | `auth.py` | Bearer authentication as **pure ASGI** — see below |
 | `resources.py` | The 4 concrete resources and 3 URI templates |
+| `clients.py` | The connections currently attached, and the two ways to tell them the tool list moved |
+| `reload.py` | Re-reads `config.toml` while serving, and refuses to when it does not parse. See below |
 | `server.py` | Assembles the MCP server, transport security, `/health` |
 
 The tools are a package, split by what they are for:
@@ -194,6 +198,7 @@ The tools are a package, split by what they are for:
 | `tools/control.py` | 7 — theme, background, audio, brightness, media, toggle, launch |
 | `tools/feedback.py` | 2 — notify, OSD |
 | `tools/system.py` | 1 — system status |
+| `tools/catalogue.py` | Every tool that exists, and which of them are offered right now |
 | `tools/_shared.py` | `run_route`, the one path every curated tool takes to reach the executor |
 
 `_shared.run_route` matters more than its size suggests. Every curated tool goes
@@ -444,8 +449,55 @@ stays reachable through `omarchy_run`, and any of them can be switched off in
 the config — a disabled tool is never registered, so it does not appear in
 `tools/list` at all.
 
+That switch is live. `tools/catalogue.py` separates declaring a tool from
+offering one: `register()` records the function and its arguments, and `apply()`
+adds and removes tools on the running server to match a config. It is the same
+call at startup and at reload, so there is no second path for the live case to
+drift from, and a disabled tool stays *absent* rather than present-and-refusing
+— which is the point of the switch, since a tool the model cannot see is one
+prompt injection cannot talk it into trying.
+
 `TOOLS.md` is generated from the server's own schemas and `make check` fails if
 it is stale. Never edit it by hand.
+
+## Reloading the config without dropping a session
+
+The configuration used to be read once. A tool switched off while a client was
+attached stayed offered until a restart, and `reloadConfig` was a restart —
+which drops every attached MCP session, so the fix cost more than the problem.
+
+Three pieces:
+
+- **`settings.py`** holds which `Config` is in force. It stops at the edge: a
+  tool body takes one snapshot per call and passes it down, so `policy.py`,
+  `gate.py`, `consent.py` and `execute.py` still take an immutable `Config` and
+  one call is always decided by one config. A reload landing between the gate
+  and the executor cannot authorize under one set of rules and run under another.
+- **`reload.py`** polls the file every two seconds and applies it. `SIGHUP`
+  short-circuits the wait, which is what `reloadConfig` and the panel's button
+  now send. A poll rather than a file watch because the process that reacts owns
+  the trigger: it works while the shell is restarting, and when the daemon is run
+  by hand.
+- **`clients.py`** tells attached clients the tool list moved — over the
+  `SubscriptionBus` for 2026-07-28 clients, and per connection for everyone
+  else, from a register a server middleware fills in.
+
+What is live: `tools.disabled`, everything under `[policy]`, `server.timeout_ms`
+and `server.max_output_b`. What is not: `server.port`, because the socket is
+bound, and the activity log's settings, because the sink is open.
+
+**A file that does not parse changes nothing.** `config.load` answers a broken
+file with defaults, which is right at startup — a daemon that refuses to start
+over a typo looks like one that was never installed — and wrong on a reload,
+where it would empty `policy.deny` and switch every disabled tool back on for a
+stray keystroke. So the running config stands, a notification says so, and the
+bar panel says so until it parses again. A file that has merely gone missing
+waits one poll first: editors write a temporary file and rename it over the
+target, and absent-once is that gap rather than a deletion.
+
+`tools/list_changed` is announced only when the tool set actually moves. A
+policy edit changes what a route is allowed to do, not what the tool list says,
+and a client that re-listed would learn nothing.
 
 ## Resources, and who they are for
 
