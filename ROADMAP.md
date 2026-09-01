@@ -45,9 +45,9 @@ reasons matter more than the choices when something needs revisiting.
       unlock what `run` structurally cannot do. Then Tier 2 (9).
 - [x] **4 — Resources.** Done. The 7 from decision 10, shaped by what Phase 0 found.
 - [x] **5 — Hardening.** Done. Generated `TOOLS.md`, CI, `SECURITY.md`.
-- [ ] **6 — Consent and visibility.** In progress: N1–N6, N8 and N9 done. The
+- [ ] **6 — Consent and visibility.** In progress: N1–N9 done. The
       user can see what an agent did, answer for the calls that warrant it, and
-      stop the thing. See [Next steps](#next-steps).
+      stop the thing. N10–N12 remain. See [Next steps](#next-steps).
 
 Tests are not a phase. `policy.py` and the auth checks are tested in the phase
 that creates them — they are the security boundary, and tests retrofitted to a
@@ -62,7 +62,9 @@ covers what an *agent* does, which is the part with consequences.
 
 Ordered by what unblocks what. N1–N3 stand alone and are cheap. N4 depends on
 N2 and N3. N6 depended on N5's log. N10 depends on N4, and now builds its
-surface on N6's panel rather than inventing one. N11 came out of N6.
+surface on N6's panel rather than inventing one -- and on N7's holder, since a
+store the daemon owns has to reach the same code that a config reload swaps.
+N11 came out of N6, N12 out of N7.
 
 ### N1 — Tell the model that what it reads is data, not instructions — done
 
@@ -1076,6 +1078,43 @@ Low priority: nothing is lost but the closing bracket of a session, and every
 call in it is already on disk. It matters because N6 puts these lines in front
 of a person, where a run of `daemon started` rows reads as a bug.
 
+### N12 — An agent should not be able to switch off its own supervisor
+
+Found while writing N7's security note, and not fixed there.
+
+`omarchy_shell_call` accepts any target `qs ipc show` lists, with no exclusion
+for this plugin's own. So an agent can call:
+
+```
+io.github.bruce-forte.mcp-server stop | start | restart | rebuild | reloadConfig
+```
+
+`stop` is the one that matters: **an agent can stop its own audit trail.** Not
+by defeating anything — by asking the supervisor politely, through a tool this
+project ships.
+
+It was never opened by N7. A rewritten `config.toml` could always be made to
+take effect with `restart`; live reload changed how fast, not whether. But that
+is an argument for closing it, not for leaning on it.
+
+What it needs is a decision rather than a patch, which is why it is its own item:
+
+- **Reading stays.** `status` and `recent` are the two verbs an agent has a good
+  reason to call — "am I still connected", "what have I done" — and neither
+  changes anything.
+- **`stop`, `restart`, `rebuild`** are the plugin acting on itself. Refuse them
+  outright, or route them through the guarded tier so N4 puts the question on
+  screen. Guarded is the better answer if a legitimate use exists; refusal is
+  the better answer if none does, and none has turned up yet.
+- **`reloadConfig` is harmless** — it re-reads a file only the user writes — but
+  exempting one verb by name invites the next exemption.
+- The refusal must name the plugin and the reason, the way a guarded refusal
+  names the config file. An agent told only "no" will try the next spelling.
+
+Note that the target list is discovered at runtime from `qs ipc show`, so this
+is a check on the plugin's own id, not a static allow-list — and it belongs in
+`policy.py` or beside it, with tests in the same commit.
+
 ## Deferred
 
 Wanted, but not phase 6.
@@ -1148,43 +1187,6 @@ Found by running the plugin in a live shell. None of these are visible to
 | F19 | The daemon wrote `__pycache__` **into the installed plugin directory** — 22 `.pyc` files. Python caches bytecode next to the source it imports, and the source is in the directory Omarchy watches, so the daemon made the shell reload itself simply by starting | `PYTHONPYCACHEPREFIX` points the cache at the state directory. `tests/test_bootstrap.py` now reads the wrapper and fails if anything writes into the plugin directory. **The plugin was violating the rule its own `CLAUDE.md` states** |
 | F20 | `hyprctl`'s per-workspace window count disagrees with its client list — it counts a group as one window — and `desktop_state` reported both | Found by an agent using the tool, which flagged the contradiction and had to pick which to believe. Counts are now derived from the windows actually returned |
 | F21 | Several tests shelled out to the installed `omarchy`, so the suite could not run in CI and would change meaning on the next Omarchy update | An autouse fixture pins every test to the committed registry snapshot |
-
-### N12 — An agent should not be able to switch off its own supervisor
-
-Found while writing N7's security note, and not fixed there.
-
-`omarchy_shell_call` accepts any target `qs ipc show` lists, with no exclusion
-for this plugin's own. So an agent can call:
-
-```
-io.github.bruce-forte.mcp-server stop | start | restart | rebuild | reloadConfig
-```
-
-`stop` is the one that matters: **an agent can stop its own audit trail.** Not
-by defeating anything — by asking the supervisor politely, through a tool this
-project ships.
-
-It was never opened by N7. A rewritten `config.toml` could always be made to
-take effect with `restart`; live reload changed how fast, not whether. But that
-is an argument for closing it, not for leaning on it.
-
-What it needs is a decision rather than a patch, which is why it is its own item:
-
-- **Reading stays.** `status` and `recent` are the two verbs an agent has a good
-  reason to call — "am I still connected", "what have I done" — and neither
-  changes anything.
-- **`stop`, `restart`, `rebuild`** are the plugin acting on itself. Refuse them
-  outright, or route them through the guarded tier so N4 puts the question on
-  screen. Guarded is the better answer if a legitimate use exists; refusal is
-  the better answer if none does, and none has turned up yet.
-- **`reloadConfig` is harmless** — it re-reads a file only the user writes — but
-  exempting one verb by name invites the next exemption.
-- The refusal must name the plugin and the reason, the way a guarded refusal
-  names the config file. An agent told only "no" will try the next spelling.
-
-Note that the target list is discovered at runtime from `qs ipc show`, so this
-is a check on the plugin's own id, not a static allow-list — and it belongs in
-`policy.py` or beside it, with tests in the same commit.
 
 ## Phase 6 findings
 
