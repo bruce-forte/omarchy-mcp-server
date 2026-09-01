@@ -23,6 +23,7 @@ from omarchy_mcp import activity
 from omarchy_mcp.activity import Record, Sink
 from omarchy_mcp.config import Config
 from omarchy_mcp.settings import Settings
+from omarchy_mcp.tools.catalogue import Catalogue
 from omarchy_mcp.stats import Stats
 
 LOG = logging.getLogger("test")
@@ -364,8 +365,10 @@ class TestWhatTheToolsWrite:
 
         mcp = MCPServer(name="t")
         stats = Stats(sink=sink)
-        desktop_tools.register(mcp, Settings(Config()), LOG, stats)
-        generic.register(mcp, Settings(Config()), LOG, stats)
+        catalogue = Catalogue()
+        desktop_tools.register(catalogue, Settings(Config()), LOG, stats)
+        generic.register(catalogue, Settings(Config()), LOG, stats)
+        catalogue.apply(mcp, Config())
         return mcp
 
     async def _log_of(self, mcp, sink, name, args):

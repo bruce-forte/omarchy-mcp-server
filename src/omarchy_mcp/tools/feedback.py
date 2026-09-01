@@ -12,98 +12,93 @@ import json
 from mcp.server.mcpserver import Context
 from mcp.types import ToolAnnotations
 
-from ..config import Config
 from ..settings import Settings
 from ..stats import Stats
-from ._shared import enabled, run_route
+from ._shared import run_route
+from .catalogue import Catalogue
 
 URGENCIES = ("low", "normal", "critical")
 
 
-def register(mcp, settings: Settings, log, stats: Stats) -> None:
-    config = settings.current
-    if enabled(config, "omarchy_notify"):
-
-        @mcp.tool(
-            name="omarchy_notify",
-            title="Send a desktop notification",
-            description=(
-                "Show a desktop notification. Use this to reach the user when they are "
-                "not looking at the terminal -- a long job finishing, something that "
-                "needs a decision. `urgency` critical stays on screen until dismissed, "
-                "so keep it for things that genuinely cannot wait."
-            ),
-            annotations=ToolAnnotations(
-                readOnlyHint=False, destructiveHint=False, idempotentHint=False,
-                openWorldHint=False,
-            ),
-        )
-        async def omarchy_notify(
-            headline: str,
-            description: str = "",
-            urgency: str = "normal",
-            glyph: str = "",
-            timeout_ms: int = 0,
-            ctx: Context = None,
-        ) -> str:
-            if urgency not in URGENCIES:
-                return json.dumps(
-                    {"error": f"urgency must be one of {', '.join(URGENCIES)}"}, indent=2
-                )
-
-            args = ["-u", urgency]
-            if glyph:
-                args += ["-g", glyph]
-            if timeout_ms > 0:
-                args += ["-t", str(timeout_ms)]
-            # The headline goes last, so that a headline beginning with a dash
-            # is still a headline.
-            args.append(headline)
-            if description:
-                args.append(description)
-
-            return await run_route(
-                "omarchy notification send", args,
-                config=settings.current, stats=stats, log=log, tool="omarchy_notify", ctx=ctx,
+def register(tools: Catalogue, settings: Settings, log, stats: Stats) -> None:
+    @tools.tool(
+        name="omarchy_notify",
+        title="Send a desktop notification",
+        description=(
+            "Show a desktop notification. Use this to reach the user when they are "
+            "not looking at the terminal -- a long job finishing, something that "
+            "needs a decision. `urgency` critical stays on screen until dismissed, "
+            "so keep it for things that genuinely cannot wait."
+        ),
+        annotations=ToolAnnotations(
+            readOnlyHint=False, destructiveHint=False, idempotentHint=False,
+            openWorldHint=False,
+        ),
+    )
+    async def omarchy_notify(
+        headline: str,
+        description: str = "",
+        urgency: str = "normal",
+        glyph: str = "",
+        timeout_ms: int = 0,
+        ctx: Context = None,
+    ) -> str:
+        if urgency not in URGENCIES:
+            return json.dumps(
+                {"error": f"urgency must be one of {', '.join(URGENCIES)}"}, indent=2
             )
 
-    if enabled(config, "omarchy_osd"):
+        args = ["-u", urgency]
+        if glyph:
+            args += ["-g", glyph]
+        if timeout_ms > 0:
+            args += ["-t", str(timeout_ms)]
+        # The headline goes last, so that a headline beginning with a dash
+        # is still a headline.
+        args.append(headline)
+        if description:
+            args.append(description)
 
-        @mcp.tool(
-            name="omarchy_osd",
-            title="Show a transient on-screen display",
-            description=(
-                "Flash a message, icon, or progress bar over the screen and let it fade. "
-                "Unlike a notification it leaves nothing in the notification history, so "
-                "it suits progress and acknowledgements that are not worth keeping."
-            ),
-            annotations=ToolAnnotations(
-                readOnlyHint=False, destructiveHint=False, idempotentHint=False,
-                openWorldHint=False,
-            ),
+        return await run_route(
+            "omarchy notification send", args,
+            config=settings.current, stats=stats, log=log, tool="omarchy_notify", ctx=ctx,
         )
-        async def omarchy_osd(
-            message: str = "",
-            icon: str = "",
-            progress: int = -1,
-            duration_ms: int = 0,
-            ctx: Context = None,
-        ) -> str:
-            args: list[str] = []
-            if message:
-                args += ["-m", message]
-            if icon:
-                args += ["-i", icon]
-            if 0 <= progress <= 100:
-                args += ["-p", str(progress)]
-            if duration_ms > 0:
-                args += ["-d", str(duration_ms)]
-            if not args:
-                return json.dumps(
-                    {"error": "give at least one of message, icon, or progress"}, indent=2
-                )
 
-            return await run_route(
-                "omarchy osd", args,
-                config=settings.current, stats=stats, log=log, tool="omarchy_osd", ctx=ctx,
+    @tools.tool(
+        name="omarchy_osd",
+        title="Show a transient on-screen display",
+        description=(
+            "Flash a message, icon, or progress bar over the screen and let it fade. "
+            "Unlike a notification it leaves nothing in the notification history, so "
+            "it suits progress and acknowledgements that are not worth keeping."
+        ),
+        annotations=ToolAnnotations(
+            readOnlyHint=False, destructiveHint=False, idempotentHint=False,
+            openWorldHint=False,
+        ),
+    )
+    async def omarchy_osd(
+        message: str = "",
+        icon: str = "",
+        progress: int = -1,
+        duration_ms: int = 0,
+        ctx: Context = None,
+    ) -> str:
+        args: list[str] = []
+        if message:
+            args += ["-m", message]
+        if icon:
+            args += ["-i", icon]
+        if 0 <= progress <= 100:
+            args += ["-p", str(progress)]
+        if duration_ms > 0:
+            args += ["-d", str(duration_ms)]
+        if not args:
+            return json.dumps(
+                {"error": "give at least one of message, icon, or progress"}, indent=2
             )
+
+        return await run_route(
+            "omarchy osd", args,
+            config=settings.current, stats=stats, log=log, tool="omarchy_osd", ctx=ctx,
+        )

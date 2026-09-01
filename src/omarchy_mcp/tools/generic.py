@@ -23,12 +23,12 @@ from ..policy import decide
 from ..settings import Settings
 from ..stats import Stats
 from ._shared import UNTRUSTED, offload, threaded
+from .catalogue import Catalogue
 
 
-def register(mcp, settings: Settings, log, stats: Stats | None = None) -> None:
+def register(tools: Catalogue, settings: Settings, log, stats: Stats | None = None) -> None:
     stats = stats or Stats()
-    config = settings.current
-    @mcp.tool(
+    @tools.tool(
         name="omarchy_search_commands",
         title="Search Omarchy commands",
         description=(
@@ -75,7 +75,7 @@ def register(mcp, settings: Settings, log, stats: Stats | None = None) -> None:
                 rows.append(row)
             return json.dumps({"query": query, "count": len(rows), "commands": rows}, indent=2)
 
-    @mcp.tool(
+    @tools.tool(
         name="omarchy_run",
         title="Run an Omarchy command",
         description=(
@@ -171,7 +171,7 @@ def register(mcp, settings: Settings, log, stats: Stats | None = None) -> None:
                 payload["target"] = call.target.label
             return json.dumps(payload, indent=2)
 
-    @mcp.tool(
+    @tools.tool(
         name="omarchy_shell_targets",
         title="List omarchy-shell IPC targets",
         description=(
@@ -207,7 +207,7 @@ def register(mcp, settings: Settings, log, stats: Stats | None = None) -> None:
                 indent=2,
             )
 
-    @mcp.tool(
+    @tools.tool(
         name="omarchy_shell_call",
         title="Call an omarchy-shell IPC method",
         description=(

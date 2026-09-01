@@ -6,21 +6,18 @@ import json
 
 from mcp.types import ToolAnnotations
 
-from ..config import Config
 from ..settings import Settings
 from ..stats import Stats
 from ..status import gather
 from ._shared import threaded
+from .catalogue import Catalogue
 
 # Re-exported for tests and for the resource, which answer the same question.
 __all__ = ["register"]
 
 
-def register(mcp, settings: Settings, log, stats: Stats) -> None:
-    if "omarchy_system_status" in set(settings.current.disabled_tools):
-        return
-
-    @mcp.tool(
+def register(tools: Catalogue, settings: Settings, log, stats: Stats) -> None:
+    @tools.tool(
         name="omarchy_system_status",
         title="How is this machine doing",
         description=(
