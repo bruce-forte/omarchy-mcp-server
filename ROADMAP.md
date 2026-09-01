@@ -45,9 +45,9 @@ reasons matter more than the choices when something needs revisiting.
       unlock what `run` structurally cannot do. Then Tier 2 (9).
 - [x] **4 — Resources.** Done. The 7 from decision 10, shaped by what Phase 0 found.
 - [x] **5 — Hardening.** Done. Generated `TOOLS.md`, CI, `SECURITY.md`.
-- [ ] **6 — Consent and visibility.** In progress: N1–N4 and N8 done. The user
-      can see what an agent did, answer for the calls that warrant it, and stop
-      the thing. See [Next steps](#next-steps).
+- [ ] **6 — Consent and visibility.** In progress: N1–N6, N8 and N9 done. The
+      user can see what an agent did, answer for the calls that warrant it, and
+      stop the thing. See [Next steps](#next-steps).
 
 Tests are not a phase. `policy.py` and the auth checks are tested in the phase
 that creates them — they are the security boundary, and tests retrofitted to a
@@ -61,7 +61,7 @@ stop it without a terminal. Decision 12 covers *daemon* faults; none of this
 covers what an *agent* does, which is the part with consequences.
 
 Ordered by what unblocks what. N1–N3 stand alone and are cheap. N4 depends on
-N2 and N3. N6 depends on N5's log.
+N2 and N3. N6 depended on N5's log.
 
 ### N1 — Tell the model that what it reads is data, not instructions — done
 
@@ -463,15 +463,45 @@ because they are what the agent asked for. That distinction is the whole
 boundary between an audit trail and a log of the user's screen. The file is
 `0600` in a `0700` directory anyway, since an argument can be text they copied.
 
-#### Rotation, and the shape it forces on N6
+#### Rotation
 
 At 1 MiB the file is renamed to `activity.jsonl.1` and a fresh one started; one
 generation is kept, so 2 MiB at worst. The rename breaks an `inotify` watch on
-the path, which is N6's problem to handle: watch the directory and reopen, which
-it needs anyway for the first-ever create.
+the path, which was written here as N6's problem to handle — watch the directory
+and reopen.
+
+N6 did not have to. It reads the log by spawning `--tail --json` when a panel
+opens, so `activity.tail` handles the rotation in Python where it already did,
+and nothing in QML watches the file at all. Which is just as well: `FileView`
+has no seek, so a watch would have pulled the whole megabyte into the shell
+process on every tool call.
 
 Rotation happens *before* the write that would cross the cap rather than after,
 so the file is never over it and a record is never split across generations.
+
+#### One thing a `stopped` marker does not cover
+
+F28 made the daemon write `stopped` from the ASGI lifespan shutdown, so a
+SIGTERM produces one. `omarchy restart shell` does not: the shell is killed and
+the daemon dies with it, before uvicorn hands control to the lifespan. The log
+then carries `started` with no `stopped` before it.
+
+Visible in a real log, and this is what it looks like — the pairs are IPC
+restarts, the bare ones are shell restarts:
+
+```
+15:09:48  -- stopped
+15:09:48  -- started version=0.1.0 port=8765
+15:10:33  -- started version=0.1.0 port=8765     <- omarchy restart shell
+15:50:19  -- started version=0.1.0 port=8765     <- omarchy restart shell
+```
+
+Not a fault in the writer, and not fixable from inside the daemon: it is not
+given a chance to run. It is recorded here because N6 puts these lines on a bar
+panel, where three consecutive `daemon started` rows read as a bug until you
+know what they mean. A supervisor-side fix — the service SIGTERMing its child on
+its own destruction — belongs to whoever wants the log to close every session it
+opens.
 
 #### Reading it back
 
@@ -516,32 +546,162 @@ shutdown path did not work at all.
 The consent directory was empty afterwards, and the journal carried
 `consent asked` → `consent accepted` beside the log's own line.
 
-### N6 — Show it in the widget, and let the widget stop the daemon
+### N6 — Show it in the widget, and let the widget stop the daemon — done
 
-The bar widget reads a state file and draws one glyph. Given N5 it can show the
-last few calls, and it should carry a stop control: a daemon a user cannot turn
-off from the surface that tells them it is running is not really theirs.
+The bar widget now roots in `Ui/Panel` instead of `Ui/BarWidget`. Clicking the
+icon opens a card: the last eight records from N5's log, and three buttons —
+Stop/Start, Restart, and Copy client config. The icon highlights when an agent
+makes a call.
 
-`Service.qml`'s `IpcHandler` already exposes `stop()`, `start()` and `restart()`
-— this is wiring, not new capability.
+#### The premise was wrong, and that is the finding
 
-**The structural obstacle, which decides the design:** Omarchy routes
-inter-plugin calls to panels and overlays, *not* to services, so the widget
-cannot call the service directly. Three ways out, in order of preference:
+This item was written around an obstacle: *Omarchy routes inter-plugin calls to
+panels and overlays, not to services, so the widget cannot call the service.*
+Three workarounds were listed, in order of preference, and a fourth was
+suggested to be confirmed first — a shared QML singleton — with a warning
+attached: **do not assume it, the phase 2 findings are all cases where the shell
+did not behave as read.**
 
-1. The widget spawns `Process { command: ["omarchy-shell", pluginId, "stop"] }`,
-   going out through the shell's own IPC and back into `Service.qml`. Roundabout,
-   but it uses the interface that already exists and is already documented.
-2. The widget writes an intent file; the service watches it. Needed anyway if
-   N4 ever grows a desktop-side answer surface.
-3. The widget speaks HTTP to the daemon directly. **Rejected** — it would put the
-   bearer token in QML and make the bar an authenticated client of the thing it
-   is supposed to only observe.
+That warning earned its keep, in the opposite direction. The obstacle is real
+for `shell call <id> <method>`, which routes through the panel loader map that
+only panel, overlay and menu plugins are in. It is not real for the widget
+reaching the service *object*:
 
-Confirm before building whether a plugin's widget and service can share a QML
-singleton, since they load into the same Quickshell process. If they can, this is
-much simpler than any of the three. Do not assume it; the phase 2 findings are
-all cases where the shell did not behave as read.
+```qml
+readonly property var service: bar && bar.shell && bar.shell.serviceFor
+  ? bar.shell.serviceFor(root.moduleName) : null
+```
+
+`shell.serviceFor(pluginId)` has no first-party restriction, services and bar
+widgets load into one QML engine, and `omarchy.media` already does exactly this
+between its own two halves. So the widget holds the live `Service.qml` root and
+calls `stop()` on it. All three workarounds were unnecessary.
+
+The suggested fourth way was wrong too, and the shell says so in its own source,
+twice: a plugin-local `pragma Singleton` gives each importer its own copy, which
+is *why* the shell injects instances instead.
+
+#### What the spike found, which no amount of reading would have
+
+The design rested entirely on `serviceFor`, so it was proved first, on a live
+desktop, with a widget that did nothing but report what it got. Three restarts,
+ten minutes:
+
+```
+serviceChanged -> null
+serviceChanged -> linked phase=starting serving=false
+after 4s      -> linked phase=listening serving=true calls=0
+```
+
+**The widget is constructed before the service exists.** Every startup, the
+first evaluation is null. It resolves only because that line is a *binding*,
+which re-runs when the shell's service map changes — the `Component.onCompleted`
+form of the same expression latches null forever and the widget would show
+nothing, on a machine where the code is plainly correct.
+
+So the state file stays, and the fallback is not defensive dressing: there is a
+real window on every single startup where it is the only thing the widget has.
+
+#### The list and the icon are fed by different things, on purpose
+
+The panel's list comes from `omarchy-mcpd --tail 8 --json`, spawned by the
+service when a panel opens. The icon's pulse and counters come from a new
+per-call frame on the stdout channel the service already parses.
+
+Neither is a substitute for the other, and merging them would have been the
+mistake. The frames stop when the daemon does; the log is what survives it, and
+a panel opened after a crash is the case that matters most. Feeding the list
+from both would mean deduplicating two accounts of one call against records that
+carry no id.
+
+- **The tail is spawned by the service, not the widget.** A bar surface exists
+  per monitor, so the widget is instantiated once per screen. Three monitors
+  would have meant three readers of one file.
+- **`FileView` has no seek.** Tailing the log continuously from QML means
+  pulling up to a megabyte into the shell process on every tool call, plus
+  reopening on rotation. That is what the 620ms subprocess buys out.
+- **`--tail --json` answers with an envelope**, `{"activity": bool, "records":
+  [...]}`, because an empty array cannot say whether nothing has happened or the
+  log is switched off. The panel has to tell a user which one they are looking
+  at; "no calls" shown to someone whose counter reads 42 is a lie.
+
+#### What the panel will not show
+
+Arguments. The record has them and the panel does not read them. `outcome`,
+`route`, the resolved target from N2, and the duration are all bounded by
+construction; an argument is the one field a model supplies, and for
+`omarchy_clipboard_write` it *is* the clipboard. N5 put that behind a `0600`
+file in a `0700` directory and deliberately kept it off `/health`; a popup on a
+desktop is in every screenshot and every screen share, which is further out than
+either.
+
+The call frame carries the same restriction, and a test asserts a copied secret
+does not reach it.
+
+**Log events are rendered, not filtered.** The first live run showed empty rows
+with gaps: `tail` returns the log's own `started`/`stopped`/`dropped` lines
+alongside calls, and those have no `tool`. Filtering them out was the tempting
+fix and the wrong one — `dropped` is precisely the record N5 emits so that a gap
+in the audit trail is never silent, and a panel that hid it would undo that.
+
+#### A Stop that turns itself back on is not a Stop
+
+`Component.onCompleted: start()` ran unconditionally, so any stop died at the
+next `omarchy restart shell`. Stopping now writes a marker in the state
+directory and starting clears it; autostart waits for the `FileView` verdict
+rather than firing immediately.
+
+The marker is written rather than deleted — `FileView` can write a file and
+cannot remove one, so its *contents* say which state it means. Empty is "start
+me".
+
+This gave `stop()` a side effect that outlives the session, which forced a split
+that was worth making anyway: `start()` and `stop()` carry intent and persist
+it, `beginRunning()` and `halt()` do the process work, and `restart()` uses the
+private pair. A restart is not a stop — going through the public one would leave
+the daemon switched off for good if the shell died between the halves, and
+nothing on the desktop would say why. `test_shutdown.py` pins it.
+
+#### The panel needs no IPC target of its own
+
+`Ui/Panel` offers a free `IpcHandler` from `ipcTarget`, which would have
+collided with the one `Service.qml` already owns — a target routes to exactly
+one handler. It is left empty. The shell routes `summon`/`hide`/`toggle` for a
+`bar-widget` plugin to the live widget instead, recognising it by the
+`open`/`close`/`opened` contract that `Panel` provides, precisely because a
+fixed target would only ever reach one monitor's copy:
+
+```bash
+omarchy-shell shell toggle io.github.bruce-forte.mcp-server
+```
+
+Two IPC functions were added to the service's existing target rather than a new
+one: `recent` and `copyClientConfig`.
+
+#### The token goes to the clipboard, never to the screen
+
+`clientConfig` printed the setup line to the journal, because returning it would
+put the bearer token in a terminal. The panel's button pipes
+`--print-client-config` into `wl-copy` through two processes and a pipe — not
+`wl-copy <text>`, because argv is world-readable through `/proc`, and not a
+shell either. `panels/network/Panel.qml` sends a wifi password the same way, for
+the same reason.
+
+#### Verified on a live desktop
+
+| What | Result |
+|------|--------|
+| `serviceFor` on a third-party plugin | Returns the live service object; null until the service host catches up |
+| Panel via `shell toggle` | Opens, with no IPC target of its own |
+| The list | Real records, with outcome and duration, no arguments |
+| Log events | `· daemon started`, `· daemon stopped` — the empty-row bug, found here and fixed |
+| A call frame | `calls` and `lastTool` update immediately, not on the next 10s poll |
+| Stop from the panel's code path | Daemon gone, port closed, `autostart-off` written |
+| `omarchy restart shell` while stopped | Still stopped, and the journal says who stopped it and how to undo it |
+| The list while stopped | Still there — it reads the file, not the daemon |
+| Start, then restart the shell | Marker cleared, serving again |
+| Copy client config | 144 characters on the clipboard, nothing on screen |
+| `make check` | 340 tests, `qmllint`, `shellcheck`, `omarchy plugin validate` |
 
 ### N7 — Live tool enable/disable
 

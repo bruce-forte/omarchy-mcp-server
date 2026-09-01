@@ -205,6 +205,29 @@ curl -s http://127.0.0.1:8765/health
 running — a wedged HTTP loop still has a live process, so the plugin probes
 `/health` rather than trusting the pid.
 
+### The bar widget
+
+The plug icon in the bar says whether the server is serving, and blinks when an
+agent makes a call — the only thing on the desktop that marks the moment
+something acted on it. Click it for a panel with the last few calls, and the
+controls:
+
+| Button | Does |
+|--------|------|
+| **Stop** / **Start** | Switches the daemon off, or back on. A Stop lasts across a shell restart and a logout, until you start it again |
+| **Restart** | What to press after editing `config.toml` |
+| **Copy client config** | Puts the `claude mcp add …` line on your clipboard. It carries the bearer token, so it is never shown on screen |
+
+The panel reads the activity log directly, so it still lists what happened when
+the daemon is stopped or has crashed. Arguments are not shown there — see
+[Seeing what it did](#seeing-what-it-did).
+
+It opens from a keybind or a terminal too:
+
+```bash
+omarchy-shell shell toggle io.github.bruce-forte.mcp-server
+```
+
 ## Configuration
 
 Optional. Everything works without it. A commented template is written to
@@ -320,11 +343,13 @@ Refusals are in there too — a guarded route that was stopped is more interesti
 than a safe one that ran. `outcome` is one of `ok`, `failed`, `timed_out`,
 `refused`, `not_installed` or `error`.
 
-Read the end of it without `jq`:
+Read the end of it without `jq`, running or not:
 
 ```bash
 ~/.config/omarchy/plugins/io.github.bruce-forte.mcp-server/bin/omarchy-mcpd --tail 20
 ```
+
+Or click the bar icon, which shows the same records without their arguments.
 
 **What is never written there:** command output. No OCR text, no clipboard
 reads, nothing a tool returned. Arguments are written, truncated — they are what
@@ -376,7 +401,7 @@ anywhere inside a plugin folder and a virtualenv is largely symlinks.
 
 ```bash
 omarchy plugin remove io.github.bruce-forte.mcp-server
-rm -rf ~/.local/state/io.github.bruce-forte.mcp-server   # venv, bearer token, activity log
+rm -rf ~/.local/state/io.github.bruce-forte.mcp-server   # venv, token, activity log, autostart marker
 rm -rf ~/.config/omarchy/mcp                             # your configuration
 rm -rf "$XDG_RUNTIME_DIR/io.github.bruce-forte.mcp-server"   # pending approvals
 claude mcp remove omarchy                                # if you added it there

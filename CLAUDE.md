@@ -132,15 +132,102 @@ Because that listing *is* the discovery mechanism, treat the function names and
 return types as documentation: name them for the caller, not the implementation,
 and return a string rather than nothing when there is anything worth reporting.
 
-Note `shell call <id> <method> <arg>` is a different, lower-level route that
-reaches loaded panels and overlays. `IpcHandler` is the one that shows up in the
-listing.
+Note `shell call <id> <method> <arg>` is a different, lower-level route. It
+reaches loaded **panel, overlay and menu** plugins only — never a service, never
+a bar widget — because it looks the plugin up in the loader map that only those
+three kinds are in. `IpcHandler` is the one that shows up in the listing.
 
-### Services cannot be called by widgets
+### A bar widget exists once per monitor
 
-Omarchy routes inter-plugin calls to panels and overlays, but not to services. A
-bar widget cannot ask a service anything, so a service that has state a widget
-needs must publish it to a file.
+The bar is a surface per screen, so a `bar-widget` entry point is instantiated
+once per screen. Nothing about the QML says so, and on a single-monitor machine
+nothing will ever reveal it.
+
+Three consequences worth designing around:
+
+- **An IPC target routes to exactly one instance.** Whichever registered it. The
+  base class carries `broadcast(method)` for this — it fans a call out to every
+  live instance through `bar.moduleWidgets(moduleName)` — and the shell routes
+  `summon`/`hide`/`toggle` to the live widget rather than through a target for
+  the same reason.
+- **Anything a widget reads, it reads N times.** A file poll, a `Process`, an
+  HTTP probe: three monitors mean three of them. Put that work in the plugin's
+  *service*, which is instantiated once, and let the widgets read the result off
+  the service object.
+- **Per-widget state is per screen.** A panel opened on one monitor is closed on
+  the others unless something coordinates them.
+
+### A bar widget is allowed to be a panel
+
+`entryPoints.barWidget` does not have to be a plain bar item. Pointing it at a
+component rooted in `qs.Ui`'s `Panel` gives one click-to-open popup that is both
+the bar button and its panel — `omarchy.power`, `.network`, `.audio` and
+`.agents` are all built this way, and the `Ui` kit has the pieces to fill it
+(`KeyboardPanel`, `PanelKeyCatcher`, `PanelSectionHeader`, `PanelSeparator`,
+`PanelActionButton`, `Button`, `PopupCard`, `ConfirmDialog`).
+
+The six valid `kinds`, and the `entryPoints` key each one wants:
+
+| kind | entry point key |
+|------|-----------------|
+| `bar` | `bar` |
+| `bar-widget` | `barWidget` |
+| `menu` | `menu` |
+| `overlay` | `overlay` |
+| `panel` | `panel` |
+| `service` | `service` |
+
+Two things the shell does not say out loud:
+
+- **The bar host recognises a panel by duck-typing**, not by kind: the root item
+  needs `open()`, `close()` and `opened`, all three, or `shell summon/hide/toggle`
+  will not reach it. `Panel` provides them.
+- **Declaring `panel`, `overlay` or `menu` alongside `bar-widget` changes the
+  routing.** The panel loader takes ownership and summons stop going to the live
+  bar widget. If the popup belongs to the bar icon, `bar-widget` alone is the
+  kind you want.
+
+`Panel` also registers a free `IpcHandler` from its `ipcTarget`. Leave that empty
+if the plugin's service already owns the plugin-id target — a target only ever
+routes to one handler.
+
+### What FileView will and will not do
+
+Two limits worth knowing before designing around it:
+
+- **It has no seek.** `text()` is the whole file. Watching a log that grows to a
+  megabyte means pulling a megabyte into the shell process on every write.
+- **It can write a file and cannot remove one.** A marker file that has to mean
+  two things should say which in its *contents*, rather than existing or not.
+
+### A widget cannot be *called*, but it can *reach* a service
+
+Two different things, and this plugin got the rule wrong for a phase.
+
+`shell call <id> <method>` routes through the loader map, which only
+panel, overlay and menu plugins are in. It reaches neither services nor bar
+widgets, and no amount of `IpcHandler` changes that.
+
+A bar widget can nonetheless reach a service object directly:
+
+```qml
+readonly property var service: bar && bar.shell && bar.shell.serviceFor
+  ? bar.shell.serviceFor(moduleName) : null
+```
+
+`shell.serviceFor(pluginId)` has no first-party restriction, and the shell loads
+both kinds into one QML engine. `omarchy.media` uses it between its own service
+and its own widget.
+
+Two things to know before relying on it:
+
+- **The widget is constructed before the service exists**, so the first
+  evaluation is always null. It resolves only because a *binding* re-runs when
+  the shell's service map changes; the `Component.onCompleted` version of that
+  line latches null forever. Keep a file fallback for the window in between.
+- **Do not reach for a plugin-local `pragma Singleton`** to share state instead.
+  Relative-path singleton imports give each importer its own copy; the shell
+  says so twice in its own source, and injection is what it does instead.
 
 ### Reload rules
 
