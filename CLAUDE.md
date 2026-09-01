@@ -191,6 +191,16 @@ Two things the shell does not say out loud:
 if the plugin's service already owns the plugin-id target — a target only ever
 routes to one handler.
 
+**A control that acts on this plugin belongs in the panel**, next to Stop,
+Restart and Copy client config. It is the surface a person can find without
+knowing the plugin has an IPC target at all, and it can ask a question a
+notification cannot: a notification carries one action (F25), a panel carries
+as many buttons as the decision needs.
+
+Add the IPC verb too, and name it for the caller — the `qs ipc show` listing is
+how a script or an agent discovers the same capability. But the panel is the
+surface a person gets.
+
 ### What FileView will and will not do
 
 Two limits worth knowing before designing around it:
@@ -228,6 +238,19 @@ Two things to know before relying on it:
 - **Do not reach for a plugin-local `pragma Singleton`** to share state instead.
   Relative-path singleton imports give each importer its own copy; the shell
   says so twice in its own source, and injection is what it does instead.
+
+**Use this surface for anything new.** Whatever the user should be able to see
+or change about this plugin goes in the panel, and reaches the daemon through
+the service object. Not a new file under `$XDG_RUNTIME_DIR` for the widget to
+poll, and not a new `IpcHandler` verb whose only caller is QML.
+
+The state file that exists is not a pattern to copy. It is a fallback for the
+one window where `serviceFor` has not resolved yet, and it stays that size:
+whether the daemon is up, on what port, and what it last did. New state belongs
+on the service object, where a binding already updates the widget.
+
+The consent store (N10) is the next thing that will want this, and it should
+call the service rather than build a second channel to the same process.
 
 ### Reload rules
 
