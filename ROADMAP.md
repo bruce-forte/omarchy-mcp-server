@@ -61,7 +61,8 @@ stop it without a terminal. Decision 12 covers *daemon* faults; none of this
 covers what an *agent* does, which is the part with consequences.
 
 Ordered by what unblocks what. N1–N3 stand alone and are cheap. N4 depends on
-N2 and N3. N6 depended on N5's log.
+N2 and N3. N6 depended on N5's log. N10 depends on N4, and now builds its
+surface on N6's panel rather than inventing one. N11 came out of N6.
 
 ### N1 — Tell the model that what it reads is data, not instructions — done
 
@@ -805,8 +806,10 @@ migrations, and a file a person can read and hand-edit is worth more here than
 one they cannot. SQLite would earn its place if the *activity log* (N5) grew
 large; it does not for a few KB of decisions.
 
-**One writer.** The daemon owns the file; the widget requests changes over IPC
-(N6). Two processes writing one JSON file is a corruption story nobody needs.
+**One writer.** The daemon owns the file. The panel asks for a change by calling
+the service, which asks the daemon -- N6 established that a widget holds the
+live service object, so this needs no new file and no IPC verb whose only caller
+is QML. Two processes writing one JSON file is a corruption story nobody needs.
 
 #### Scope it to groups, and keep the tiers derived
 
@@ -836,9 +839,13 @@ guarded route → in the store? → yes: run
 ```
 
 **One thing N4 cannot hand this.** A notification has a single action (F25), so
-the desktop asker can express *yes* but not *yes, always*. Either the store is
-filled from a second surface — the widget of N6 — or "always" is offered only to
-clients that can elicit a form. Decide when N10 is built, not before.
+the desktop asker can express *yes* but not *yes, always*. The second surface
+that answers it now exists: N6's panel, which has room for buttons a
+notification does not and reaches the service directly. "Always" belongs there
+rather than being offered only to clients that can elicit a form.
+
+The delta review below wants the same surface, for the same reason. Neither
+should invent a new one.
 
 So the store is a **record of consent already given**, accumulated through use.
 Not a configuration task presented up front. That inverts the cost: the user
@@ -872,6 +879,40 @@ survives a restart and does not re-ask about everything each boot.
   outright. Two sources of truth for one decision is worse than either.
 - Mode `0600`. This file states what an agent is permitted to do.
 - Naming it in the README's uninstall section.
+
+### N11 — Close the log when the shell goes down
+
+Found while verifying N6, and visible in its panel.
+
+The activity log writes `stopped` from the ASGI lifespan shutdown, which F28
+put there precisely because nothing after `uvicorn.run()` gets a turn. That
+covers a SIGTERM: `omarchy-shell <id> stop` and `restart` both produce the
+marker. It does not cover `omarchy restart shell`, where the shell is killed and
+the daemon dies with it before uvicorn hands control to the lifespan at all.
+
+The log then carries `started` with nothing closing the session before it:
+
+```
+15:09:48  -- stopped
+15:09:48  -- started version=0.1.0 port=8765
+15:10:33  -- started version=0.1.0 port=8765     <- omarchy restart shell
+15:50:19  -- started version=0.1.0 port=8765     <- omarchy restart shell
+```
+
+Not fixable from inside the daemon — it is not given a chance to run — so this
+is supervisor-side. `Service.qml` should SIGTERM its child when the service
+object is destroyed, and give it the same bounded wait `halt()` already sets up,
+so the ordinary path stays the daemon's own clean exit.
+
+**Check that Quickshell runs `Component.onDestruction` on a shell teardown
+before building on it.** If the shell is killed hard enough that QML destructors
+do not run either, this cannot be fixed here and the honest move is to leave the
+gap documented rather than to add a marker the daemon writes on startup about
+the *previous* run, which would be a guess presented as a record.
+
+Low priority: nothing is lost but the closing bracket of a session, and every
+call in it is already on disk. It matters because N6 puts these lines in front
+of a person, where a run of `daemon started` rows reads as a bug.
 
 ## Deferred
 

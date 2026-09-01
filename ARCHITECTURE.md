@@ -127,6 +127,12 @@ first evaluation of `serviceFor` is null on every startup, and it resolves only
 because the binding re-runs when the shell's service map changes. Verified on a
 live desktop; see `ROADMAP.md` N6.
 
+**This is where new user-facing state and controls go.** The panel is what a
+person can find, and the service object is how it reaches the daemon — so
+anything the user should see or change is a property on `Service.qml` and a row
+or a button in the panel. The state file is not the pattern; it carries the four
+fields the widget needs before `serviceFor` resolves, and it stays that size.
+
 ## The IPC surface is documentation
 
 `Service.qml` registers an `IpcHandler` under the plugin id, so the plugin is
