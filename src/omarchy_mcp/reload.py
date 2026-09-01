@@ -165,10 +165,12 @@ class Reloader:
         self._seen = raw
 
         config = config_module.load(self._path)
-        if not config.parsed:
-            return self._reject(config)
-
-        return self._accept(config)
+        result = self._reject(config) if not config.parsed else self._accept(config)
+        if self._on_change is not None:
+            # Told about a rejection too: "your file was not applied" is the
+            # thing the person most needs the bar to say.
+            self._on_change(result)
+        return result
 
     def _reject(self, config: Config) -> Reloaded:
         """A file that does not parse leaves the daemon exactly as it was."""
@@ -222,10 +224,7 @@ class Reloader:
                 log=self._log,
             )
 
-        result = Reloaded(config=config, tools=tools, policy_changed=policy_changed)
-        if self._on_change is not None:
-            self._on_change(result)
-        return result
+        return Reloaded(config=config, tools=tools, policy_changed=policy_changed)
 
     # -- the loop ------------------------------------------------------------
 

@@ -12,7 +12,7 @@ from mcp.server.subscriptions import InMemorySubscriptionBus, ToolsListChanged
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.responses import JSONResponse
 
-from . import __version__
+from . import __version__, frames
 from .auth import BearerAuth
 from .clients import Clients
 from .config import Config
@@ -141,11 +141,36 @@ def build(
     if reload_from is not None:
         _advertise_tool_list_changed(mcp)
 
+        def note(result) -> None:
+            """Put a reload where a person can see it, and where it is kept.
+
+            The frame reaches the bar now; the activity log keeps it after the
+            daemon is gone, beside the calls it explains -- a reader asking why
+            a route was allowed at 14:05 needs to know the rules moved at 14:04.
+            Names of tools and counts only: what the policy now says is in the
+            file the person just edited.
+            """
+            frames.reloaded(len(catalogue.present), len(catalogue.declared), not result.rejected)
+            sink = getattr(stats, "sink", None)
+            if sink is None:
+                return
+            if result.rejected:
+                sink.event("config_rejected")
+                return
+            sink.event(
+                "reloaded",
+                added=list(result.tools.added),
+                removed=list(result.tools.removed),
+                policy=result.policy_changed,
+            )
+
         async def announce() -> None:
             await bus.publish(ToolsListChanged())
             await clients.tools_changed()
 
-        reloader = Reloader(settings, catalogue, mcp, log, path=reload_from, announce=announce)
+        reloader = Reloader(
+            settings, catalogue, mcp, log, path=reload_from, announce=announce, on_change=note
+        )
 
     @mcp.custom_route("/health", methods=["GET"])
     async def health(_request):
@@ -157,6 +182,10 @@ def build(
                 "server": SERVER_NAME,
                 "version": __version__,
                 "port": config.port,
+                # Counts, not names: enough for the bar to say "18 of 19", and
+                # the thing that heals a `reloaded` frame the shell missed.
+                "tools": len(catalogue.present),
+                "tools_declared": len(catalogue.declared),
                 **stats.snapshot(),
             }
         )
