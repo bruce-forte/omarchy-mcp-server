@@ -497,6 +497,25 @@ reload per tool call, reading as a broken plugin rather than a bad setting.
 Named in the README's uninstall section; `omarchy plugin remove` takes the
 plugin directory only.
 
+#### Verified on a live desktop
+
+Installed on a real Omarchy, restarted, and driven from an attached Claude Code
+session — which is how F28 was found, since every unit test was green while the
+shutdown path did not work at all.
+
+| What | Result |
+|------|--------|
+| File on a real start | `activity.jsonl` created `0600` in a `0700` directory, with a `started` line |
+| A curated tool from a real client | `omarchy_theme` → `"tier":"safe","outcome":"ok","exit":0,"ms":249` |
+| A guarded route, `ask` off | `"tier":"guarded","outcome":"refused"`, nothing spawned |
+| A guarded route, `ask` on, notification clicked | `"consent":"accepted","outcome":"ok","ms":15121` — the 15s is a person reading it |
+| Restart with a client attached | `stopped` then `started`, back serving in about 2s, well inside `Service.qml`'s 5s SIGKILL |
+| `--tail 8` | Rendered the real file, including the approval and the refusal |
+| The plugin directory afterwards | No `__pycache__`, `git status` clean — F19's rule holds with the new module |
+
+The consent directory was empty afterwards, and the journal carried
+`consent asked` → `consent accepted` beside the log's own line.
+
 ### N6 — Show it in the widget, and let the widget stop the daemon
 
 The bar widget reads a state file and draws one glyph. Given N5 it can show the
