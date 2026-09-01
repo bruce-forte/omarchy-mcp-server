@@ -45,6 +45,20 @@ def _pin_registry(monkeypatch, commands):
     monkeypatch.setattr(reg, "all_commands", lambda: commands)
 
 
+@pytest.fixture(autouse=True)
+def _pin_state_dir(monkeypatch, tmp_path_factory):
+    """No test writes into the real state directory.
+
+    Same reasoning as `_pin_registry`, one layer down: a test that drives the
+    daemon end to end -- `test_shutdown` calls `main()` -- would otherwise
+    append to the user's own activity log, on their own machine, every time the
+    suite ran. Caught only because the file appeared there.
+    """
+    import omarchy_mcp.activity as activity
+
+    monkeypatch.setattr(activity, "STATE_DIR", tmp_path_factory.mktemp("state"))
+
+
 @pytest.fixture(scope="session")
 def themes() -> list[str]:
     """A snapshot of `omarchy theme list`."""
