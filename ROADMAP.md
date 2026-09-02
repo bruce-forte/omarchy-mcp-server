@@ -27,6 +27,7 @@ reasons matter more than the choices when something needs revisiting.
 | 15 | **Visibility before curated tools** | Building 15 tools on a daemon you can only observe through `journalctl` means debugging blind |
 | 16 | **Keep 4 concrete resources + 3 templates** even though Claude Code never enumerates templates (F8) | Resources are for a human typing `@`; agents discover through tools. 61 concrete group resources would bury `omarchy://shell/targets`, the entry actually wanted |
 | 17 | **Dev virtualenv lives outside the repository** | `omarchy plugin validate` rejects symlinks anywhere in a plugin folder, and a virtualenv is largely symlinks. The `Makefile` enforces it |
+| 18 | **Permissions are their own JSON document**, `deny` → `ask` → `allow`, not `config.toml` keys | Two files that both decide what an agent may do is a second source of truth. JSON gets a published schema an editor checks before the daemon sees the file, and the three-list shape is one a user of this plugin has probably already met — N10 |
 
 ## Phases
 
@@ -47,7 +48,10 @@ reasons matter more than the choices when something needs revisiting.
 - [x] **5 — Hardening.** Done. Generated `TOOLS.md`, CI, `SECURITY.md`.
 - [ ] **6 — Consent and visibility.** In progress: N1–N9 done. The
       user can see what an agent did, answer for the calls that warrant it, and
-      stop the thing. N10–N12 remain. See [Next steps](#next-steps).
+      stop the thing. N11 and N12 remain, and N10 grew into the phase's
+      largest item — five commits, its own permissions document, and N12 as a
+      prerequisite. N13 and N14 came out of it. See
+      [Next steps](#next-steps).
 
 Tests are not a phase. `policy.py` and the auth checks are tested in the phase
 that creates them — they are the security boundary, and tests retrofitted to a
@@ -61,10 +65,15 @@ stop it without a terminal. Decision 12 covers *daemon* faults; none of this
 covers what an *agent* does, which is the part with consequences.
 
 Ordered by what unblocks what. N1–N3 stand alone and are cheap. N4 depends on
-N2 and N3. N6 depended on N5's log. N10 depends on N4, and now builds its
-surface on N6's panel rather than inventing one -- and on N7's holder, since a
-store the daemon owns has to reach the same code that a config reload swaps.
-N11 came out of N6, N12 out of N7.
+N2 and N3. N6 depended on N5's log. N11 came out of N6, N12 out of N7.
+
+N10 depends on all of them and on **N12 landing first**. It needs N4 for the
+question, N6's panel for the two answers a notification cannot carry, and N7's
+holder, since permissions the daemon owns have to reach the same code a config
+reload swaps. N12 is the prerequisite because an agent that can call its own
+supervisor's IPC verbs could acknowledge its own delta -- silently, since
+acknowledging raises no notification -- and clear the review that existed to
+stop it. N13 and N14 came out of N10 and are deliberately not part of it.
 
 ### N1 — Tell the model that what it reads is data, not instructions — done
 
@@ -355,6 +364,14 @@ command reachable that was not reachable before. The rot that N10 describes —
 nobody edits the arrays, so `guarded` means *never* — is answered instead by the
 guarded refusal naming both ways out, `policy.allow` and `policy.ask`, where an
 agent will read it and can tell the user.
+
+**Superseded by N10.** The default flips to *ask*, and both keys leave
+`config.toml`. The reasoning above was written when asking meant elicitation,
+which does not reach this client at all (F23) — the switch mostly did nothing.
+Once a question means a `critical` notification naming the route, its arguments
+and its target, "reachable" means *reachable after a human reads exactly what it
+does*. And a permissions document that fills itself through use never fills if
+nothing is ever asked.
 
 #### Verified on a live desktop
 
@@ -952,97 +969,426 @@ Argument resolution was considered as a sixth and left out: it is true and
 distinctive, but it already has a worked example under *What an agent is allowed
 to run*, and six items read as a list rather than a claim.
 
-### N10 — A consent store, reviewed by diff
+### N10 — Permissions, reviewed by diff
 
-Depends on N4. The idea is default-deny with a UI, and the thing that makes it
-work rather than rot is that **the user reviews a delta, never a catalogue**.
+Depends on N4 for the question, on N6's panel for the surface a notification
+cannot provide, and on N7's holder, since permissions the daemon owns have to
+reach the same code a config reload swaps. **N12 lands first** — see
+*Why N12 is a prerequisite* below.
 
-Today `policy.allow` and `policy.allow_groups` are TOML arrays. Nobody edits
-them, so in practice `guarded` means *never*. Replace the hand-edited arrays
-with a store the daemon owns:
+Today `policy.allow` and `policy.allow_groups` are TOML arrays nobody edits, so
+in practice `guarded` means *never*. The fix is not a bigger array. It is to
+replace the arrays with a permissions document the daemon reads and appends to,
+and to make the thing a person reviews **a delta, never a catalogue**.
 
-```
-${XDG_STATE_HOME:-~/.local/state}/io.github.bruce-forte.mcp-server/consent.json
-```
+#### The shape: three lists, `deny` → `ask` → `allow`
 
-**JSON, not SQLite.** Hundreds of entries at the outside, no queries, no
-migrations, and a file a person can read and hand-edit is worth more here than
-one they cannot. SQLite would earn its place if the *activity log* (N5) grew
-large; it does not for a few KB of decisions.
+Modelled on Claude Code's permission rules, which solve the same problem for the
+same kind of caller and which a user of this plugin has probably already met:
 
-**One writer.** The daemon owns the file. The panel asks for a change by calling
-the service, which asks the daemon -- N6 established that a widget holds the
-live service object, so this needs no new file and no IPC verb whose only caller
-is QML. Two processes writing one JSON file is a corruption story nobody needs.
-
-#### Scope it to groups, and keep the tiers derived
-
-The unit matters more than anything else here. There are ~356 commands and ~61
-groups. A per-command list is 356 checkboxes on first run, which nobody reviews
-— they click allow-all and the mechanism becomes theatre. So:
-
-- `safe` still runs. **Default-deny applies to `guarded` only**, which is where
-  it already applies. Install → connect → an agent works on day one, unchanged;
-  a default-deny-everything first run is the fastest route to an uninstall.
-- `blocked` is not in the store and cannot be put there.
-- The store is the *interface to* the guarded tier, not a replacement for it.
-  Tiers keep deriving themselves from `requires_sudo` and `group` — decision 4
-  is the reason this project does not rot on an Omarchy upgrade, and a curated
-  list reconciled against a changing registry is exactly what it avoided.
-
-#### The store fills itself
-
-This is why it depends on N4 rather than standing alone. A guarded route is hit,
-the user is asked, and the answer can be remembered:
-
-```
-guarded route → in the store? → yes: run
-                             → no:  ask → accept + "always" → write to store
-                                        → accept            → run once
-                                        → decline           → refuse
+```json
+{
+  "$schema": "https://…/permissions.schema.json",
+  "permissions": {
+    "guardedDefault": "ask",
+    "deny":  [{"kind": "route", "matcher": "omarchy dev *"}],
+    "ask":   [{"kind": "route", "matcher": "omarchy install *"}],
+    "allow": [{"kind": "route", "matcher": "omarchy theme *"}]
+  }
+}
 ```
 
-**One thing N4 cannot hand this.** A notification has a single action (F25), so
-the desktop asker can express *yes* but not *yes, always*. The second surface
-that answers it now exists: N6's panel, which has room for buttons a
-notification does not and reaches the service directly. "Always" belongs there
-rather than being offered only to clients that can elicit a form.
+Rules are objects rather than the `Tool(specifier)` strings the original uses:
+`kind` validates as a schema enum, and a second kind — `tool`, when
+`tools.disabled` eventually moves here — is an enum addition rather than a
+parser change.
 
-The delta review below wants the same surface, for the same reason. Neither
-should invent a new one.
+**JSON, not TOML, and not in `config.toml` at all.** `[policy]` empties
+completely: `allow`, `allow_groups`, `deny`, `ask` and `ask_timeout_s` all move.
+Two files that both decide what an agent may do is the second source of truth
+the old plan warned about, arriving by a different door. JSON also gets a
+published schema, so an editor validates the file before the daemon ever sees
+it. `config.toml` keeps what it is good at — ports, timeouts, log settings.
 
-So the store is a **record of consent already given**, accumulated through use.
-Not a configuration task presented up front. That inverts the cost: the user
-answers a question when it is concretely in front of them, about a named target
-(N2), instead of auditing a list of things they may never do.
+**JSON, not SQLite**, for the reason the original gave and which still holds: a
+few dozen decisions, no queries, no migrations, and a file a person can read and
+hand-edit is worth more than one they cannot.
 
-#### What the UI is for: the delta
+#### The matcher, and the disappearance of groups
 
-The genuinely valuable part, and the part nothing else in this project does.
-After a startup or reload, compare the registry against the store's record of
-what was last seen:
+`group` is exactly the second token of the route, for all 426 commands in the
+snapshot. So `allow_groups = ["install"]` and the matcher `omarchy install *`
+are the same set, and **the group concept leaves the configuration surface
+entirely.** Groups survive only inside `policy.py`, where they derive tiers.
+That is decision 4 doing its job: derivation stays, hand-maintained lists go.
 
-- Guarded groups and routes that **did not exist last time** are the interesting
-  set. An `omarchy update` that adds a new destructive group is invisible today.
-- Show that set filtered to new-only by default, with the full list behind a
-  toggle. Never open on the full list.
-- Notify when the set is non-empty — *"new commands need review"* — consistent
-  with decision 12, since this is a daemon-level condition and not a tool-call
-  failure.
-- New entries are **denied until reviewed**. Appearing in an update is not
-  consent.
+Two matcher forms, and nothing else:
 
-Persist a `last_seen_registry` fingerprint alongside the decisions so the diff
-survives a restart and does not re-ask about everything each boot.
+| Form | Example | Matches |
+|------|---------|---------|
+| exact route | `omarchy install app` | that route |
+| prefix + ` *` | `omarchy install *` | every route under the prefix, **including the bare route** |
+
+The trailing-`*`-matches-the-bare-route rule is adopted deliberately, not
+inherited. 19 routes are two tokens long, so `omarchy migrate` is simultaneously
+a route and a group; without that rule `omarchy migrate *` silently misses the
+bare route — the most dangerous member — for 19 of 71 groups.
+
+No mid-position wildcards, no `Bash(ls*)`-style space sensitivity, no `:*`
+alias. Those exist upstream because a shell command line is an unbounded string.
+This route space is closed and enumerable, which buys something better instead:
+**a matcher can be expanded against the registry and shown as the concrete
+routes it covers** — in the panel, in the resource, and in the delta.
+
+#### The ladder
+
+Six levels, one function, one table of tests. The file is not the top authority,
+which is the one place this departs from the model it copies:
+
+```
+1  blocked (requires_sudo)   no rule promotes it — decision 4
+2  never-storable            askable, never allowable — see below
+3  deny rule
+4  ask rule
+5  allow rule
+6  guardedDefault            "ask" by default; "deny" restores the old floor
+```
+
+First match wins, and **specificity never reorders it** — a narrow `allow`
+does not beat a broad `ask`, exactly as upstream. That is what keeps a broad
+`deny` from being defeatable by a narrower grant, and the property is worth more
+than the convenience it costs.
+
+Level 2 is new. `omarchy update lock` takes `<held|run> [command] [args...]`:
+its contract is *run whatever you are handed*. One "always" on it is a permanent
+grant of arbitrary execution, displayed in the review as a single calm row. The
+criterion for the set is narrow on purpose — **the route's own argument is a
+command line** — because the wider reading ("could lead to running
+attacker-chosen code") swallows `install`, `pkg aur add` and `dev link`, and
+then the store grants nothing anyone wanted to grant. `Verdict` gains
+`storable`, the panel offers no "always" for such a route, and a hand-written
+`allow` for one is a startup error rather than a silent void.
+
+#### `ask` becomes a list, and the default flips
+
+`policy.ask` was a global boolean, off by default, so that installing the plugin
+could not make a command reachable that was not reachable before. That reasoning
+was written when asking meant MCP elicitation, which does not reach this client
+at all (F23) — the switch mostly did nothing. N4 changed the facts: a question
+now means a `critical` notification naming the route, its flattened arguments
+and its resolved target, answered by a click at the desk. "Reachable" now means
+*reachable after a human reads exactly what it does* — the same gate as typing
+the command.
+
+It also has to flip, or N10 does not work. A store that fills itself through use
+never fills if nothing is ever asked, and it would sit empty exactly the way
+`policy.allow` sits empty today, behind the one config edit nobody makes.
+
+`guardedDefault: "deny"` restores the old behaviour, discoverable in the schema
+rather than buried in a comment.
+
+#### Restrictions extend forward. Grants do not.
+
+The single most useful sentence here, and the resolution of a contradiction the
+first draft of this item did not notice: it said *"new entries are denied until
+reviewed"*, while a wildcard is forward-looking by nature. Both are right.
+
+| A newly-appeared route matches… | On arrival |
+|---|---|
+| a `deny` rule | denied |
+| an `ask` rule | asks |
+| **only an `allow` rule** | **held at `ask` until acknowledged** |
+| nothing | `guardedDefault` |
+
+So `omarchy install *` keeps meaning *the install prefix* rather than freezing
+into the fifteen routes that existed the day it was typed — and the three routes
+an `omarchy update` adds under it still cost one click each, once, before they
+run. It is the precedence ladder extended across time: restrictions propagate,
+grants do not.
+
+#### The delta
+
+After a startup or a reload, compare the registry against the routes last seen.
+Three things can have changed, and the first draft described only the least
+dangerous:
+
+| Event | Example |
+|---|---|
+| new route, no rule matches | Omarchy adds `omarchy backup wipe` |
+| **a rule silently widened** | `omarchy install *` matched 15, now matches 18 |
+| **a rule went dead** | `deny: omarchy dev *` matches nothing — upstream renamed it |
+
+The second is the one to be afraid of. The third is a silent loss of protection:
+a `deny` that stopped matching looks exactly like a `deny` that is working.
+
+Also worth surfacing, and invisible today: **a new group this plugin has never
+classified is `safe` by derivation**, because `GUARDED_GROUPS` is a hand-written
+frozenset and a group upstream invented tomorrow is not in it. Such routes still
+run — a default-deny-on-upgrade is the fastest route to an uninstall — but they
+are reported at `critical` as *commands in a group this plugin has never
+classified*, which is the honest statement of what decision 4 does and does not
+cover.
+
+**Persist the route list, not a fingerprint.** A hash says something changed and
+cannot say what; every one of the three events above is derivable from the
+previous route set plus the current rules. ~426 strings.
+
+**The snapshot advances only on acknowledgement, never on startup.** Otherwise
+the notification fires once, the next boot overwrites the snapshot, and the
+evidence is gone before anybody clicked. Un-acknowledged deltas accumulate.
+
+#### A broken permissions file stops the daemon
+
+`config.py`'s doctrine — *bad configuration is reported and then ignored* — is
+right for `config.toml`, where ignoring a setting falls back to a safe default.
+It inverts here: ignoring a `deny` is a loss of protection, and "no rules" is
+not the safe floor, because a hand-written `deny` demotes routes the derivation
+calls safe.
+
+- **At startup**, any defect at all and the daemon does not start. It emits a
+  `failed` frame carrying the parse error, sends a `critical` notification
+  naming the file and the fix, and exits `78` (`EX_CONFIG`). `Service.qml` must
+  recognise that code and **stop respawning** — the existing backoff would
+  otherwise retry forever and, at the third failure, advise a `rebuild` that
+  deletes a perfectly good venv while the real cause sits in a JSON file.
+- **At reload**, keep the last-known-good and go loud. Not an inconsistency:
+  at startup there is nothing to keep, at reload there is, and it is the state
+  the user last successfully authored. The alternative drops every attached MCP
+  session — the thing N7 exists to avoid — on an editor's mid-keystroke
+  autosave, which no debounce can distinguish from a finished wrong file.
+- **A missing file, and an empty `permissions` object, are both valid** and
+  start normally. Otherwise every fresh install fails on arrival.
+
+`permissionsOk` joins `configOk` in the bar and on the `reloaded` frame. Two
+files, two health states: one lamp for both means "something is wrong" with no
+way to tell which.
+
+Because a stray comma now costs a startup, two things stop being niceties:
+`--check-permissions` with a panel button beside it, so nobody is one autosave
+away from a stopped daemon with no way to test the fix; and a parse error that
+names the offending matcher, its index, and both legal forms verbatim.
+
+#### Broken, versus valid but void
+
+A rule can be perfectly well-formed and still have no effect. Three cases, and
+they do not get the same answer:
+
+| Rule | Verdict |
+|---|---|
+| matcher matches nothing (typo, or a route not shipped yet) | loads, reads **void** |
+| matched last month, upstream renamed the route | loads, reads **void** — this is the delta signal |
+| `allow`/`ask` naming a `requires_sudo` or never-storable route | **startup error** |
+
+The first two are indistinguishable by construction — a matcher matching nothing
+today may match tomorrow — so blocking them would turn an upstream rename into a
+daemon that will not start, punishing the user for someone else's commit. The
+third is different in kind: it is the user asserting a permission the system
+will never honour, and believing you granted something you did not is worse
+than being told loudly. A `deny` naming a sudo route is **not** an error — it
+is the user agreeing with the derivation, and a redundant restriction is never
+wrong.
+
+#### What the daemon may write, and what it may never write
+
+One writer: the daemon. The panel asks by calling the service; the answer
+travels the channel N4 already built.
+
+- **`permissions.json` is never written by the daemon.** It is the user's, it is
+  tracked, and a daemon that rewrites a git-tracked file lands in somebody's
+  diff at the wrong moment.
+- **Only exact-route matchers, ever.** A click consents to what was on the
+  screen. `omarchy install app` clicked nine times never becomes
+  `omarchy install *`; if collapsing a set of grants into a wildcard is worth
+  offering, it is a suggestion the panel makes and the user accepts into their
+  own file, not an inference the daemon draws.
+- **Invariants checked at write time, not just at button-render time**: not
+  shadowed by a `deny`/`ask` in the pool, route present in the registry, not
+  sudo, not never-storable. If one fails between the question and the answer —
+  the user's own file grew a matching `deny` while the prompt was up — the call
+  is **refused**. The pool is the authority at the moment of execution, the deny
+  is newer than the question, and running something the user just forbade
+  because a click was in flight is indefensible.
+- **Never prune.** A rule whose route vanished stays, and reads dead in the
+  explainer. Pruning destroys exactly the evidence the delta exists to show.
+  A user-initiated prune is N13.
+
+#### The answer channel
+
+N4's notification carries one action (F25), so it can express *yes* but not
+*yes, always* and not *no*. N6's panel has room for all three and reaches the
+service directly. Neither should invent a second channel to the same process:
+
+```
+daemon mints token → asking frame (stdout) → service holds it in memory
+                   → notification --exec  → helper writes  <token>
+                   → panel buttons        → helper writes  <token> always | deny
+                   → daemon polls, accepts only when name and contents match
+```
+
+`bin/omarchy-mcp-consent` gains `always` and `deny` beside `approve` and stays
+**the only writer**. Its own comment is the reason — *"this is the whole answer
+channel, so it stays small and it validates what it is given"* — and that stops
+being true the moment QML writes the file too. Business rules do not move into
+the UI layer. An unrecognised verb reaching an older daemon must read as *no
+answer*, never as an accept.
+
+Two consequences: the panel gets a real **Deny**, which removes the ambiguity
+`consent.py` currently has to word around (*"may mean the user refused it or
+that they were not there"*); and the `asking` frame carries the route and its
+arguments, which is a deliberate exception to `frames.py`'s rule that frames
+carry no arguments. Consent that does not show what it consents to is not
+consent — N2 — and `prompt.message` already puts those same flattened arguments
+on the desktop, so the frame exposes nothing the notification did not.
+
+**The token never enters the state file and is never rendered.** It is a live
+capability for the length of one question.
+
+#### The surfaces
+
+The delta is small — usually zero, occasionally a handful after an update — and
+it needs a click. The full listing is 56 guarded routes, or all 426 with tiers,
+rules and sources, and it is reference material. They do not belong on the same
+surface: a toggle that expands a bar popup to 400 rows is a scroll trap.
+
+| Surface | Carries |
+|---|---|
+| bar panel, `PERMISSIONS` section | the delta, with Allow / Deny per row and **Acknowledge all** |
+| `omarchy://permissions` resource | the full listing, `@`-mentionable — decision 10, tools act, resources are read |
+| `omarchy-mcpd --permissions` | the same, for a terminal |
+
+The row that matters most is the widening one — *your existing
+`omarchy install *` already covers this and you have never seen it* — and it
+should read as a warning rather than a listing.
+
+**The rule explainer is one derivation with four readers.** `resources.py`
+already annotates every command with `tier`, `runnable` and `asks`; it gains
+`rule` (the matcher that decided) and `source` (which file it came from), and
+the panel, the resource, `omarchy_search_commands` and `--permissions` all read
+that. It answers the question a person actually opens the panel to ask — *why
+can the agent do this?* — and it is what stops the panel offering a control
+whose effect is nil: no "always" when a `deny` or `ask` rule matches, no
+"revoke" on a row that came from `permissions.json`. Instead it names the rule
+and its file, and says to edit it.
+
+#### Why N12 is a prerequisite
+
+N12 — an agent can call its own supervisor's IPC verbs — is a different item
+with N10 landed. `stop` costing the audit trail is bad; these are worse:
+
+- an **acknowledge** verb would let an agent clear its own delta and advance the
+  snapshot. It is silent by design — acknowledging raises no notification — so
+  the Q16 quarantine would evaporate with nothing on screen.
+- any **grant** verb would let an agent permit itself.
+- **`restart`**, against a daemon that now refuses to start on a bad permissions
+  file, is a denial of service on the whole permission system.
+
+So N12 first, and then a standing rule that outlives it: **N10 ships no
+mutating IPC verbs.** Acknowledge, allow and revoke exist only in the panel and
+in the helper — surfaces a person reaches at the desk. Read-only verbs are fine.
+Defence in depth, and it costs nothing, because every mutating action here
+already has a person-facing surface by design.
+
+#### Where the files live
+
+```
+~/.config/omarchy/mcp/permissions.json         yours, hand-edited, check it in
+~/.config/omarchy/mcp/permissions.local.json   daemon-written, gitignore it
+${XDG_STATE_HOME:-~/.local/state}/<plugin-id>/registry-seen.json
+```
+
+Both permission files sit in the config directory, following the
+`settings.local.json` precedent this borrows from. The house rule sends state to
+the state directory, and this bends it on purpose: a person opening
+`~/.config/omarchy/mcp/` must see **everything that decides what an agent may
+do**, in one place. Splitting the two halves of one answer across two
+directories is how somebody reads half their permissions and believes it is all
+of them. `registry-seen.json` stays in state — it genuinely is an observation of
+the machine, and it would churn a tracked diff on every Omarchy upgrade.
+
+Mode `0600` on the files, `0700` on the directory. Atomic writes — temp file in
+the same directory, `fsync`, `rename` — because a half-written permissions file
+read after a crash says something nobody chose. All three named in the README's
+uninstall section.
+
+#### Validation, and the schema
+
+`pydantic` is already in the tree by way of the SDK, so the models are the
+validator and `permissions.schema.json` is **generated** from them by
+`make schema`, with a staleness gate in `make check` exactly as `TOOLS.md` has.
+No new runtime dependency for a plugin that bootstraps its own venv, one source
+of truth, and pydantic's per-field errors are already the shape the parse error
+needs.
+
+#### Grants are recorded
+
+`activity.py` has `Sink.event`, used for `started` and `stopped`. A permanent
+grant belongs in that file at least as much as a single tool call does — it is
+what answers *"when did I allow this, and what was I looking at?"* six weeks
+later, and it survives someone hand-deleting the line from
+`permissions.local.json`:
+
+```json
+{"ts":"…","event":"permission","verb":"allow","route":"omarchy install app","via":"panel"}
+{"ts":"…","event":"permission","verb":"revoke","route":"omarchy install app","via":"panel"}
+{"ts":"…","event":"acknowledged","new":3}
+```
+
+A route and a verb, no arguments at all — narrower than a call record, not
+wider. `log.activity = false` switches it off with everything else; a second
+switch for one event kind is worse, and the file still holds the state.
+
+#### Five commits
+
+The boundary rule — tests in the same commit — makes one commit touching
+`policy.py`, `gate.py`, `prompt.py`, a new module, both QML files and four docs
+unreviewable exactly where review matters most.
+
+| | Contents | After it |
+|---|---|---|
+| **a** | `permissions.py`: schema, matcher, rule pool, the ladder, void classification. Pure, unwired | unchanged |
+| **b** | Wire it. `[policy]` leaves `config.toml`. `guardedDefault: "ask"`. Startup refusal, exit `78`, `Service.qml` stops respawning. `permissionsOk` | **the behaviour change**, alone in its diff. Guarded routes ask through N4; approve-once works |
+| **c** | Explainer data: `rule`/`source` on annotated rows, `omarchy://permissions`, `--permissions`, `--check-permissions`. Read-only | you can see why every route is what it is |
+| **d** | Answer vocabulary: helper verbs, `asking` frame, panel Allow-once / Always / Deny, `permission` events | "always" exists |
+| **e** | The delta: `registry-seen.json`, forward-quarantine, `critical` notification, panel section, acknowledge | complete |
+
+Between **b** and **e** an `allow` wildcard is fully forward-looking — the
+weaker semantics this item rejects. Named rather than discovered: the window is
+a few commits in an unreleased plugin, and `guardedDefault: "ask"` means a new
+route asks anyway unless a wildcard already covers it.
 
 #### Watch for
 
-- Migrating existing `policy.allow` / `allow_groups` values into the store on
-  first run, so nobody's working setup silently stops working.
-- Keeping `config.toml` authoritative if both are set, or dropping the TOML keys
-  outright. Two sources of truth for one decision is worse than either.
-- Mode `0600`. This file states what an agent is permitted to do.
-- Naming it in the README's uninstall section.
+- **A `config.toml` still carrying `[policy]`.** Unknown TOML keys are ignored
+  silently today, which is the silent-no-op failure this item rejects
+  everywhere else. `config.py` should know the dead keys by name and report
+  them — *"`policy.allow` moved to permissions.json; this key does nothing"* —
+  through the existing `problems` path. Report, not refuse: it is `config.toml`,
+  not the permissions file.
+- **The word "consent" is spoken for.** `consent.py` means *what an answer
+  means*. This is `permissions.py`, and nothing here borrows the other word.
+- **`SECURITY.md` gains the ladder and the forward-quarantine rule.** It is the
+  threat model, and this is now the largest thing in it.
+- **`config.example.toml` loses `[policy]`** and gains a
+  `permissions.example.json` beside it.
+- **The delta cannot be tested with one registry snapshot.** `conftest.py` pins
+  a single `commands.json` for every test. Delta tests need a second state, and
+  the cheap form is a small overlay applied to the pinned base — `{"added": […],
+  "removed": […]}` — so the mutation is readable in one screen and lives next to
+  the assertions about it. Matcher semantics need no registry at all and should
+  not drag one in.
+
+The tests are the specification, as ever. In the same commits: every sudo route
+classifies `blocked` and no rule in any of the three lists promotes it;
+`deny` → `ask` → `allow` with specificity never reordering; a rule never beats
+`blocked` or never-storable; `allow`/`ask` on a sudo or never-storable route
+refuses startup while `deny` on one is valid; a matcher matching nothing loads
+void; a malformed matcher refuses startup with an error naming it; a broken file
+at reload keeps last-known-good and never exits; a missing file and an empty
+object both start; a new route matched only by `allow` is held at `ask` while
+one matched by `deny` is denied on arrival; the snapshot advances only on
+acknowledge and un-acknowledged deltas survive a restart; the daemon writes only
+exact-route matchers; a click whose invariant fails refuses the call; an unknown
+helper verb reads as no answer; `permissions.json` is never written.
 
 ### N11 — Close the log when the shell goes down
 
@@ -1115,13 +1461,36 @@ Note that the target list is discovered at runtime from `qs ipc show`, so this
 is a check on the plugin's own id, not a static allow-list — and it belongs in
 `policy.py` or beside it, with tests in the same commit.
 
+### N13 — Prune dead rules from the panel
+
+Came out of N10, which deliberately never prunes: a rule whose route vanished is
+the delta's evidence, and a daemon that quietly edits a file is one the user
+cannot reason about.
+
+But dead rules accumulate, and the explainer will list them forever. A
+user-initiated prune belongs in the panel, next to the delta: show exactly what
+would be removed, remove it on a click, record it as a `permission` event.
+`permissions.local.json` only — the user's own file is theirs to edit.
+
+### N14 — Anti-habituation for the approval prompt
+
+Came out of N10 flipping `guardedDefault` to `ask`. An agent can drive a stream
+of guarded calls; `gate._pending` caps one prompt per session, but two attached
+clients means two prompts, and enough `critical` notifications turn a click into
+a reflex. A reflexive click is not consent.
+
+What it needs: a per-route cooldown after a decline, and after N declines in a
+window, auto-refuse the route without a prompt until the panel is opened. Its
+own state and its own failure modes, which is why it is not bolted onto N10's
+security-boundary diff.
+
 ## Deferred
 
 Wanted, but not phase 6.
 
 | Thing | Where it stands |
 |-------|-----------------|
-| Desktop-side approval surface (a panel, not just a notification) | Elicitation did prove not to reach the user — F23 — but N4 answers that with a notification's `--exec`, not a panel. A panel is still a large QML surface for a question one click already answers. Revisit only if the notification proves too easy to miss |
+| Desktop-side approval surface (a panel, not just a notification) | **Taken by N10.** The reasoning held while *yes* was the only answer: a notification's one action (F25) covers it, and a panel was a large QML surface for a question one click answers. N10 needs two answers a notification cannot carry — *yes, always* and *no* — and N6 already built the panel, so it costs a row of buttons rather than a surface |
 | Anything for the voice-driven path beyond N4 and N5 | The controller-support flow is controller → dictation → agent → this server. The last leg is an ordinary MCP client, so **nothing new is needed here to support it**. What that path does is raise the priority of two things already listed: N4's desktop notification stops being a nicety, because a user who dictated is by definition not watching the terminal where an elicitation would appear; and N5 becomes the only way to see what a lossy transcript actually caused. Revisit adding curated tools only if profiling shows the search-then-run round trip is the latency the user feels |
 | More curated tools by default | No. The 15 exist for token economy, not coverage — `omarchy_run` already reaches everything, and every added schema is charged to every client on every session. The bar stays: the generic runner structurally cannot do it, or it is called constantly |
 
