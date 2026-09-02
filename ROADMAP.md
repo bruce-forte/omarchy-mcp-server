@@ -48,10 +48,9 @@ reasons matter more than the choices when something needs revisiting.
 - [x] **5 — Hardening.** Done. Generated `TOOLS.md`, CI, `SECURITY.md`.
 - [ ] **6 — Consent and visibility.** In progress: N1–N9 done. The
       user can see what an agent did, answer for the calls that warrant it, and
-      stop the thing. N11 and N12 remain, and N10 grew into the phase's
-      largest item — five commits, its own permissions document, and N12 as a
-      prerequisite. N13 and N14 came out of it. See
-      [Next steps](#next-steps).
+      stop the thing. N12 is done; N11 remains. N10 grew into the phase's
+      largest item — five commits and its own permissions document — and N13
+      and N14 came out of it. See [Next steps](#next-steps).
 
 Tests are not a phase. `policy.py` and the auth checks are tested in the phase
 that creates them — they are the security boundary, and tests retrofitted to a
@@ -67,7 +66,7 @@ covers what an *agent* does, which is the part with consequences.
 Ordered by what unblocks what. N1–N3 stand alone and are cheap. N4 depends on
 N2 and N3. N6 depended on N5's log. N11 came out of N6, N12 out of N7.
 
-N10 depends on all of them and on **N12 landing first**. It needs N4 for the
+N10 depends on all of them and on N12, which is **done**. It needs N4 for the
 question, N6's panel for the two answers a notification cannot carry, and N7's
 holder, since permissions the daemon owns have to reach the same code a config
 reload swaps. N12 is the prerequisite because an agent that can call its own
@@ -973,8 +972,8 @@ to run*, and six items read as a list rather than a claim.
 
 Depends on N4 for the question, on N6's panel for the surface a notification
 cannot provide, and on N7's holder, since permissions the daemon owns have to
-reach the same code a config reload swaps. **N12 lands first** — see
-*Why N12 is a prerequisite* below.
+reach the same code a config reload swaps. N12 had to land first — see
+*Why N12 came first* below.
 
 Today `policy.allow` and `policy.allow_groups` are TOML arrays nobody edits, so
 in practice `guarded` means *never*. The fix is not a bigger array. It is to
@@ -1270,23 +1269,23 @@ whose effect is nil: no "always" when a `deny` or `ask` rule matches, no
 "revoke" on a row that came from `permissions.json`. Instead it names the rule
 and its file, and says to edit it.
 
-#### Why N12 is a prerequisite
+#### Why N12 came first
 
-N12 — an agent can call its own supervisor's IPC verbs — is a different item
-with N10 landed. `stop` costing the audit trail is bad; these are worse:
+N12 — an agent calling its own supervisor's IPC verbs — is a different item once
+N10 exists. `stop` costing the audit trail is bad; these are worse:
 
 - an **acknowledge** verb would let an agent clear its own delta and advance the
-  snapshot. It is silent by design — acknowledging raises no notification — so
-  the Q16 quarantine would evaporate with nothing on screen.
+  snapshot. Acknowledging is silent by design — it raises no notification — so
+  the hold-new-routes-at-`ask` rule would evaporate with nothing on screen.
 - any **grant** verb would let an agent permit itself.
-- **`restart`**, against a daemon that now refuses to start on a bad permissions
+- **`restart`**, against a daemon that refuses to start on a bad permissions
   file, is a denial of service on the whole permission system.
 
-So N12 first, and then a standing rule that outlives it: **N10 ships no
-mutating IPC verbs.** Acknowledge, allow and revoke exist only in the panel and
-in the helper — surfaces a person reaches at the desk. Read-only verbs are fine.
-Defence in depth, and it costs nothing, because every mutating action here
-already has a person-facing surface by design.
+N12 is done. What outlives it is a standing rule: **N10 ships no mutating IPC
+verbs.** Acknowledge, allow and revoke exist only in the panel and in the helper
+— surfaces a person reaches at the desk. Read-only verbs are fine. Defence in
+depth, and it costs nothing, because every mutating action here already has a
+person-facing surface by design.
 
 #### Where the files live
 
@@ -1424,42 +1423,75 @@ Low priority: nothing is lost but the closing bracket of a session, and every
 call in it is already on disk. It matters because N6 puts these lines in front
 of a person, where a run of `daemon started` rows reads as a bug.
 
-### N12 — An agent should not be able to switch off its own supervisor
+### N12 — An agent should not be able to switch off its own supervisor — done
 
-Found while writing N7's security note, and not fixed there.
+Found while writing N7's security note. The write-up named one door.
+Implementing it found three, plus a hole that had nothing to do with self-call
+and was worse than the one being closed.
 
-`omarchy_shell_call` accepts any target `qs ipc show` lists, with no exclusion
-for this plugin's own. So an agent can call:
+#### What was actually open
 
-```
-io.github.bruce-forte.mcp-server stop | start | restart | rebuild | reloadConfig
-```
+Every row below was `safe`, so an agent could do it with no question asked:
 
-`stop` is the one that matters: **an agent can stop its own audit trail.** Not
-by defeating anything — by asking the supervisor politely, through a tool this
-project ships.
+| Route | What it does |
+|-------|-------------|
+| `omarchy shell <target> <method> [args...]` | **is `omarchy_shell_call`**, as a registry route, reached through `omarchy_run` |
+| `omarchy plugin disable \| remove \| update \| clone <id>` | silences this plugin without touching the daemon |
+| `omarchy restart shell` | kills the shell, and the daemon is its child |
+| `omarchy plugin add [git-url] [--enable] [--yes]` | **clones an arbitrary repository into the shell and loads it** |
 
-It was never opened by N7. A rewritten `config.toml` could always be made to
-take effect with `restart`; live reload changed how fast, not whether. But that
-is an argument for closing it, not for leaning on it.
+The first row is why the original scope would have fixed nothing: guarding
+`omarchy_shell_call` and leaving `omarchy shell` alone closes a door beside an
+identical open one. `generic.py` builds `argv = [*cmd.argv_prefix, *call.args]`
+and `omarchy shell` has no resolver, so arguments pass straight through.
 
-What it needs is a decision rather than a patch, which is why it is its own item:
+The last row is not self-call at all. `plugin add` is a package install by
+another name — it fetches code and the shell runs it in its own process — and
+the whole `plugin` group sat outside `GUARDED_GROUPS`. An agent that cannot stop
+the daemon but can install a plugin into the shell has a *better* attack, not a
+worse one, so closing self-call without this would have been the smaller half.
 
-- **Reading stays.** `status` and `recent` are the two verbs an agent has a good
-  reason to call — "am I still connected", "what have I done" — and neither
-  changes anything.
-- **`stop`, `restart`, `rebuild`** are the plugin acting on itself. Refuse them
-  outright, or route them through the guarded tier so N4 puts the question on
-  screen. Guarded is the better answer if a legitimate use exists; refusal is
-  the better answer if none does, and none has turned up yet.
-- **`reloadConfig` is harmless** — it re-reads a file only the user writes — but
-  exempting one verb by name invites the next exemption.
-- The refusal must name the plugin and the reason, the way a guarded refusal
-  names the config file. An agent told only "no" will try the next spelling.
+#### What shipped
 
-Note that the target list is discovered at runtime from `qs ipc show`, so this
-is a check on the plugin's own id, not a static allow-list — and it belongs in
-`policy.py` or beside it, with tests in the same commit.
+**Two tier changes.** `plugin` joins `GUARDED_GROUPS`, on the same reasoning as
+`install`. `omarchy restart shell` joins `GUARDED_ROUTES`: guarded rather than
+blocked, because restarting the shell is a thing a user legitimately asks for.
+
+**A refusal that is not a tier.** `policy.self_refusal(route, args)` and
+`policy.shell_call_refusal(target, method)` decide on what a call *names*, which
+is why they cannot be part of `decide` — the same route is fine or refused
+depending on its arguments, and `decide` never sees them. `gate.authorize` calls
+it before computing the tier, so `omarchy_run` and every curated tool are
+covered; `omarchy_shell_call` calls it directly, because that tool does not go
+through the gate and relying on the other door being the only one is what this
+item exists to stop.
+
+**Refusal, not guarding.** Every mutating verb on this plugin's target has a
+button in N6's panel, so the refusal names the panel and no legitimate use is
+lost. Guarding it would have made "may I switch off the thing that records what
+I do" a question a person could be talked into answering yes to.
+
+**`status` and `recent` still answer.** Both are read-only and both answer
+something an agent has a good reason to ask — *am I still connected*, *what have
+I done*.
+
+**`clientConfig` and `copyClientConfig` are refused too**, which the write-up did
+not anticipate. They are not lifecycle verbs: `copyClientConfig` puts the bearer
+token on the clipboard, and `omarchy_clipboard_read` is a tool this project
+ships. The agent already holds a valid token, so the marginal gain is small —
+but moving a secret onto a shared surface for no reason is not a thing to leave
+in place once seen.
+
+The refusal names the plugin, says what to press, and lists what is still
+readable. An agent told only "no" tries the next spelling.
+
+#### What it does not close
+
+`omarchy plugin add` naming somebody *else's* repository is guarded now, not
+refused: a user who wants a plugin installed can approve it. That is the right
+line — the tier exists for exactly this — but it means the protection against
+hostile plugin code is a person reading a prompt, and N4's prompt is what they
+read. `policy.deny` is the way to take it off the table entirely.
 
 ### N13 — Prune dead rules from the panel
 

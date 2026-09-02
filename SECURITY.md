@@ -171,9 +171,9 @@ documentation and its own warnings, not a key someone flips without reading.
 without dropping attached sessions.
 
 This does not widen what anybody can do. Anything that could write that file
-could already make it take effect — `omarchy_shell_call` reaches this plugin's
-own IPC target, so a `restart` was always one call away (see below). What
-changed is the latency, and two rules bound it:
+could already make it take effect — `omarchy_shell_call` reached this plugin's
+own IPC target, so a `restart` was one call away. That door is closed now (see
+below), and what live reload changed is the latency. Two rules bound it:
 
 - **`blocked` is computed from the command, not from the config.** A route that
   needs sudo classifies `blocked` whatever the file says, before and after a
@@ -188,15 +188,42 @@ A file that does not parse is refused outright and the running configuration
 stands, precisely because the alternative — falling back to defaults — would
 empty the deny list and re-enable every disabled tool on a typo.
 
-### Known gap: this plugin's own IPC target
+### An agent cannot switch off its own supervision
 
-`omarchy_shell_call` accepts any target `qs ipc show` lists, and that includes
-`io.github.bruce-forte.mcp-server`. An agent can therefore call this plugin's
-own `stop`, `start`, `restart` and `rebuild` — which means it can stop its own
-audit trail. It is tracked as **N12** in `ROADMAP.md` and is not fixed here;
-the decision it needs is which verbs stay readable (`status`, `recent`) while
-the rest are refused or made guarded, and that is a design question rather than
-a patch.
+The audit trail is only worth having if the thing being audited cannot turn it
+off. Three routes reach that switch, and closing one of them would have closed
+none:
+
+| Door | What it is |
+|------|-----------|
+| `omarchy_shell_call` | this plugin's own IPC target is in `qs ipc show` like any other |
+| `omarchy shell <target> <method>` | a registry route that *is* that call, reachable through `omarchy_run` |
+| `omarchy plugin disable\|remove\|update\|clone <id>` | silences the plugin without touching the daemon |
+
+On this plugin's own target, `status` and `recent` answer and **everything else
+is refused**. Both readable verbs answer a question an agent has a good reason
+to ask — *am I still connected*, *what have I done* — and neither changes
+anything. The refused set includes `clientConfig` and `copyClientConfig`,
+which are not lifecycle verbs at all: `copyClientConfig` puts the bearer token
+on the clipboard, and `omarchy_clipboard_read` is a tool.
+
+The refusal is **not a tier and not configurable**. It is decided on what the
+call *names*, before the tier is computed, so no `policy.allow` reaches it —
+the route `omarchy shell` stays perfectly safe when it names somebody else's
+target. It refuses rather than asking, because every verb behind it has a
+button in the bar panel: the refusal tells the agent to send the user there,
+so nothing legitimate is lost.
+
+### Installing a plugin is a package install
+
+`omarchy plugin add <git-url> --enable --yes` clones a repository into the shell
+and loads it, in the shell's own process. That is arbitrary code arriving on the
+desktop, so the whole `plugin` group is **guarded** — the same tier as
+`omarchy install`, for the same reason.
+
+`omarchy restart shell` is guarded too. The daemon is a child of
+`omarchy-shell`, so restarting the shell drops every attached MCP session and
+cuts the activity log off mid-session.
 
 ## Bounds
 
