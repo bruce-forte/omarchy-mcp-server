@@ -167,7 +167,7 @@ Search Omarchy's command registry. Returns matching commands with their argument
 
 ### `omarchy_shell_call`
 
-Call a method on a running omarchy-shell IPC target, as listed by omarchy_shell_targets. Arguments are strings; a method taking JSON expects it as a single string argument. Returns whatever the method returns.
+Call a method on a running omarchy-shell IPC target, as listed by omarchy_shell_targets. Arguments are strings; a method taking JSON expects it as a single string argument. Returns whatever the method returns. This server's own target answers `status` and `recent` only: it supervises this connection and the record of what it did, so an agent cannot stop it.
 
 | Parameter | Type | |
 |-----------|------|--|
@@ -240,7 +240,7 @@ Every command is classified from `omarchy commands --json`. `omarchy_search_comm
 | `guarded` | destructive | Refused unless allowed in `~/.config/omarchy/mcp/config.toml` |
 | `safe` | everything else | Runs |
 
-Guarded groups: `apply`, `channel`, `dev`, `drive`, `hibernation`, `install`, `migrate`, `pkg`, `provision`, `reinstall`, `remove`, `setup`, `snapshot`, `update`, `upgrade`.
+Guarded groups: `apply`, `channel`, `dev`, `drive`, `hibernation`, `install`, `migrate`, `pkg`, `plugin`, `provision`, `reinstall`, `remove`, `setup`, `snapshot`, `update`, `upgrade`.
 
-Individually guarded routes: `omarchy hyprland window close all`, `omarchy system logout`, `omarchy system reboot`, `omarchy system shutdown`, `omarchy theme remove`, `omarchy toggle hybrid gpu`, `omarchy windows vm`.
+Individually guarded routes: `omarchy hyprland window close all`, `omarchy restart shell`, `omarchy system logout`, `omarchy system reboot`, `omarchy system shutdown`, `omarchy theme remove`, `omarchy toggle hybrid gpu`, `omarchy windows vm`.
 

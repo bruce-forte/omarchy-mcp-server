@@ -20,6 +20,7 @@ import pytest
 
 from omarchy_mcp import consent, gate, prompt
 from omarchy_mcp.config import Config
+from omarchy_mcp.paths import PLUGIN_ID
 from omarchy_mcp.policy import Tier, base_tier
 
 LOG = logging.getLogger("test")
@@ -148,6 +149,65 @@ class TestWhatIsNeverAsked:
         assert isinstance(decision, gate.Refused)
         assert "policy.deny" in decision.reason
         assert ctx.elicited == []
+        assert sent == []
+
+    @pytest.mark.anyio
+    async def test_a_call_that_would_stop_this_daemon_is_refused_without_asking(
+        self, commands, quiet_notifications
+    ):
+        """N12. `omarchy shell` is a `safe` route, so the tier says yes and the
+        arguments say no. Nobody is asked: an approval prompt for "may I switch
+        off the thing that records what I do" is a question that should not
+        exist."""
+        sent, _ = quiet_notifications
+        cmd = commands["omarchy shell"]
+        assert base_tier(cmd) is Tier.SAFE
+        ctx = Ctx(reply=Reply("accept"))
+
+        decision = await gate.authorize(
+            cmd,
+            [PLUGIN_ID, "stop"],
+            config=asking(),
+            ctx=ctx,
+            log=LOG,
+            offload=offload,
+        )
+
+        assert isinstance(decision, gate.Refused)
+        assert decision.tier == Tier.BLOCKED.value
+        assert PLUGIN_ID in decision.reason
+        assert ctx.elicited == []
+        assert sent == []
+
+    @pytest.mark.anyio
+    async def test_the_same_route_still_reaches_other_targets(self, commands):
+        """The refusal is about what the call names, not about the route."""
+        decision = await gate.authorize(
+            commands["omarchy shell"],
+            ["omarchy.power", "toggle"],
+            config=Config(),
+            ctx=Ctx(),
+            log=LOG,
+            offload=offload,
+        )
+        assert isinstance(decision, gate.Allowed)
+
+    @pytest.mark.anyio
+    async def test_removing_this_plugin_is_refused_before_the_guarded_tier(
+        self, commands, quiet_notifications
+    ):
+        """`plugin` is guarded now, so an allow would otherwise run this."""
+        sent, _ = quiet_notifications
+        cmd = commands["omarchy plugin remove"]
+        config = Config(ask=True, allow_groups=("plugin",), ask_timeout_s=QUICK)
+
+        decision = await gate.authorize(
+            cmd, [PLUGIN_ID, "--yes"], config=config, ctx=Ctx(reply=Reply("accept")),
+            log=LOG, offload=offload,
+        )
+
+        assert isinstance(decision, gate.Refused)
+        assert decision.tier == Tier.BLOCKED.value
         assert sent == []
 
 

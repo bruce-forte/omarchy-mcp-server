@@ -12,7 +12,9 @@ Three rules this must never lose:
 
 - **`blocked` is never asked about.** A sudo command is refused before anything
   is resolved, before a notification is raised, and before a question exists.
-  No answer makes it runnable -- decision 4.
+  No answer makes it runnable -- decision 4. A call that would switch off this
+  server's own supervision is refused on the same terms and in the same place,
+  before the tier is even computed: see `policy.self_refusal`.
 - **`policy.deny` is never asked about either.** That refusal is a decision the
   user already took, by hand, in their own config file. Re-asking it would turn
   their *no* into a question.
@@ -29,7 +31,7 @@ from pydantic import BaseModel
 
 from . import consent, prompt, resolve
 from .config import Config
-from .policy import Verdict, decide
+from .policy import Tier, Verdict, decide, self_refusal
 from .registry import Command
 
 
@@ -121,6 +123,15 @@ async def authorize(
     offload,
 ) -> Allowed | Refused:
     """Decide whether ``cmd`` runs, asking the user if that is what is called for."""
+    # Before the tier, because this is not one. `omarchy shell` and
+    # `omarchy plugin remove` are ordinary routes whose *arguments* decide
+    # whether the call would silence this daemon, and an agent that can do that
+    # does not need to defeat anything else here.
+    refusal = self_refusal(cmd.route, args)
+    if refusal is not None:
+        log.info("self-call refused route=%r", cmd.route)
+        return Refused(refusal, Tier.BLOCKED.value)
+
     verdict = decide(cmd, config)
 
     if verdict.allowed:

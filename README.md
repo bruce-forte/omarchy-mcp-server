@@ -279,11 +279,16 @@ rot when Omarchy adds commands:
 | Tier | Rule | Behaviour |
 |------|------|-----------|
 | `blocked` | needs sudo | Refused always. The daemon has no controlling terminal, so a password prompt could never be answered. Not overridable |
-| `guarded` | installs, removes, migrates, reboots | Refused unless allowed in your config, or approved by you at the time |
+| `guarded` | installs, removes, migrates, reboots, shell plugins | Refused unless allowed in your config, or approved by you at the time |
 | `safe` | everything else | Runs |
 
 `omarchy_search_commands` reports the tier of every result, so an agent can see
 what it may do before trying.
+
+**An agent cannot switch this server off.** Its own IPC target answers `status`
+and `recent`; every other verb is refused, as is any command that would disable,
+remove or replace this plugin. The refusal points at the bar panel, which is
+where you press Stop, Restart or Reload config. See [`SECURITY.md`](SECURITY.md).
 
 ### Being asked instead of refused
 

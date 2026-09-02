@@ -19,7 +19,7 @@ from mcp.types import ToolAnnotations
 
 from .. import execute, gate, registry, shell
 from ..config import Config
-from ..policy import decide
+from ..policy import decide, shell_call_refusal
 from ..settings import Settings
 from ..stats import Stats
 from ._shared import UNTRUSTED, offload, threaded
@@ -213,7 +213,9 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats | None = No
         description=(
             "Call a method on a running omarchy-shell IPC target, as listed by "
             "omarchy_shell_targets. Arguments are strings; a method taking JSON expects "
-            "it as a single string argument. Returns whatever the method returns."
+            "it as a single string argument. Returns whatever the method returns. "
+            "This server's own target answers `status` and `recent` only: it supervises "
+            "this connection and the record of what it did, so an agent cannot stop it."
         ),
         annotations=ToolAnnotations(
             readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True
@@ -249,6 +251,17 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats | None = No
                     },
                     indent=2,
                 )
+
+            # `omarchy_run` reaches the same call through the `omarchy shell`
+            # route and is stopped by `gate.authorize`. This path does not go
+            # through the gate, so it asks the same question itself rather than
+            # relying on the other door being the only one.
+            refusal = shell_call_refusal(target, method)
+            if refusal is not None:
+                rec.outcome = "refused"
+                rec.tier = "blocked"
+                log.info("self-call refused target=%r method=%r", target, method)
+                return json.dumps({"error": refusal, "tier": "blocked"}, indent=2)
 
             argv = shell.call_argv(target, method, args)
             result = execute.run(
