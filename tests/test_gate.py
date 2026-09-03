@@ -19,8 +19,8 @@ import anyio
 import pytest
 
 from omarchy_mcp import consent, gate, prompt
-from omarchy_mcp.config import Config
 from omarchy_mcp.paths import PLUGIN_ID
+from omarchy_mcp.permissions import Effect, Permissions, Rule, decide
 from omarchy_mcp.policy import Tier, base_tier
 
 LOG = logging.getLogger("test")
@@ -92,7 +92,13 @@ def consent_dir(tmp_path, monkeypatch):
 
 
 def guarded(commands):
-    return commands["omarchy system reboot"]
+    """A guarded route that is harmless if it ever does run.
+
+    Not a reboot. These tests raise real prompts through mocked senders, and one
+    behaviour change was all it took for a mocked prompt to become a real one --
+    see `conftest.py`. The example is now safe on its own terms as well as
+    guarded by the fixtures."""
+    return commands["omarchy channel current"]
 
 
 def sudo(commands):
@@ -105,8 +111,24 @@ def sudo(commands):
 QUICK = 0.2
 
 
-def asking() -> Config:
-    return Config(ask=True, ask_timeout_s=QUICK)
+def rules(*specs: tuple[Effect, str]) -> Permissions:
+    """A permissions document from (effect, matcher) pairs, in one line."""
+    return Permissions(
+        rules=tuple(
+            Rule(effect=effect, matcher=matcher, source="permissions.json", index=i)
+            for i, (effect, matcher) in enumerate(specs)
+        ),
+        ask_timeout_s=QUICK,
+    )
+
+
+def asking() -> Permissions:
+    """The default document. A guarded route asks; nothing else is configured."""
+    return Permissions(ask_timeout_s=QUICK)
+
+
+def allowing(route: str) -> Permissions:
+    return rules((Effect.ALLOW, route))
 
 
 class TestWhatIsNeverAsked:
@@ -120,7 +142,7 @@ class TestWhatIsNeverAsked:
         ctx = Ctx(reply=Reply("accept"))
 
         decision = await gate.authorize(
-            cmd, [], config=asking(), ctx=ctx, log=LOG, offload=offload
+            cmd, [], perms=asking(), ctx=ctx, log=LOG, offload=offload
         )
 
         assert isinstance(decision, gate.Refused)
@@ -132,22 +154,23 @@ class TestWhatIsNeverAsked:
     async def test_a_denied_route_is_refused_without_asking_anyone(
         self, commands, quiet_notifications
     ):
-        """`policy.deny` is a decision the user already took by hand.
+        """A `deny` rule is a decision the user already took by hand.
 
         Asking about it would turn their no into a question, and the answer
         they already gave into a default.
         """
         sent, _ = quiet_notifications
         cmd = commands["omarchy theme current"]
-        config = Config(ask=True, deny=("omarchy theme current",))
+        perms = rules((Effect.DENY, "omarchy theme current"))
         ctx = Ctx(reply=Reply("accept"))
 
         decision = await gate.authorize(
-            cmd, [], config=config, ctx=ctx, log=LOG, offload=offload
+            cmd, [], perms=perms, ctx=ctx, log=LOG, offload=offload
         )
 
         assert isinstance(decision, gate.Refused)
-        assert "policy.deny" in decision.reason
+        assert "deny" in decision.reason
+        assert "permissions.json" in decision.reason
         assert ctx.elicited == []
         assert sent == []
 
@@ -167,7 +190,7 @@ class TestWhatIsNeverAsked:
         decision = await gate.authorize(
             cmd,
             [PLUGIN_ID, "stop"],
-            config=asking(),
+            perms=asking(),
             ctx=ctx,
             log=LOG,
             offload=offload,
@@ -185,7 +208,7 @@ class TestWhatIsNeverAsked:
         decision = await gate.authorize(
             commands["omarchy shell"],
             ["omarchy.power", "toggle"],
-            config=Config(),
+            perms=asking(),
             ctx=Ctx(),
             log=LOG,
             offload=offload,
@@ -196,13 +219,13 @@ class TestWhatIsNeverAsked:
     async def test_removing_this_plugin_is_refused_before_the_guarded_tier(
         self, commands, quiet_notifications
     ):
-        """`plugin` is guarded now, so an allow would otherwise run this."""
+        """`plugin` is guarded now, so an allow rule would otherwise run this."""
         sent, _ = quiet_notifications
         cmd = commands["omarchy plugin remove"]
-        config = Config(ask=True, allow_groups=("plugin",), ask_timeout_s=QUICK)
+        perms = rules((Effect.ALLOW, "omarchy plugin *"))
 
         decision = await gate.authorize(
-            cmd, [PLUGIN_ID, "--yes"], config=config, ctx=Ctx(reply=Reply("accept")),
+            cmd, [PLUGIN_ID, "--yes"], perms=perms, ctx=Ctx(reply=Reply("accept")),
             log=LOG, offload=offload,
         )
 
@@ -211,39 +234,39 @@ class TestWhatIsNeverAsked:
         assert sent == []
 
 
-class TestAskingIsOptIn:
+class TestTheGuardedDefault:
     @pytest.mark.anyio
-    async def test_without_ask_a_guarded_route_refuses_exactly_as_before(
+    async def test_guarded_default_deny_refuses_without_asking(
         self, commands, quiet_notifications
     ):
+        """The escape hatch for anyone who wants the old floor back."""
         sent, _ = quiet_notifications
         ctx = Ctx(reply=Reply("accept"))
+        perms = Permissions(guarded_default=Effect.DENY, ask_timeout_s=QUICK)
 
         decision = await gate.authorize(
-            guarded(commands), [], config=Config(), ctx=ctx, log=LOG, offload=offload
+            guarded(commands), [], perms=perms, ctx=ctx, log=LOG, offload=offload
         )
 
         assert isinstance(decision, gate.Refused)
-        assert "config.toml" in decision.reason
         assert ctx.elicited == []
         assert sent == []
 
-    def test_the_refusal_names_asking_as_the_other_way_out(self, commands):
-        """Otherwise nobody discovers the feature: N10's whole premise is that
-        the config arrays are never edited."""
-        from omarchy_mcp.policy import decide
-
-        assert "policy.ask" in decide(guarded(commands), Config()).reason
+    def test_the_refusal_names_the_file_and_the_rule_to_write(self, commands):
+        """Otherwise nobody discovers the feature. An agent reads this and can
+        tell the user exactly what to add."""
+        reason = decide(guarded(commands), Permissions(guarded_default=Effect.DENY)).reason
+        assert "permissions.json" in reason
+        assert '"allow"' in reason
+        assert guarded(commands).route in reason
 
     def test_a_route_that_will_ask_is_published_as_runnable(self, commands):
         """A careful agent does not call something reported as not runnable, so
         publishing the refusal would mean the prompt never fires."""
-        from omarchy_mcp.policy import decide
-
-        verdict = decide(guarded(commands), asking())
-        assert verdict.allowed is False
-        assert gate.asks(verdict, asking()) is True
-        assert gate.asks(verdict, Config()) is False
+        outcome = decide(guarded(commands), asking())
+        assert outcome.allowed is False
+        assert outcome.asks is True
+        assert decide(guarded(commands), Permissions(guarded_default=Effect.DENY)).asks is False
 
 
 class TestEveryAnswer:
@@ -260,7 +283,7 @@ class TestEveryAnswer:
     async def test_accept_runs_it(self, commands, quiet_notifications):
         ctx = self._ctx("accept")
         decision = await gate.authorize(
-            guarded(commands), [], config=asking(), ctx=ctx, log=LOG, offload=offload
+            guarded(commands), [], perms=asking(), ctx=ctx, log=LOG, offload=offload
         )
         assert isinstance(decision, gate.Allowed)
         assert len(ctx.elicited) == 1
@@ -272,9 +295,8 @@ class TestEveryAnswer:
     async def test_a_pre_allowed_route_records_no_consent(self, commands):
         """Nobody was asked, so nothing was answered."""
         cmd = guarded(commands)
-        config = Config(allow=(cmd.route,))
         decision = await gate.authorize(
-            cmd, [], config=config, ctx=self._ctx(None), log=LOG, offload=offload
+            cmd, [], perms=allowing(cmd.route), ctx=self._ctx(None), log=LOG, offload=offload
         )
         assert isinstance(decision, gate.Allowed)
         assert decision.consent is None
@@ -282,7 +304,7 @@ class TestEveryAnswer:
     @pytest.mark.anyio
     async def test_decline_refuses_and_says_the_user_refused(self, commands, quiet_notifications):
         decision = await gate.authorize(
-            guarded(commands), [], config=asking(), ctx=self._ctx("decline"), log=LOG,
+            guarded(commands), [], perms=asking(), ctx=self._ctx("decline"), log=LOG,
             offload=offload,
         )
         assert isinstance(decision, gate.Refused)
@@ -292,7 +314,7 @@ class TestEveryAnswer:
     @pytest.mark.anyio
     async def test_a_dismissal_is_not_a_refusal(self, commands, quiet_notifications):
         decision = await gate.authorize(
-            guarded(commands), [], config=asking(), ctx=self._ctx("cancel"), log=LOG,
+            guarded(commands), [], perms=asking(), ctx=self._ctx("cancel"), log=LOG,
             offload=offload,
         )
         assert isinstance(decision, gate.Refused)
@@ -304,7 +326,7 @@ class TestEveryAnswer:
         """Only the word accept runs anything, so an action added upstream
         fails closed instead of falling through."""
         decision = await gate.authorize(
-            guarded(commands), [], config=asking(), ctx=self._ctx("approve-ish"), log=LOG,
+            guarded(commands), [], perms=asking(), ctx=self._ctx("approve-ish"), log=LOG,
             offload=offload,
         )
         assert isinstance(decision, gate.Refused)
@@ -315,7 +337,7 @@ class TestEveryAnswer:
     ):
         with anyio.fail_after(5):  # the test itself must not hang if this breaks
             decision = await gate.authorize(
-                guarded(commands), [], config=asking(), ctx=self._ctx(None), log=LOG,
+                guarded(commands), [], perms=asking(), ctx=self._ctx(None), log=LOG,
                 offload=offload,
             )
         assert isinstance(decision, gate.Refused)
@@ -353,7 +375,7 @@ class TestWhichAskerIsUsed:
 
         with anyio.fail_after(5):
             decision = await gate.authorize(
-                guarded(commands), [], config=asking(), ctx=Ctx(), log=LOG, offload=offload
+                guarded(commands), [], perms=asking(), ctx=Ctx(), log=LOG, offload=offload
             )
 
         assert isinstance(decision, gate.Refused)
@@ -407,7 +429,7 @@ class TestTheNotificationComesDown:
         ctx = Ctx(can_send_request=True, caps=Caps(Elicitation(form=object())), reply=Reply("accept"))
 
         await gate.authorize(
-            guarded(commands), [], config=asking(), ctx=ctx, log=LOG, offload=offload
+            guarded(commands), [], perms=asking(), ctx=ctx, log=LOG, offload=offload
         )
 
         assert len(dismissed) == 1
@@ -420,7 +442,7 @@ class TestTheNotificationComesDown:
         _, dismissed = quiet_notifications
         with anyio.fail_after(5):
             await gate.authorize(
-                guarded(commands), [], config=asking(), ctx=Ctx(), log=LOG, offload=offload
+                guarded(commands), [], perms=asking(), ctx=Ctx(), log=LOG, offload=offload
             )
         assert len(dismissed) == 1
 
@@ -437,7 +459,7 @@ class TestTheNotificationComesDown:
             await gate.authorize(
                 guarded(commands),
                 [],
-                config=Config(ask=True, ask_timeout_s=600),
+                perms=Permissions(ask_timeout_s=600),
                 ctx=Ctx(),
                 log=LOG,
                 offload=offload,
@@ -458,7 +480,7 @@ class TestTheNotificationComesDown:
                 await gate.authorize(
                     guarded(commands),
                     [],
-                    config=Config(ask=True, ask_timeout_s=600),
+                    perms=Permissions(ask_timeout_s=600),
                     ctx=Ctx(),
                     log=LOG,
                     offload=offload,
@@ -488,7 +510,7 @@ class TestOnlyOneQuestionAtATime:
                     await gate.authorize(
                         guarded(commands),
                         [],
-                        config=Config(ask=True, ask_timeout_s=600),
+                        perms=Permissions(ask_timeout_s=600),
                         ctx=ctx,
                         log=LOG,
                         offload=offload,
@@ -541,7 +563,7 @@ class TestWhatComesBack:
     ):
         ctx = Ctx(can_send_request=True, caps=Caps(Elicitation(form=object())), reply=Reply("decline"))
         decision = await gate.authorize(
-            guarded(commands), [], config=asking(), ctx=ctx, log=LOG, offload=offload
+            guarded(commands), [], perms=asking(), ctx=ctx, log=LOG, offload=offload
         )
         body = json.loads(json.dumps(decision.as_dict()))
         assert body["consent"] == "declined"
@@ -558,7 +580,7 @@ class TestWhatComesBack:
         ctx = Ctx(can_send_request=True, caps=Caps(Elicitation(form=object())), reply=Reply("accept"))
 
         decision = await gate.authorize(
-            cmd, ["Tokoy Night"], config=asking(), ctx=ctx, log=LOG, offload=offload
+            cmd, ["Tokoy Night"], perms=asking(), ctx=ctx, log=LOG, offload=offload
         )
 
         assert isinstance(decision, gate.Refused)

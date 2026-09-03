@@ -14,6 +14,7 @@ import anyio.to_thread
 
 from .. import execute, gate, registry
 from ..config import Config
+from ..permissions import Permissions
 from ..stats import Stats
 
 #: Appended to every tool whose result carries bytes this project did not
@@ -61,6 +62,7 @@ async def run_route(
     args: list[str],
     *,
     config: Config,
+    perms: Permissions,
     stats: Stats,
     log,
     tool: str,
@@ -85,7 +87,7 @@ async def run_route(
             )
 
         decision = await gate.authorize(
-            cmd, args, config=config, ctx=ctx, log=log, offload=offload
+            cmd, args, perms=perms, ctx=ctx, log=log, offload=offload
         )
         if isinstance(decision, gate.Refused):
             rec.outcome = "refused"
@@ -95,7 +97,7 @@ async def run_route(
             return json.dumps(decision.as_dict(), indent=2)
 
         call = decision.call
-        rec.tier = decision.verdict.tier.value
+        rec.tier = decision.outcome.tier.value
         rec.consent = decision.consent
         # The resolved arguments, not the ones asked for: what actually ran.
         rec.args = tuple(call.args)

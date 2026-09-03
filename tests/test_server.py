@@ -14,6 +14,8 @@ import pytest
 from starlette.testclient import TestClient
 
 from omarchy_mcp.config import Config
+from omarchy_mcp.permissions import Effect, Permissions
+from omarchy_mcp.settings import Settings
 from omarchy_mcp.server import build, client_config_json, client_config_line
 
 TOKEN = "test-token"
@@ -24,10 +26,19 @@ PROTOCOL = "2025-06-18"
 #: like a loopback client or every request is a 421 Misdirected Request.
 BASE_URL = "http://127.0.0.1:8765"
 
+#: The test server refuses guarded routes rather than asking about them.
+#:
+#: Production asks, and `test_gate.py` covers every way that question can be
+#: answered -- with a short deadline, because a test that waits out a real one
+#: adds a minute to the suite for nothing. Here the interesting property is the
+#: refusal itself, and a server that asks would park each of these tests on a
+#: 60-second timeout instead.
+REFUSING = Permissions(guarded_default=Effect.DENY)
+
 
 @pytest.fixture
 def client():
-    app = build(Config(), TOKEN, logging.getLogger("test"))
+    app = build(Settings(Config(), REFUSING), TOKEN, logging.getLogger("test"))
     with TestClient(app, base_url=BASE_URL) as client:
         yield client
 
@@ -233,15 +244,23 @@ def test_run_refuses_a_sudo_command(client, session):
 
 
 def test_run_refuses_a_guarded_command(client, session):
+    """`omarchy channel current` rather than a reboot, deliberately.
+
+    This test used to name `omarchy system reboot`, on the reasonable
+    assumption that a guarded route is refused and nothing happens. When the
+    guarded default became "ask", the refusal became a real approval
+    notification on a real desktop; it was clicked and the machine rebooted.
+    `conftest.py` now makes that impossible, and the example is harmless too.
+    """
     response = rpc(
         client,
         "tools/call",
-        {"name": "omarchy_run", "arguments": {"route": "omarchy system reboot"}},
+        {"name": "omarchy_run", "arguments": {"route": "omarchy channel current"}},
         session=session,
     )
     payload = json.loads(parse(response)["result"]["content"][0]["text"])
     assert payload["tier"] == "guarded"
-    assert "config.toml" in payload["error"]
+    assert "permissions.json" in payload["error"]
 
 
 def test_run_suggests_alternatives_for_an_unknown_route(client, session):
@@ -317,7 +336,7 @@ def test_health_reports_call_counts():
     from omarchy_mcp.stats import Stats
 
     stats = Stats()
-    app = build(Config(), TOKEN, logging.getLogger("test"), stats=stats)
+    app = build(Settings(Config(), REFUSING), TOKEN, logging.getLogger("test"), stats=stats)
     with TestClient(app, base_url=BASE_URL) as client:
         assert client.get("/health").json()["calls"] == 0
 
@@ -346,7 +365,7 @@ def test_health_records_the_route_that_was_run():
     from omarchy_mcp.stats import Stats
 
     stats = Stats()
-    app = build(Config(), TOKEN, logging.getLogger("test"), stats=stats)
+    app = build(Settings(Config(), REFUSING), TOKEN, logging.getLogger("test"), stats=stats)
     with TestClient(app, base_url=BASE_URL) as client:
         response = rpc(
             client,
@@ -360,9 +379,9 @@ def test_health_records_the_route_that_was_run():
         rpc(
             client,
             "tools/call",
-            {"name": "omarchy_run", "arguments": {"route": "omarchy system reboot"}},
+            {"name": "omarchy_run", "arguments": {"route": "omarchy channel current"}},
             session=sid,
         )
         body = client.get("/health").json()
 
-    assert body["last_route"] == "omarchy system reboot"
+    assert body["last_route"] == "omarchy channel current"

@@ -17,10 +17,10 @@ from __future__ import annotations
 
 import json
 
-from . import desktop, gate, registry, shell
+from . import desktop, registry, shell
 from .config import Config
+from .permissions import describe
 from .settings import Settings
-from .policy import decide
 from .status import gather
 
 
@@ -150,21 +150,9 @@ def register(mcp, settings: Settings, log) -> None:
         Reading the raw registry would leave the reader to work out which
         commands an agent can actually run; that is the interesting half.
         """
-        rows = []
-        for cmd in sorted(commands, key=lambda c: c.route):
-            verdict = decide(cmd, settings.current)
-            row = registry.as_dict(cmd)
-            row["tier"] = verdict.tier.value
-            # A route that will ask is runnable: reporting it as refused would
-            # make a careful agent never call it, so the prompt would never
-            # fire and the feature would be invisible to the only caller.
-            asks = gate.asks(verdict, settings.current)
-            row["runnable"] = verdict.allowed or asks
-            if asks:
-                row["asks"] = True
-                row["note"] = (
-                    "This call pauses while the user is asked to approve it, and is "
-                    "refused if they decline or do not answer."
-                )
-            rows.append(row)
+        perms = settings.permissions
+        rows = [
+            registry.as_dict(cmd) | describe(cmd, perms)
+            for cmd in sorted(commands, key=lambda c: c.route)
+        ]
         return {"count": len(rows), "commands": rows}

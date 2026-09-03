@@ -22,6 +22,7 @@ import pytest
 from omarchy_mcp import activity
 from omarchy_mcp.activity import Record, Sink
 from omarchy_mcp.config import Config
+from omarchy_mcp.permissions import Effect, Permissions
 from omarchy_mcp.settings import Settings
 from omarchy_mcp.tools.catalogue import Catalogue
 from omarchy_mcp.stats import Stats
@@ -366,8 +367,9 @@ class TestWhatTheToolsWrite:
         mcp = MCPServer(name="t")
         stats = Stats(sink=sink)
         catalogue = Catalogue()
-        desktop_tools.register(catalogue, Settings(Config()), LOG, stats)
-        generic.register(catalogue, Settings(Config()), LOG, stats)
+        settings = Settings(Config(), Permissions(guarded_default=Effect.DENY))
+        desktop_tools.register(catalogue, settings, LOG, stats)
+        generic.register(catalogue, settings, LOG, stats)
         catalogue.apply(mcp, Config())
         return mcp
 
@@ -401,12 +403,12 @@ class TestWhatTheToolsWrite:
         """A guarded route that was blocked is more interesting than a safe one
         that ran, and it must not be recorded as a success."""
         written = await self._log_of(
-            tools, sink, "omarchy_run", {"route": "omarchy system reboot"}
+            tools, sink, "omarchy_run", {"route": "omarchy channel current"}
         )
         record = json.loads(written.splitlines()[0])
         assert record["outcome"] == "refused"
         assert record["tier"] == "guarded"
-        assert record["route"] == "omarchy system reboot"
+        assert record["route"] == "omarchy channel current"
 
     @pytest.mark.anyio
     async def test_a_route_that_does_not_exist_is_an_error_not_a_failure(self, tools, sink):

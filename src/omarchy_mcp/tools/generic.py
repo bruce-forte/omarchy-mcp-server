@@ -19,7 +19,8 @@ from mcp.types import ToolAnnotations
 
 from .. import execute, gate, registry, shell
 from ..config import Config
-from ..policy import decide, shell_call_refusal
+from ..permissions import describe
+from ..policy import shell_call_refusal
 from ..settings import Settings
 from ..stats import Stats
 from ._shared import UNTRUSTED, offload, threaded
@@ -50,29 +51,14 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats | None = No
         with stats.call("omarchy_search_commands") as rec:
             # One snapshot per call: what this reports about a route -- its tier,
             # whether it is runnable -- is a claim about the config in force now.
-            config = settings.current
+            perms = settings.permissions
             rec.args = (query,) if query else ()
             limit = max(1, min(limit, 100))
             hits = registry.search(query, limit=limit, include_hidden=include_hidden)
             rows = []
             for cmd in hits:
-                verdict = decide(cmd, config)
-                row = registry.as_dict(cmd)
-                row["tier"] = verdict.tier.value
-                # One derivation, shared with the commands resource. A route that
-                # will ask is runnable, or a careful agent reads "refused", never
-                # calls it, and the question is never put to anyone.
-                asks = gate.asks(verdict, config)
-                row["runnable"] = verdict.allowed or asks
-                if asks:
-                    row["asks"] = True
-                    row["note"] = (
-                        "This call pauses while the user is asked to approve it, and is "
-                        "refused if they decline or do not answer."
-                    )
-                elif not verdict.allowed:
-                    row["refusal"] = verdict.reason
-                rows.append(row)
+                # One derivation, shared with the commands resource.
+                rows.append(registry.as_dict(cmd) | describe(cmd, perms))
             return json.dumps({"query": query, "count": len(rows), "commands": rows}, indent=2)
 
     @tools.tool(
@@ -121,7 +107,7 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats | None = No
             # its route must not skip a check that reaching it by a tool applies --
             # including the one that asks the user.
             decision = await gate.authorize(
-                cmd, args, config=config, ctx=ctx, log=log, offload=offload
+                cmd, args, perms=settings.permissions, ctx=ctx, log=log, offload=offload
             )
             if isinstance(decision, gate.Refused):
                 rec.outcome = "refused"
@@ -131,7 +117,7 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats | None = No
                 return json.dumps(decision.as_dict(), indent=2)
 
             call = decision.call
-            rec.tier = decision.verdict.tier.value
+            rec.tier = decision.outcome.tier.value
             rec.consent = decision.consent
             rec.args = tuple(call.args)
             if call.target is not None:

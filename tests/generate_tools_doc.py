@@ -141,8 +141,8 @@ async def render() -> str:
         "terminal, so a password prompt could never be answered. Not overridable |"
     )
     out.append(
-        "| `guarded` | destructive | Refused unless allowed in "
-        "`~/.config/omarchy/mcp/config.toml` |"
+        "| `guarded` | destructive | Asked about on the desktop, unless "
+        "`~/.config/omarchy/mcp/permissions.json` says otherwise |"
     )
     out.append("| `safe` | everything else | Runs |")
     out.append("")

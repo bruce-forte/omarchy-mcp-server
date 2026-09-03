@@ -150,18 +150,26 @@ def build(
             Names of tools and counts only: what the policy now says is in the
             file the person just edited.
             """
-            frames.reloaded(len(catalogue.present), len(catalogue.declared), not result.rejected)
+            frames.reloaded(
+                len(catalogue.present),
+                len(catalogue.declared),
+                not result.rejected,
+                permissions_ok=not result.permissions_rejected,
+            )
             sink = getattr(stats, "sink", None)
             if sink is None:
                 return
             if result.rejected:
                 sink.event("config_rejected")
+            if result.permissions_rejected:
+                sink.event("permissions_rejected")
+            if result.rejected or result.permissions_rejected:
                 return
             sink.event(
                 "reloaded",
                 added=list(result.tools.added),
                 removed=list(result.tools.removed),
-                policy=result.policy_changed,
+                permissions=result.permissions_changed,
             )
 
         async def announce() -> None:

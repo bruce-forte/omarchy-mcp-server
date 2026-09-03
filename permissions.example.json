@@ -1,0 +1,19 @@
+{
+  "$schema": "https://raw.githubusercontent.com/bruce-forte/omarchy-mcp-server/master/permissions.schema.json",
+
+  "permissions": {
+    "guardedDefault": "ask",
+
+    "deny": [
+      { "kind": "route", "matcher": "omarchy dev *" }
+    ],
+
+    "ask": [
+      { "kind": "route", "matcher": "omarchy install *" }
+    ],
+
+    "allow": [
+      { "kind": "route", "matcher": "omarchy theme *" }
+    ]
+  }
+}

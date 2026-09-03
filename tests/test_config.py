@@ -28,11 +28,6 @@ def test_values_are_read(tmp_path):
         port = 9000
         timeout_ms = 5000
 
-        [policy]
-        allow = ["omarchy system reboot"]
-        allow_groups = ["install"]
-        deny = ["omarchy launch browser"]
-
         [tools]
         disabled = ["screen_text"]
 
@@ -43,9 +38,6 @@ def test_values_are_read(tmp_path):
     cfg = load(path)
     assert cfg.port == 9000
     assert cfg.timeout_ms == 5000
-    assert cfg.allow == ("omarchy system reboot",)
-    assert cfg.allow_groups == ("install",)
-    assert cfg.deny == ("omarchy launch browser",)
     assert cfg.disabled_tools == ("screen_text",)
     assert cfg.log_level == "debug"
     assert cfg.problems == ()
@@ -61,10 +53,33 @@ def test_out_of_range_port_falls_back(tmp_path):
 
 def test_wrong_types_fall_back(tmp_path):
     path = tmp_path / "config.toml"
-    path.write_text('[policy]\nallow = "omarchy system reboot"\n')
+    path.write_text('[tools]\ndisabled = "screen_text"\n')
     cfg = load(path)
-    assert cfg.allow == ()
+    assert cfg.disabled_tools == ()
     assert cfg.problems
+
+
+def test_a_leftover_policy_table_is_reported_by_name(tmp_path):
+    """An unknown TOML key is dropped silently, which is how somebody comes to
+    believe they still have a deny list. These moved to permissions.json, and
+    saying so is the whole point of noticing them."""
+    path = tmp_path / "config.toml"
+    path.write_text('[policy]\nallow = ["omarchy install app"]\ndeny = ["omarchy launch browser"]\n')
+    cfg = load(path)
+
+    assert cfg.parsed, "a dead key is not a broken file"
+    problems = "\n".join(cfg.problems)
+    assert "policy.allow" in problems
+    assert "policy.deny" in problems
+    assert "permissions.json" in problems
+
+
+def test_a_leftover_ask_key_names_its_replacement(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text("[policy]\nask = true\nask_timeout_s = 120\n")
+    problems = "\n".join(load(path).problems)
+    assert "guardedDefault" in problems
+    assert "askTimeoutSeconds" in problems
 
 
 def test_unknown_log_level_falls_back(tmp_path):

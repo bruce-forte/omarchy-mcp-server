@@ -61,7 +61,8 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats) -> None:
 
         return await run_route(
             "omarchy notification send", args,
-            config=settings.current, stats=stats, log=log, tool="omarchy_notify", ctx=ctx,
+            config=settings.current, perms=settings.permissions,
+            stats=stats, log=log, tool="omarchy_notify", ctx=ctx,
         )
 
     @tools.tool(
@@ -100,5 +101,6 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats) -> None:
 
         return await run_route(
             "omarchy osd", args,
-            config=settings.current, stats=stats, log=log, tool="omarchy_osd", ctx=ctx,
+            config=settings.current, perms=settings.permissions,
+            stats=stats, log=log, tool="omarchy_osd", ctx=ctx,
         )

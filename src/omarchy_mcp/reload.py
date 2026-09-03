@@ -1,4 +1,4 @@
-"""Re-reading the config file while the daemon is serving.
+"""Re-reading the config and the permissions while the daemon is serving.
 
 `enabled(...)` used to be evaluated when tools were registered, so a tool
 switched off in `config.toml` was never registered and never appeared in
@@ -13,7 +13,7 @@ What reloads, and what does not:
 | Key | Live |
 |-----|------|
 | `tools.disabled` | yes -- the tool is added or removed |
-| `policy.allow`, `allow_groups`, `deny`, `ask`, `ask_timeout_s` | yes |
+| everything in `permissions.json` / `permissions.local.json` | yes |
 | `server.timeout_ms`, `max_output_b` | yes |
 | `server.port` | no -- the socket is already bound |
 | `log.activity_file`, `activity_max_bytes` | no -- the sink is already open |
@@ -22,12 +22,20 @@ The restart-only keys are not refused or reported specially. They are read into
 the live config like everything else and simply have no reader left; saying so
 in the README is cheaper than machinery for an edit nobody makes twice.
 
-Two failure rules, because the file is edited by hand while the daemon reads it:
+Two files, two failure rules, because both are edited by hand while the daemon
+reads them:
 
 - **An unparseable file changes nothing.** `config.load` returns defaults for a
   file it cannot read, which is right at startup and wrong here: a stray
-  keystroke would empty `policy.deny` and switch every disabled tool back on.
-  The running config stands, and the person is told.
+  keystroke would switch every disabled tool back on. The running config
+  stands, and the person is told.
+- **A defective permissions document changes nothing either, and never ends the
+  daemon.** At *startup* any defect refuses to start, because there is no
+  known-good document to fall back to and "no rules" is not a safe floor -- a
+  hand-written `deny` demotes routes the derivation calls safe. At *reload*
+  there is one, and it is the document the user last successfully wrote, so it
+  stands. An editor's mid-keystroke autosave must not drop every attached MCP
+  session; no debounce can tell that from a finished wrong file.
 - **A file that has gone missing waits one poll.** Editors write a temporary
   file and rename it over the target, so "absent" is a normal thing to catch
   mid-save. Absent twice in a row is a deliberate deletion, which resets to
@@ -44,15 +52,16 @@ from __future__ import annotations
 import signal
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import anyio
 import anyio.to_thread
 
-from . import config as config_module, notify
+from . import config as config_module, notify, permissions as permissions_module
 from .config import Config
-from .paths import CONFIG_FILE
+from .paths import CONFIG_FILE, PERMISSIONS_FILES
+from .permissions import Permissions, PermissionsError
 from .settings import Settings
 from .tools.catalogue import Catalogue, Change
 
@@ -61,28 +70,19 @@ from .tools.catalogue import Catalogue, Change
 #: enough that this is one `read()` of a small file every two seconds.
 POLL_S = 2.0
 
-#: The keys whose change alters what an agent is allowed to run. A change to any
-#: of these is announced on the desktop -- see `_policy_of`.
-POLICY_KEYS = ("allow", "allow_groups", "deny", "ask", "ask_timeout_s")
-
-
-def _policy_of(config: Config) -> tuple:
-    return tuple(getattr(config, key) for key in POLICY_KEYS)
-
-
-def _describe(before: Config, after: Config) -> str:
-    """What changed about the rules, in the words of the config file."""
+def _describe(before: Permissions, after: Permissions) -> str:
+    """What changed about the rules, in the words of the document."""
     parts = []
-    for key in ("allow", "allow_groups", "deny"):
-        was, now = set(getattr(before, key)), set(getattr(after, key))
-        for added in sorted(now - was):
-            parts.append(f"+{key}: {added}")
-        for gone in sorted(was - now):
-            parts.append(f"-{key}: {gone}")
-    if before.ask != after.ask:
-        parts.append(f"ask: {str(after.ask).lower()}")
+    was = {(r.effect.value, r.matcher) for r in before.rules}
+    now = {(r.effect.value, r.matcher) for r in after.rules}
+    for effect, matcher in sorted(now - was):
+        parts.append(f"+{effect}: {matcher}")
+    for effect, matcher in sorted(was - now):
+        parts.append(f"-{effect}: {matcher}")
+    if before.guarded_default is not after.guarded_default:
+        parts.append(f"guardedDefault: {after.guarded_default.value}")
     if before.ask_timeout_s != after.ask_timeout_s:
-        parts.append(f"ask_timeout_s: {after.ask_timeout_s}")
+        parts.append(f"askTimeoutSeconds: {after.ask_timeout_s}")
     return ", ".join(parts)
 
 
@@ -94,9 +94,13 @@ class Reloaded:
     tools: Change = Change()
     policy_changed: bool = False
     rejected: bool = False
+    #: The permissions document was re-read and says something new.
+    permissions_changed: bool = False
+    #: It was re-read and would not load. The previous one still stands.
+    permissions_rejected: bool = False
 
     def __bool__(self) -> bool:
-        return bool(self.tools) or self.policy_changed
+        return bool(self.tools) or self.policy_changed or self.permissions_changed
 
 
 class Reloader:
@@ -110,6 +114,7 @@ class Reloader:
         log,
         *,
         path: Path = CONFIG_FILE,
+        permission_paths: tuple[Path, ...] = PERMISSIONS_FILES,
         on_change: Callable[[Reloaded], None] | None = None,
         announce: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
@@ -127,6 +132,10 @@ class Reloader:
         self._absences = 0
         self._rejected = False
         self._wake: anyio.Event | None = None
+
+        self._permission_paths = tuple(permission_paths)
+        self._permissions_seen = self._read_permissions()
+        self._permissions_rejected = False
 
     # -- reading -------------------------------------------------------------
 
@@ -146,10 +155,94 @@ class Reloader:
             self._log.warning("%s could not be read: %s", self._path, exc)
             return self._seen
 
+    def _read_permissions(self) -> tuple[bytes | None, ...]:
+        """Both permission files' bytes, in order. Missing reads as None.
+
+        Both together, because they are pooled into one document: a rule added
+        to one and removed from the other is a single change, and reading them
+        separately would apply half of it.
+        """
+        contents = []
+        for path in self._permission_paths:
+            try:
+                contents.append(path.read_bytes())
+            except FileNotFoundError:
+                contents.append(None)
+            except OSError as exc:
+                self._log.warning("%s could not be read: %s", path, exc)
+                contents.append(b"")
+        return tuple(contents)
+
     # -- the decision --------------------------------------------------------
 
     def poll(self) -> Reloaded | None:
         """Look once. Returns None when there was nothing to do."""
+        result = self._poll_config()
+        permissions = self._poll_permissions()
+
+        if permissions is not None:
+            changed, rejected = permissions
+            base = result if result is not None else Reloaded(config=self._settings.current)
+            result = replace(
+                base, permissions_changed=changed, permissions_rejected=rejected
+            )
+
+        if result is not None and self._on_change is not None:
+            self._on_change(result)
+        return result
+
+    def _poll_permissions(self) -> tuple[bool, bool] | None:
+        """Re-read the permissions. Returns (changed, rejected), or None.
+
+        Unlike the config file there is no absence dance: a missing permissions
+        file is a valid document -- it says "no rules" -- so a rename caught
+        mid-save reads as an empty document for one poll and corrects itself on
+        the next. The cost of that is bounded by `POLL_S`; the cost of guessing
+        is a window where the user's rules are not the ones in force.
+        """
+        raw = self._read_permissions()
+        if raw == self._permissions_seen:
+            return None
+        self._permissions_seen = raw
+
+        try:
+            loaded = permissions_module.load(self._permission_paths)
+        except PermissionsError as exc:
+            # Never fatal here. At startup this refuses to start, because there
+            # is nothing known-good to keep; by now there is, and it is what the
+            # user last successfully wrote.
+            self._log.error("permissions not applied: %s", exc)
+            if not self._permissions_rejected:
+                self._permissions_rejected = True
+                notify.send(
+                    "MCP server: permissions not applied",
+                    f"{exc}\n\nThe daemon is still running the permissions it had.",
+                    urgency="critical",
+                    log=self._log,
+                )
+            return (False, True)
+
+        previous = self._settings.swap_permissions(loaded)
+        changed = _describe(previous, loaded)
+        if changed:
+            self._log.info("permissions reloaded: %s", changed)
+            # Announced in both directions. A widening is the one that matters
+            # most, but a narrowing explains a refusal that is about to happen
+            # and would otherwise look like a bug.
+            notify.send("MCP server: permissions changed", changed, log=self._log)
+        else:
+            self._log.info("permissions reloaded: nothing an agent can tell apart")
+
+        if self._permissions_rejected:
+            self._permissions_rejected = False
+            notify.send(
+                "MCP server: permissions applied",
+                "The permissions document loads again and is now in force.",
+                log=self._log,
+            )
+        return (bool(changed), False)
+
+    def _poll_config(self) -> Reloaded | None:
         raw = self._read()
 
         if raw is None:
@@ -165,12 +258,9 @@ class Reloader:
         self._seen = raw
 
         config = config_module.load(self._path)
-        result = self._reject(config) if not config.parsed else self._accept(config)
-        if self._on_change is not None:
-            # Told about a rejection too: "your file was not applied" is the
-            # thing the person most needs the bar to say.
-            self._on_change(result)
-        return result
+        # A rejection is reported too: "your file was not applied" is the thing
+        # the person most needs the bar to say.
+        return self._reject(config) if not config.parsed else self._accept(config)
 
     def _reject(self, config: Config) -> Reloaded:
         """A file that does not parse leaves the daemon exactly as it was."""
@@ -191,10 +281,8 @@ class Reloader:
         for problem in config.problems:
             self._log.warning("%s: %s", self._path, problem)
 
-        previous = self._settings.swap(config)
+        self._settings.swap(config)
         tools = self._catalogue.apply(self._mcp, config)
-        policy_changed = _policy_of(previous) != _policy_of(config)
-
         if tools:
             self._log.info(
                 "config reloaded: tools +%s -%s (%d offered)",
@@ -202,18 +290,7 @@ class Reloader:
                 list(tools.removed),
                 len(self._catalogue.present),
             )
-        if policy_changed:
-            summary = _describe(previous, config)
-            self._log.info("config reloaded: policy %s", summary)
-            # Announced in both directions. A widening is the one that matters
-            # most, but a narrowing explains a refusal that is about to happen
-            # and would otherwise look like a bug.
-            notify.send(
-                "MCP server: policy changed",
-                summary or "The rules an agent runs under have changed.",
-                log=self._log,
-            )
-        if not tools and not policy_changed:
+        if not tools:
             self._log.info("config reloaded: nothing an agent can tell apart")
 
         if self._rejected:
@@ -224,7 +301,7 @@ class Reloader:
                 log=self._log,
             )
 
-        return Reloaded(config=config, tools=tools, policy_changed=policy_changed)
+        return Reloaded(config=config, tools=tools)
 
     # -- the loop ------------------------------------------------------------
 

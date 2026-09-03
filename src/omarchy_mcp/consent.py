@@ -34,7 +34,7 @@ from enum import Enum
 import anyio
 
 #: Long enough to walk back from the kettle, short enough that an agent is not
-#: parked on a dead request. Overridable as `policy.ask_timeout_s`.
+#: parked on a dead request. Overridable as `askTimeoutSeconds`.
 DEFAULT_TIMEOUT_S = 60
 
 
@@ -90,8 +90,8 @@ def _reason(outcome: Outcome, *, timeout_s: float, what: str, clicked: bool = Fa
         ),
         Outcome.UNSUPPORTED: (
             f"This client cannot ask the user anything, so the request ({what}) "
-            f"was refused rather than assumed. Allow the route in "
-            f"~/.config/omarchy/mcp/config.toml to run it without asking."
+            f"was refused rather than assumed. Add an \"allow\" rule for the route "
+            f"in ~/.config/omarchy/mcp/permissions.json to run it without asking."
         ),
         Outcome.UNREACHABLE: (
             f"The client disconnected before answering ({what}). Nothing ran."

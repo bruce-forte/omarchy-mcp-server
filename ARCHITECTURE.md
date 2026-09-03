@@ -176,7 +176,8 @@ In dependency order, shallowest first:
 | `stats.py` | The one seam every tool call passes through: counters for `/health`, and a record for the activity log |
 | `activity.py` | One JSON line per call on disk, written by a thread nothing waits for. See below |
 | `frames.py` | The one thing this process says on stdout: lifecycle and per-call frames the shell parses |
-| `policy.py` | The security boundary. Pure, takes the registry as an argument, tested against every route Omarchy ships |
+| `policy.py` | The security boundary: what kind of command this is. Pure, takes the registry as an argument, tested against every route Omarchy ships |
+| `permissions.py` | The other half: which guarded commands actually run. Three rule lists read `deny` → `ask` → `allow`, from `permissions.json` |
 | `resolve.py` | Turns an identifier an agent supplied into the thing it names, or refuses. See below |
 | `consent.py` | The six ways a call can fail to get a yes, and a wait that fails closed. See below |
 | `gate.py` | Where policy, resolution and consent meet and a call runs or does not. Both tool paths come through it |
@@ -202,7 +203,7 @@ The tools are a package, split by what they are for:
 | `tools/_shared.py` | `run_route`, the one path every curated tool takes to reach the executor |
 
 `_shared.run_route` matters more than its size suggests. Every curated tool goes
-through the same `policy.decide`, the same `resolve.resolve_call` and the same
+through the same `permissions.decide`, the same `resolve.resolve_call` and the same
 `execute.run` as `omarchy_run`: a curated tool is a better-shaped door onto the
 same room, never a way around the lock. It is also the single place where a
 future consent check hooks in (`ROADMAP.md` N4).
@@ -212,7 +213,7 @@ future consent check hooks in (`ROADMAP.md` N4).
 A call passes these gates, in this order:
 
 ```
-  policy.decide   may this route run at all?          -> tier, and a reason
+  permissions.decide  what happens to this route?      -> deny | ask | allow
   resolve         does its argument name anything?    -> Target, or a refusal
   consent.ask     does the user say yes, in time?     -> Answer   (N4 wires it)
   execute.run     argv, no shell, bounded             -> Result
@@ -322,7 +323,7 @@ call the user would have allowed, or keep re-asking an empty room.
 
 Two properties are load-bearing, and neither should be relaxed when N4 lands:
 
-- **The deadline is the decision.** At `policy.ask_timeout_s` (60s by default,
+- **The deadline is the decision.** At `askTimeoutSeconds` (60s by default,
   bounded 5–600) the awaitable is cancelled and its result is never read. A
   click that arrives a second late has nowhere to go: the agent has already been
   told the call was refused and may have done something else since. This daemon
@@ -340,7 +341,8 @@ as a tool-call traceback would bury the reason the command did not run.
 
 ## Asking at call time
 
-`gate.py` is where `policy.py`, `resolve.py` and `consent.py` meet. Both tool
+`gate.py` is where `policy.py`, `permissions.py`, `resolve.py` and `consent.py`
+meet. Both tool
 paths — `_shared.run_route` for the curated tools, and `omarchy_run` — reduce to
 one `await` on it, because a check that one path applies and the other skips is
 worse than no check at all.
@@ -350,7 +352,7 @@ The order is the part worth stating:
 | Verdict | What happens |
 |---------|--------------|
 | allowed | resolve, run |
-| refused, askable, `policy.ask` | resolve, **then** ask, run only on an accept |
+| an `ask` rule, or the guarded default | resolve, **then** ask, run only on an accept |
 | refused otherwise | refuse; nothing is resolved and nobody is asked |
 
 Resolution comes before the question and only on the ask path. Before, because a
@@ -362,7 +364,7 @@ as unresolvable has spent something scarcer than a subprocess.
 
 Two refusals are never askable, and `Verdict` says so rather than leaving the
 caller to infer it: `blocked`, because no answer makes a sudo command runnable,
-and `policy.deny`, because that refusal is a decision the user already took by
+and a `deny` rule, because that refusal is a decision the user already took by
 hand.
 
 The question itself goes wherever it can reach a person. If the client declares
@@ -489,11 +491,21 @@ bound, and the activity log's settings, because the sink is open.
 **A file that does not parse changes nothing.** `config.load` answers a broken
 file with defaults, which is right at startup — a daemon that refuses to start
 over a typo looks like one that was never installed — and wrong on a reload,
-where it would empty `policy.deny` and switch every disabled tool back on for a
-stray keystroke. So the running config stands, a notification says so, and the
-bar panel says so until it parses again. A file that has merely gone missing
-waits one poll first: editors write a temporary file and rename it over the
-target, and absent-once is that gap rather than a deletion.
+where it would switch every disabled tool back on for a stray keystroke. So the
+running config stands, a notification says so, and the bar panel says so until
+it parses again. A file that has merely gone missing waits one poll first:
+editors write a temporary file and rename it over the target, and absent-once is
+that gap rather than a deletion.
+
+`permissions.json` is watched by the same poll and reloads on the same two
+seconds, but its failure rule is not the same. At startup a defective document
+stops the daemon: there is no known-good one to keep, and "no rules" is not the
+safe floor, because a hand-written `deny` demotes routes the derivation calls
+safe. At reload there *is* a known-good one — the document the user last
+successfully wrote — so it stands, and the daemon never exits over an editor's
+mid-keystroke autosave, which no debounce could tell from a finished wrong file.
+The bar carries `permissionsOk` beside `configOk`: two files that fail
+independently and are fixed in different places want two lamps, not one.
 
 `tools/list_changed` is announced only when the tool set actually moves. A
 policy edit changes what a route is allowed to do, not what the tool list says,

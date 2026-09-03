@@ -57,8 +57,22 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-from .policy import NEVER_STORE, Tier
+from .policy import Tier, base_tier
 from .registry import Command
+
+#: Guarded routes that may be asked about and never granted outright.
+#:
+#: The criterion is narrow on purpose: **the route's own argument is a command
+#: line**. `omarchy update lock run <command> [args...]` runs whatever it is
+#: handed, so one standing grant on it is a standing grant on everything, shown
+#: in a permissions review as a single calm row.
+#:
+#: The wider reading -- "could lead to running attacker-chosen code" -- would
+#: swallow `install`, `pkg aur add` and `dev link`, and then nothing worth
+#: granting could be granted. This is not a tier: such a route is perfectly
+#: runnable, and a person answering a question about a specific call is exactly
+#: the right amount of friction for it.
+NEVER_STORE = frozenset({"omarchy update lock"})
 
 #: The wildcard suffix, space included. The space is part of the rule: a matcher
 #: is a sequence of whole route tokens, and `omarchy install*` is not a shorter
@@ -82,6 +96,13 @@ PRECEDENCE = (Effect.DENY, Effect.ASK, Effect.ALLOW)
 #: What an unmatched guarded route does. `ASK` is the default because a document
 #: that fills itself through use never fills if nothing is ever asked.
 DEFAULT_GUARDED = Effect.ASK
+
+#: How long a call waits for the user to answer. Long enough to walk back from
+#: the kettle, short enough that an agent is not parked on a dead request.
+#: Bounded so that neither extreme can exist: a second is not long enough to
+#: read the question, and ten minutes is a request parked on an empty desk.
+DEFAULT_ASK_TIMEOUT_S = 60
+ASK_TIMEOUT_BOUNDS = (5, 600)
 
 
 class PermissionsError(ValueError):
@@ -182,6 +203,17 @@ class PermissionsBlock(BaseModel):
         ),
     )
 
+    askTimeoutSeconds: int | None = Field(
+        default=None,
+        ge=ASK_TIMEOUT_BOUNDS[0],
+        le=ASK_TIMEOUT_BOUNDS[1],
+        description=(
+            "How long an approval notification waits before the call is refused. "
+            "No answer means denied: a prompt that granted on expiry would grant to "
+            "an empty room."
+        ),
+    )
+
     deny: list[RuleModel] = Field(
         default_factory=list,
         description="Refused outright. Consulted first, and a narrower allow never overrides one.",
@@ -266,6 +298,7 @@ class Permissions:
 
     rules: tuple[Rule, ...] = ()
     guarded_default: Effect = DEFAULT_GUARDED
+    ask_timeout_s: int = DEFAULT_ASK_TIMEOUT_S
     #: Which file set `guarded_default`, for the explainer. Empty means nobody
     #: did and the value is this module's own.
     guarded_default_source: str = ""
@@ -282,13 +315,32 @@ class Permissions:
 # --- reading ----------------------------------------------------------------
 
 
-def parse(text: str, *, source: str) -> tuple[tuple[Rule, ...], Effect | None]:
-    """Parse one file. Raises `PermissionsError` on any defect at all.
+@dataclass(frozen=True)
+class Options:
+    """A file's settings, as opposed to its rules.
 
-    Returns the file's rules in precedence order and its `guardedDefault`, or
-    ``None`` when it did not set one -- which is different from setting it to the
-    default, because two files must not both claim it.
+    ``None`` means the file did not mention the key, which is different from
+    setting it to the default: each one decides a single thing, so two files
+    claiming the same key is an error rather than a precedence question.
     """
+
+    guarded_default: Effect | None = None
+    ask_timeout_s: int | None = None
+
+    def named(self) -> dict[str, object]:
+        """The keys this file actually set, by the name it wrote them under."""
+        return {
+            name: value
+            for name, value in (
+                ("guardedDefault", self.guarded_default),
+                ("askTimeoutSeconds", self.ask_timeout_s),
+            )
+            if value is not None
+        }
+
+
+def parse(text: str, *, source: str) -> tuple[tuple[Rule, ...], Options]:
+    """Parse one file. Raises `PermissionsError` on any defect at all."""
     try:
         raw = json.loads(text)
     except json.JSONDecodeError as exc:
@@ -316,8 +368,11 @@ def parse(text: str, *, source: str) -> tuple[tuple[Rule, ...], Effect | None]:
                 )
             )
 
-    default = Effect(block.guardedDefault) if block.guardedDefault is not None else None
-    return tuple(rules), default
+    options = Options(
+        guarded_default=Effect(block.guardedDefault) if block.guardedDefault else None,
+        ask_timeout_s=block.askTimeoutSeconds,
+    )
+    return tuple(rules), options
 
 
 def _explain(exc: ValidationError, source: str) -> str:
@@ -349,8 +404,8 @@ def load(paths: Sequence[Path]) -> Permissions:
     copy of the same decision.
     """
     pooled: dict[Effect, list[Rule]] = {effect: [] for effect in PRECEDENCE}
-    default = DEFAULT_GUARDED
-    default_source = ""
+    settings: dict[str, object] = {}
+    claimed: dict[str, str] = {}
 
     for path in paths:
         try:
@@ -360,21 +415,26 @@ def load(paths: Sequence[Path]) -> Permissions:
         except OSError as exc:
             raise PermissionsError(f"{path} could not be read: {exc}") from exc
 
-        rules, file_default = parse(text, source=path.name)
+        rules, options = parse(text, source=path.name)
         for rule in rules:
             pooled[rule.effect].append(rule)
 
-        if file_default is not None:
-            if default_source:
+        for key, value in options.named().items():
+            if key in claimed:
                 raise PermissionsError(
-                    f"{path.name} also sets guardedDefault, which {default_source} "
-                    f"already set. It decides one thing, so it belongs in one file."
+                    f"{path.name} also sets {key}, which {claimed[key]} already set. "
+                    f"It decides one thing, so it belongs in one file."
                 )
-            default = file_default
-            default_source = path.name
+            claimed[key] = path.name
+            settings[key] = value
 
     ordered = tuple(rule for effect in PRECEDENCE for rule in pooled[effect])
-    return Permissions(ordered, default, default_source)
+    return Permissions(
+        rules=ordered,
+        guarded_default=settings.get("guardedDefault", DEFAULT_GUARDED),
+        ask_timeout_s=settings.get("askTimeoutSeconds", DEFAULT_ASK_TIMEOUT_S),
+        guarded_default_source=claimed.get("guardedDefault", ""),
+    )
 
 
 # --- what a rule turns out to mean ------------------------------------------
@@ -471,10 +531,27 @@ class Outcome:
     """What happens to one route, and what decided it."""
 
     effect: Effect
+    #: What kind of command it is, which is not what happens to it. The activity
+    #: log records both: "refused, and it was a guarded command" and "refused,
+    #: and it needed sudo" are different events for the person reading it back.
+    tier: Tier
     #: The rule that decided, or ``None`` when nothing matched and the answer came
     #: from the tier or from `guardedDefault`.
     rule: Rule | None
     reason: str
+
+    @property
+    def allowed(self) -> bool:
+        return self.effect is Effect.ALLOW
+
+    @property
+    def asks(self) -> bool:
+        """Whether this route puts a question on the desktop rather than running
+        or refusing. Published by `omarchy_search_commands` and the commands
+        resource so an agent knows a call is worth making -- reporting it as
+        refused would make a careful agent never call it, and the prompt would
+        never fire."""
+        return self.effect is Effect.ASK
 
     @property
     def by_rule(self) -> bool:
@@ -502,6 +579,7 @@ def evaluate(route: str, tier: Tier, perms: Permissions) -> Outcome:
     if tier is Tier.BLOCKED:
         return Outcome(
             Effect.DENY,
+            tier,
             None,
             f"`{route}` requires sudo. The MCP server runs without a controlling "
             f"terminal, so a password prompt could never be answered. No "
@@ -512,6 +590,7 @@ def evaluate(route: str, tier: Tier, perms: Permissions) -> Outcome:
     if rule is not None:
         outcome = Outcome(
             rule.effect,
+            tier,
             rule,
             f"`{route}` is matched by {rule.matcher!r} in the "
             f"{rule.effect.value!r} list of {rule.source}.",
@@ -519,18 +598,61 @@ def evaluate(route: str, tier: Tier, perms: Permissions) -> Outcome:
     elif tier is Tier.GUARDED:
         outcome = Outcome(
             perms.guarded_default,
+            tier,
             None,
-            f"`{route}` can change the system in ways that are hard to undo, and "
-            f"no permission rule covers it.",
+            f"`{route}` can change the system in ways that are hard to undo, and no "
+            f"permission rule covers it. To allow it, add "
+            f'{{"kind": "route", "matcher": "{route}"}} to the "allow" list in '
+            f"~/.config/omarchy/mcp/permissions.json.",
         )
     else:
-        return Outcome(Effect.ALLOW, None, "")
+        return Outcome(Effect.ALLOW, tier, None, "")
 
     if outcome.effect is Effect.ALLOW and route in NEVER_STORE:
         return Outcome(
             Effect.ASK,
+            tier,
             outcome.rule,
             f"`{route}` takes a command line as its argument, so it is asked about "
             f"every time and never granted outright.",
         )
     return outcome
+
+
+ASK_NOTE = (
+    "This call pauses while the user is asked to approve it, and is refused if "
+    "they decline or do not answer."
+)
+
+
+def describe(cmd: Command, perms: Permissions) -> dict[str, object]:
+    """This server's verdict on one command, for anything that publishes it.
+
+    One derivation with two readers -- `omarchy_search_commands` and the commands
+    resource -- which would otherwise be free to disagree with each other and
+    with the gate.
+
+    **A route that will ask is reported runnable.** Reporting it as refused makes
+    a careful agent never call it, so the prompt never fires and the feature is
+    invisible to the only caller there is.
+    """
+    outcome = decide(cmd, perms)
+    row: dict[str, object] = {
+        "tier": outcome.tier.value,
+        "runnable": outcome.allowed or outcome.asks,
+    }
+    if outcome.asks:
+        row["asks"] = True
+        row["note"] = ASK_NOTE
+    elif not outcome.allowed:
+        row["refusal"] = outcome.reason
+    return row
+
+
+def decide(cmd: Command, perms: Permissions) -> Outcome:
+    """What happens to ``cmd``. The tier and the document, in one call.
+
+    The one entry point, so that a caller cannot apply the derivation and forget
+    the rules -- or read the rules and forget that sudo beats them.
+    """
+    return evaluate(cmd.route, base_tier(cmd), perms)

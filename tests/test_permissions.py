@@ -31,7 +31,8 @@ from omarchy_mcp.permissions import (
     load,
     parse,
 )
-from omarchy_mcp.policy import NEVER_STORE, Tier, base_tier
+from omarchy_mcp.permissions import NEVER_STORE
+from omarchy_mcp.policy import Tier, base_tier
 
 
 def doc(**lists) -> str:
@@ -47,8 +48,12 @@ def doc(**lists) -> str:
 
 
 def pooled(**lists) -> Permissions:
-    rules, default = parse(doc(**lists), source="permissions.json")
-    return Permissions(rules, default or DEFAULT_GUARDED, "permissions.json" if default else "")
+    rules, options = parse(doc(**lists), source="permissions.json")
+    return Permissions(
+        rules=rules,
+        guarded_default=options.guarded_default or DEFAULT_GUARDED,
+        guarded_default_source="permissions.json" if options.guarded_default else "",
+    )
 
 
 def rule(matcher: str, effect: Effect = Effect.ALLOW) -> Rule:
@@ -64,7 +69,7 @@ class TestMatcherShape:
         ["omarchy install app", "omarchy install *", "omarchy *", "omarchy migrate"],
     )
     def test_the_two_legal_forms_are_accepted(self, matcher):
-        rules, _ = parse(doc(allow=[matcher]), source="f")
+        rules, _options = parse(doc(allow=[matcher]), source="f")
         assert rules[0].matcher == matcher
 
     @pytest.mark.parametrize(
@@ -402,3 +407,32 @@ class TestPurity:
         """Pure: it is handed paths and text, and holds no default of its own
         that would read the user's real file in a test."""
         assert not hasattr(perms, "PERMISSIONS_FILE")
+
+
+class TestTheShippedExample:
+    """`permissions.example.json` is the first thing anyone copies. A broken one
+    teaches the wrong syntax and, since a defective document now stops the
+    daemon, breaks their install on the way."""
+
+    @pytest.fixture
+    def example(self):
+        import pathlib
+
+        return pathlib.Path(__file__).resolve().parents[1] / "permissions.example.json"
+
+    def test_it_loads(self, example):
+        rules, options = parse(example.read_text(), source=example.name)
+        assert rules, "an example with no rules teaches nothing"
+        assert options.guarded_default is not None
+
+    def test_every_rule_in_it_does_something(self, example, commands):
+        rules, options = parse(example.read_text(), source=example.name)
+        perms = Permissions(rules=rules, guarded_default=options.guarded_default)
+        assert check(perms, commands) == (), "the example must have no void or error rules"
+
+    def test_it_demonstrates_all_three_lists(self, example):
+        rules, _ = parse(example.read_text(), source=example.name)
+        assert {r.effect for r in rules} == set(Effect)
+
+    def test_it_points_at_the_schema(self, example):
+        assert '"$schema"' in example.read_text()

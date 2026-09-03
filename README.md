@@ -240,18 +240,16 @@ shows its default, so keys you leave alone keep tracking upstream defaults.
 # timeout_ms = 30000
 # max_output_b = 262144
 
-[policy]
-# allow = ["omarchy system reboot"]
-# allow_groups = ["install"]
-# deny = ["omarchy launch browser"]
-
 [log]
 # level = "info"
 ```
 
-Saving the file is enough. The daemon re-reads it within about two seconds:
-tools switch on and off on any client that is already attached, and the policy
-changes apply to the next call. To not wait:
+What an agent may run is **not** in this file. It lives beside it in
+`permissions.json` — see [Being asked, and writing it down](#being-asked-and-writing-it-down).
+
+Saving either file is enough. The daemon re-reads both within about two seconds:
+tools switch on and off on any client that is already attached, and rule changes
+apply to the next call. To not wait:
 
 ```bash
 omarchy-shell io.github.bruce-forte.mcp-server reloadConfig
@@ -290,18 +288,51 @@ and `recent`; every other verb is refused, as is any command that would disable,
 remove or replace this plugin. The refusal points at the bar panel, which is
 where you press Stop, Restart or Reload config. See [`SECURITY.md`](SECURITY.md).
 
-### Being asked instead of refused
+### Being asked, and writing it down
 
 Deciding once, in advance, in a text editor, is the wrong shape for a decision
-about a specific command. Turn on asking:
+about a specific command. So by default a guarded command **asks you at the
+time**, and what you decide can be written down.
 
-```toml
-[policy]
-ask = true
-# ask_timeout_s = 60
+The rules live in their own file, `~/.config/omarchy/mcp/permissions.json`,
+which is meant to be checked into your dotfiles:
+
+```json
+{
+  "permissions": {
+    "guardedDefault": "ask",
+    "deny":  [{ "kind": "route", "matcher": "omarchy dev *" }],
+    "ask":   [{ "kind": "route", "matcher": "omarchy install *" }],
+    "allow": [{ "kind": "route", "matcher": "omarchy theme *" }]
+  }
+}
 ```
 
-A guarded route now raises a critical notification naming the command and what
+Rules are read **deny, then ask, then allow** — the first match decides, and a
+narrower rule never jumps the queue. A matcher is either an exact route
+(`omarchy install app`) or a prefix with a trailing ` *` (`omarchy install *`,
+which also covers the bare `omarchy install`). There is no separate notion of a
+group: every route's group *is* its second word, so `omarchy install *` is the
+`install` group.
+
+Set `"guardedDefault": "deny"` to have guarded commands refused outright rather
+than asked about.
+
+Copy [`permissions.example.json`](permissions.example.json) to start, and check
+your edits before restarting anything:
+
+```bash
+omarchy-mcpd --check-permissions
+```
+
+**A file that does not load stops the server.** Not "is ignored with a warning"
+— ignoring it would mean running under rules nobody wrote, and an ignored `deny`
+is a protection you think you have and do not. You get a critical notification
+naming the problem, the bar panel says so, and the panel's **Check permissions**
+button tells you when the fix is good. (An edit made while the server is running
+is gentler: a broken save leaves the rules it already had in force.)
+
+A guarded route raises a critical notification naming the command and what
 it resolved to — the theme, the monitor, the path — and **clicking it approves
 that one call**. Nothing else does. Dismissing it, ignoring it, and letting the
 deadline pass all refuse, because a prompt that granted on expiry would be
@@ -310,10 +341,15 @@ granting to an empty room.
 The agent is told which of those happened, because they mean different things:
 a refusal is worth respecting, and a silence is worth asking you about directly.
 
-Two things `ask` never reaches. Anything needing sudo stays refused — no answer
-makes it runnable. And anything you put in `deny` stays refused, because that is
-a decision you already took and re-asking it would turn your *no* into a
-question.
+Two things asking never reaches. Anything needing sudo stays refused — no answer
+makes it runnable, so no rule may grant it and writing one is an error the
+server tells you about rather than a line that quietly does nothing. And
+anything a `deny` rule covers stays refused, because that is a decision you
+already took and re-asking it would turn your *no* into a question.
+
+One route is asked about every time and can never be granted:
+`omarchy update lock`, whose own argument is a command line. Allowing it once
+would allow everything.
 
 If your MCP client supports elicitation over a transport that can carry it, the
 question appears there instead. Claude Code's does not — the protocol revision
@@ -420,7 +456,7 @@ anywhere inside a plugin folder and a virtualenv is largely symlinks.
 ```bash
 omarchy plugin remove io.github.bruce-forte.mcp-server
 rm -rf ~/.local/state/io.github.bruce-forte.mcp-server   # venv, token, activity log, autostart marker
-rm -rf ~/.config/omarchy/mcp                             # your configuration
+rm -rf ~/.config/omarchy/mcp                             # config.toml and your permissions
 rm -rf "$XDG_RUNTIME_DIR/io.github.bruce-forte.mcp-server"   # pending approvals
 claude mcp remove omarchy                                # if you added it there
 ```

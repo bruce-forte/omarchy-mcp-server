@@ -17,12 +17,18 @@ DEFAULT_MAX_OUTPUT_B = 256 * 1024
 DEFAULT_TIMEOUT_MS = 30_000
 DEFAULT_PORT = 8765
 
-#: How long a call may wait for the user to answer an approval prompt. Bounded
-#: rather than free so that neither extreme can exist -- a second is not long
-#: enough for a person to read the question, and ten minutes is a request parked
-#: on a desk nobody is at.
-DEFAULT_ASK_TIMEOUT_S = 60
-ASK_TIMEOUT_BOUNDS = (5, 600)
+#: Keys that used to live under `[policy]` and now live in permissions.json.
+#:
+#: Named rather than ignored. An unknown TOML key is dropped silently, which is
+#: how somebody comes to believe they still have a `deny` list -- the same
+#: silent no-op the permissions document exists to avoid. See `_dead`.
+MOVED_POLICY_KEYS = {
+    "allow": 'an "allow" rule',
+    "allow_groups": 'an "allow" rule with a trailing " *"',
+    "deny": 'a "deny" rule',
+    "ask": '"guardedDefault"',
+    "ask_timeout_s": '"askTimeoutSeconds"',
+}
 
 #: Roughly 3-5k calls live, and one rotated generation kept beside it. Weeks of
 #: ordinary use, bounded so that a hand-edited value cannot quietly fill a small
@@ -37,23 +43,9 @@ class Config:
     timeout_ms: int = DEFAULT_TIMEOUT_MS
     max_output_b: int = DEFAULT_MAX_OUTPUT_B
 
-    #: Guarded routes and groups promoted to runnable.
-    allow: tuple[str, ...] = ()
-    allow_groups: tuple[str, ...] = ()
-    #: Safe routes demoted to guarded.
-    deny: tuple[str, ...] = ()
-
-    #: Whether a guarded route asks the user at call time instead of refusing.
-    #:
-    #: Off by default, on purpose: installing this plugin must not make a
-    #: command reachable that was not reachable before. Discoverability is the
-    #: guarded refusal's job -- it names this key -- rather than a default that
-    #: quietly widens what an agent can reach.
-    ask: bool = False
-
-    #: How long an approval prompt waits before the call is refused. No answer
-    #: means denied: see `consent.py`.
-    ask_timeout_s: int = DEFAULT_ASK_TIMEOUT_S
+    # What an agent may run is not here. It moved to permissions.json, because
+    # two files that both decide it is a second source of truth, and because the
+    # rules wanted a shape TOML arrays could not carry -- see `permissions.py`.
 
     #: Curated tools switched off. Still reachable through ``omarchy_run``.
     disabled_tools: tuple[str, ...] = ()
@@ -142,6 +134,25 @@ def _name(raw: object, key: str, default: str, problems: list[str]) -> str:
     return name
 
 
+def _dead(policy: dict, problems: list[str]) -> None:
+    """Report a `[policy]` key that no longer does anything.
+
+    The rest of this module reports a *malformed* value and carries on. This
+    reports a well-formed one, because it is the more dangerous case: a
+    `policy.deny` list sitting in a file nobody reads is a protection the user
+    believes they have.
+    """
+    for key in sorted(policy):
+        if key in MOVED_POLICY_KEYS:
+            problems.append(
+                f"policy.{key} has moved and does nothing here. Write "
+                f"{MOVED_POLICY_KEYS[key]} in ~/.config/omarchy/mcp/permissions.json "
+                f"instead, and delete this key."
+            )
+        else:
+            problems.append(f"policy.{key} is not a setting; the [policy] table has moved")
+
+
 def load(path: Path | None = None) -> Config:
     """Read the config file. Missing or broken yields defaults."""
     path = CONFIG_FILE if path is None else path
@@ -158,9 +169,10 @@ def load(path: Path | None = None) -> Config:
         )
 
     server = raw.get("server") or {}
-    policy = raw.get("policy") or {}
     tools = raw.get("tools") or {}
     log = raw.get("log") or {}
+
+    _dead(raw.get("policy") or {}, problems)
 
     level = log.get("level", "info")
     if level not in ("debug", "info", "warn", "error"):
@@ -179,17 +191,6 @@ def load(path: Path | None = None) -> Config:
             problems,
             1024,
             16 * 1024 * 1024,
-        ),
-        allow=_strs(policy.get("allow"), "policy.allow", problems),
-        allow_groups=_strs(policy.get("allow_groups"), "policy.allow_groups", problems),
-        deny=_strs(policy.get("deny"), "policy.deny", problems),
-        ask=_bool(policy.get("ask"), "policy.ask", False, problems),
-        ask_timeout_s=_int(
-            policy.get("ask_timeout_s"),
-            "policy.ask_timeout_s",
-            DEFAULT_ASK_TIMEOUT_S,
-            problems,
-            *ASK_TIMEOUT_BOUNDS,
         ),
         disabled_tools=_strs(tools.get("disabled"), "tools.disabled", problems),
         log_level=level,
