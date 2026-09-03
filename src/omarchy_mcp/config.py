@@ -71,8 +71,8 @@ class Config:
     #: At startup that distinction does not matter -- defaults are the safe
     #: floor and a daemon that refuses to start over a typo is a daemon that
     #: looks uninstalled. At *reload* it is the whole question: an unparseable
-    #: file is not an instruction to empty `policy.deny` and switch every
-    #: disabled tool back on. See `reload.py`.
+    #: file is not an instruction to switch every disabled tool back on. See
+    #: `reload.py`.
     parsed: bool = field(default=True, compare=False)
 
     # The listen address is deliberately absent. This server executes commands

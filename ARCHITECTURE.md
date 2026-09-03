@@ -52,14 +52,25 @@ time it does, which at worst is a loop. So:
 
 | Kind of file | Goes in |
 |--------------|---------|
-| User config | `~/.config/omarchy/mcp/` |
+| `config.toml`, and both permissions files | `~/.config/omarchy/mcp/` |
 | Virtualenv, bearer token, bootstrap stamp, bytecode cache, activity log | `~/.local/state/io.github.bruce-forte.mcp-server/` |
 | The state file the bar widget falls back to | `$XDG_RUNTIME_DIR/omarchy-mcp.state` |
 | Whether a Stop survives a restart | `~/.local/state/io.github.bruce-forte.mcp-server/autostart-off` |
+| A pending approval's one-time token | `$XDG_RUNTIME_DIR/io.github.bruce-forte.mcp-server/consent/` |
 | Never | the plugin directory |
 
 `paths.py` holds every one of these locations, so the rules are enforced by
 construction rather than by remembering them at each call site.
+
+**Both permissions files are config, not state**, even though the daemon writes
+one of them. `permissions.json` is the user's, hand-edited, and meant to be
+checked into a dotfiles repository; `permissions.local.json` is what the daemon
+appends when somebody answers *always* at the desk, and belongs in
+`.gitignore`. Putting the second in the state directory would have followed the
+table above more literally and been worse: a person opening
+`~/.config/omarchy/mcp/` has to see **everything that decides what an agent may
+do**, and splitting the two halves of one answer across two directories is how
+somebody reads half their permissions and believes it is all of them.
 
 This has three non-obvious consequences.
 
@@ -187,7 +198,7 @@ In dependency order, shallowest first:
 | `auth.py` | Bearer authentication as **pure ASGI** — see below |
 | `resources.py` | The 4 concrete resources and 3 URI templates |
 | `clients.py` | The connections currently attached, and the two ways to tell them the tool list moved |
-| `reload.py` | Re-reads `config.toml` while serving, and refuses to when it does not parse. See below |
+| `reload.py` | Re-reads `config.toml` and the permissions files while serving, and refuses to when either does not parse. See below |
 | `server.py` | Assembles the MCP server, transport security, `/health` |
 
 The tools are a package, split by what they are for:
@@ -203,30 +214,32 @@ The tools are a package, split by what they are for:
 | `tools/_shared.py` | `run_route`, the one path every curated tool takes to reach the executor |
 
 `_shared.run_route` matters more than its size suggests. Every curated tool goes
-through the same `permissions.decide`, the same `resolve.resolve_call` and the same
-`execute.run` as `omarchy_run`: a curated tool is a better-shaped door onto the
-same room, never a way around the lock. It is also the single place where a
-future consent check hooks in (`ROADMAP.md` N4).
+through the same `permissions.decide`, the same `resolve.resolve_call` and the
+same `execute.run` as `omarchy_run`: a curated tool is a better-shaped door onto
+the same room, never a way around the lock. It is also the one place the consent
+check hooks in.
 
 ## Resolution: naming the target before doing anything
 
 A call passes these gates, in this order:
 
 ```
-  permissions.decide  what happens to this route?      -> deny | ask | allow
-  resolve         does its argument name anything?    -> Target, or a refusal
-  consent.ask     does the user say yes, in time?     -> Answer   (N4 wires it)
-  execute.run     argv, no shell, bounded             -> Result
+  policy.self_refusal  would this call silence the daemon?  -> a refusal, or None
+  policy.base_tier     what kind of command is this?         -> blocked|guarded|safe
+  permissions.decide   what do the user's rules do with it?  -> deny | ask | allow
+  resolve              does its argument name anything?      -> Target, or a refusal
+  consent.ask          does the user say yes, in time?       -> Answer
+  execute.run          argv, no shell, bounded               -> Result
 ```
 
 `resolve.py` is the middle one. It exists because an unchecked argument fails
 inside a subprocess, where the failure arrives as somebody else's stderr — and
-because N4 will put a call in front of a person for approval, where *"an agent
-wants to switch the theme"* is not consent if the user cannot see which theme.
+because a call is put in front of a person for approval, where *"an agent wants
+to switch the theme"* is not consent if the user cannot see which theme.
 So an identifier is resolved against live system state before anything is
 spawned, and what comes back is a `Target`: the value the command receives, and
-a human name for it, which lands in the log and the response today and in the
-approval prompt later.
+a human name for it, which lands in the log, the response, and the approval
+prompt.
 
 Three properties are load-bearing:
 
@@ -314,7 +327,7 @@ Six outcomes, and exactly one of them runs the command:
 | `declined` | The user refused this specific call |
 | `cancelled` | The user dismissed the prompt without deciding |
 | `timed_out` | Nobody answered; assume nobody is at the desk |
-| `unsupported` | This client cannot ask anyone; allow the route in `config.toml` |
+| `unsupported` | This client cannot ask anyone; write an `allow` rule in `permissions.json` |
 | `unreachable` | The client disconnected mid-question |
 
 They are distinct because each implies a different next move. An agent that
@@ -342,18 +355,17 @@ as a tool-call traceback would bury the reason the command did not run.
 ## Asking at call time
 
 `gate.py` is where `policy.py`, `permissions.py`, `resolve.py` and `consent.py`
-meet. Both tool
-paths — `_shared.run_route` for the curated tools, and `omarchy_run` — reduce to
+meet. Both tool paths — `_shared.run_route` for the curated tools, and `omarchy_run` — reduce to
 one `await` on it, because a check that one path applies and the other skips is
 worse than no check at all.
 
 The order is the part worth stating:
 
-| Verdict | What happens |
+| Outcome | What happens |
 |---------|--------------|
-| allowed | resolve, run |
-| an `ask` rule, or the guarded default | resolve, **then** ask, run only on an accept |
-| refused otherwise | refuse; nothing is resolved and nobody is asked |
+| `allow` | resolve, run |
+| `ask` — a rule, or the guarded default | resolve, **then** ask, run only on an accept |
+| `deny` | refuse; nothing is resolved and nobody is asked |
 
 Resolution comes before the question and only on the ask path. Before, because a
 prompt reading *"set theme Tokyo Night"* is consent and one reading *"run
@@ -362,10 +374,16 @@ on that path, because a refusal nobody will be asked about should not spend a
 subprocess on a resolver, and because a question answered *yes* and then refused
 as unresolvable has spent something scarcer than a subprocess.
 
-Two refusals are never askable, and `Verdict` says so rather than leaving the
-caller to infer it: `blocked`, because no answer makes a sudo command runnable,
-and a `deny` rule, because that refusal is a decision the user already took by
-hand.
+`deny` covers both refusals that must never become questions: `blocked`, because
+no answer makes a sudo command runnable, and a `deny` rule, because that refusal
+is a decision the user already took by hand. They are one `Effect` rather than
+two flags precisely so a caller cannot handle one and forget the other.
+
+Ahead of all of it sits `policy.self_refusal`, which reads the call's
+*arguments* rather than its route: `omarchy shell <this plugin> stop` and
+`omarchy plugin remove <this plugin>` are refused before a tier is even
+computed. It cannot be part of the ladder, because the same route is fine or
+refused depending on what it names, and the ladder never sees arguments.
 
 The question itself goes wherever it can reach a person. If the client declares
 elicitation *and* the transport can carry a server-initiated request, it goes
@@ -527,12 +545,15 @@ other clients may list them.
 
 ## What the tests pin
 
-`policy.py`, `auth.py`, `execute.py`, `gate.py` and `prompt.py` are the security
-boundary, and the existing tests are its specification — every sudo command
-classifies `blocked` and no configuration can promote it, `argv` never reaches a
-shell, a foreign `Origin` gets 403 and a foreign `Host` gets 421, nothing that
-must not be asked about is asked about, and a consent file that merely exists is
-not a click. Changes there need tests in the same commit.
+`policy.py`, `permissions.py`, `auth.py`, `execute.py`, `gate.py` and `prompt.py`
+are the security boundary, and the existing tests are its specification — every
+sudo command classifies `blocked` and no rule can promote it, `deny` beats `ask`
+beats `allow` with specificity never reordering it, a route whose argument is a
+command line is never granted, any defect at all refuses the permissions
+document, `argv` never reaches a shell, a foreign `Origin` gets 403 and a
+foreign `Host` gets 421, nothing that must not be asked about is asked about,
+and a consent file that merely exists is not a click. Changes there need tests
+in the same commit.
 
 `tests/test_activity.py` pins the log's own promises, which are properties
 rather than examples: OCR text and clipboard reads never reach the file while a
@@ -559,3 +580,26 @@ name can be shown being refused rather than taken as the only candidate, and
 the serial number is dropped. A `needs_omarchy` test checks that `themes.txt`
 still shares a theme with the machine it runs on, so a snapshot that has rotted
 away from any real Omarchy says so.
+
+### Nothing in the suite reaches the machine it runs on
+
+Two more autouse fixtures, and they exist because the suite once could. Three
+tests used `omarchy system reboot` as their example of a guarded route, on the
+reasonable assumption that a guarded route is refused and nothing happens. When
+the guarded default became `ask`, that refusal became a real critical
+notification on a real desktop; it was clicked, in good faith, and the machine
+rebooted mid-run (finding F29).
+
+- **`_no_real_omarchy`** fails any attempt to spawn `omarchy`, `omarchy-shell`,
+  `hyprctl`, `qs` or `wl-copy` against the live system, naming the argv. A test
+  that points `execute.SEARCH` at a fixture directory is building its own fake
+  binary and is left alone; so is one marked `needs_omarchy`, which is the
+  existing opt-in for reading the installed system.
+- **`_no_desktop_prompts`** stops `prompt.send` and `prompt.dismiss` reaching
+  the desktop at all. A notification the suite raised is a machine only
+  pretending to ask, and answering it is how a person ends up inside a test run.
+
+`tests/test_conftest_guards.py` tests both, because a guard nobody exercises is
+one that stops working on the next refactor and says nothing. The lesson it
+encodes is not "pick a gentler example route" — it is that a suite must not be
+one behaviour change away from executing whatever it names.

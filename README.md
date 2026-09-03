@@ -22,6 +22,8 @@ daemon starts with your session and stops with it.
 | [`SECURITY.md`](SECURITY.md) | What an agent can and cannot do, and why |
 | [`ROADMAP.md`](ROADMAP.md) | What is done, what is left, what was decided against |
 | [`CLAUDE.md`](CLAUDE.md) | Working agreement, and Omarchy plugin conventions |
+| [`permissions.example.json`](permissions.example.json) | A starting point for your own rules |
+| [`permissions.schema.json`](permissions.schema.json) | The schema your editor validates them against |
 
 ## Contents
 
@@ -450,6 +452,8 @@ anywhere inside a plugin folder and a virtualenv is largely symlinks.
 | Bootstrap failed on first login | Usually no network yet. `omarchy-shell io.github.bruce-forte.mcp-server rebuild` |
 | A command is refused | Check its tier with `omarchy_search_commands`. Sudo commands cannot be run at all |
 | Tools do not appear in the client | The client caches the tool list; reconnect it |
+| The server will not start, and the panel blames `permissions.json` | Run `omarchy-mcpd --check-permissions`, or press **Check permissions** in the panel. It names the rule and the two legal matcher forms. Fix it, then press **Start** |
+| An approval notification appears more often than you want | Write an `allow` rule for the route, or set `"guardedDefault": "deny"` to have guarded commands refused instead of asked about |
 
 ## Uninstall
 
