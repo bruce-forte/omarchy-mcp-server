@@ -188,7 +188,7 @@ In dependency order, shallowest first:
 | `activity.py` | One JSON line per call on disk, written by a thread nothing waits for. See below |
 | `frames.py` | The one thing this process says on stdout: lifecycle and per-call frames the shell parses |
 | `policy.py` | The security boundary: what kind of command this is. Pure, takes the registry as an argument, tested against every route Omarchy ships |
-| `permissions.py` | The other half: which guarded commands actually run. Three rule lists read `deny` → `ask` → `allow`, from `permissions.json` |
+| `permissions.py` | The other half: which guarded commands actually run. Three rule lists read `deny` → `ask` → `allow`, from `permissions.json`. Also `explain()`, which expands the rules against the live registry |
 | `resolve.py` | Turns an identifier an agent supplied into the thing it names, or refuses. See below |
 | `consent.py` | The six ways a call can fail to get a yes, and a wait that fails closed. See below |
 | `gate.py` | Where policy, resolution and consent meet and a call runs or does not. Both tool paths come through it |
@@ -531,13 +531,13 @@ and a client that re-listed would learn nothing.
 
 ## Resources, and who they are for
 
-Seven, and they are not a second tool surface. Tools are how an agent acts;
+Eight, and they are not a second tool surface. Tools are how an agent acts;
 resources are how a person reads. In Claude Code they appear as `@` mentions the
 user types, so they are chosen for what someone building an Omarchy plugin would
 want to pull into a conversation — above all `omarchy://shell/targets`, the
 shell's IPC surface with full signatures, which is documented nowhere upstream.
 
-Four are concrete and appear in the `@` menu. Three are URI templates covering
+Five are concrete and appear in the `@` menu. Three are URI templates covering
 every command and every target without putting several hundred entries in a
 listing. Claude Code never enumerates templates (finding F8), so the concrete
 four are the discoverable set; templates still resolve when read by URI, and

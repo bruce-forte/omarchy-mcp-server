@@ -95,6 +95,70 @@ def _load_permissions(log):
     return loaded
 
 
+def _print_permissions(log, *, as_json: bool = False) -> int:
+    """What an agent may run, and which rule says so.
+
+    The same report as `omarchy://permissions`, for a terminal. Answers the
+    question the resource answers -- *why can the agent do this?* -- for someone
+    who is not attached to an MCP client, which includes anyone whose daemon is
+    refusing to start.
+    """
+    try:
+        loaded = permissions_module.load(PERMISSIONS_FILES)
+    except permissions_module.PermissionsError as exc:
+        print(f"{exc}\n\nNothing is in force; the daemon would not start.")
+        return EX_CONFIG
+
+    try:
+        commands = all_commands()
+    except RegistryError as exc:
+        print(f"The registry is unavailable, so rules cannot be expanded: {exc}")
+        return 1
+
+    report = permissions_module.explain(loaded, commands)
+    if as_json:
+        print(json.dumps(report, indent=2))
+        return 0
+
+    print(
+        f"guardedDefault: {report['guardedDefault']} "
+        f"(from {report['guardedDefaultSource']})"
+    )
+    print(f"askTimeoutSeconds: {report['askTimeoutSeconds']}")
+    print(f"precedence: {' -> '.join(report['precedence'])}\n")
+
+    if not report["rules"]:
+        print("No rules. Guarded commands take the default above; everything else runs.\n")
+    for rule in report["rules"]:
+        flag = " [void]" if "void" in rule else (" [error]" if "error" in rule else "")
+        print(f"{rule['effect']:>5}  {rule['matcher']}{flag}")
+        print(f"       {rule['source']} -- covers {rule['covers']}")
+        for route in rule["routes"]:
+            print(f"         {route}")
+        if "more" in rule:
+            print(f"         ... and {rule['more']} more")
+        for level in ("error", "void"):
+            if level in rule:
+                print(f"       {level}: {rule[level]}")
+        print()
+
+    counts = report["counts"]["byEffect"]
+    print(
+        f"{report['counts']['commands']} commands: "
+        + ", ".join(f"{counts[e]} {e}" for e in report["precedence"])
+    )
+    print(
+        f"{report['counts']['listed']} of them are decided by this document; the rest "
+        f"are safe and unmatched, or need sudo."
+    )
+    if report["neverGranted"]:
+        print(
+            "\nAsked about every time, never granted (the argument is a command line): "
+            + ", ".join(report["neverGranted"])
+        )
+    return 0
+
+
 def _check_permissions(log) -> int:
     """Validate the document and say so, without starting anything.
 
@@ -171,6 +235,11 @@ def main(argv: list[str] | None = None) -> int:
         help="print the last N activity records and exit",
     )
     parser.add_argument(
+        "--permissions",
+        action="store_true",
+        help="print the rules in force and what they cover, and exit",
+    )
+    parser.add_argument(
         "--check-permissions",
         action="store_true",
         help="validate permissions.json and exit; 0 if the daemon would start",
@@ -201,6 +270,9 @@ def main(argv: list[str] | None = None) -> int:
             for body in records:
                 print(activity.render(body))
         return 0
+
+    if args.permissions:
+        return _print_permissions(log, as_json=args.json)
 
     if args.check_permissions:
         return _check_permissions(log)

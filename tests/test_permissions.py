@@ -20,14 +20,17 @@ import pytest
 from omarchy_mcp import permissions as perms
 from omarchy_mcp.paths import PERMISSIONS_FILE, PERMISSIONS_LOCAL_FILE
 from omarchy_mcp.permissions import (
+    COVERED_SHOWN,
     DEFAULT_GUARDED,
     Effect,
     Permissions,
     PermissionsError,
     Rule,
     check,
+    describe,
     errors,
     evaluate,
+    explain,
     load,
     parse,
 )
@@ -122,10 +125,17 @@ class TestMatching:
         assert "omarchy migrate" in commands
         assert rule("omarchy migrate *").matches("omarchy migrate")
 
-    def test_a_prefix_does_not_match_a_longer_token(self):
-        """`omarchy install *` must not match a hypothetical `omarchy installer`.
-        The space is part of the rule."""
+    def test_a_prefix_does_not_match_a_longer_token(self, commands):
+        """The space is part of the rule, and this is not hypothetical.
+
+        Omarchy ships `omarchy installed service dropbox` alongside
+        `omarchy install app`. Upstream's `Bash(ls*)`-matches-`lsof` behaviour
+        would have quietly folded the `installed` routes into every
+        `omarchy install *` rule anybody wrote."""
         assert not rule("omarchy install *").matches("omarchy installer")
+        assert "omarchy installed service dropbox" in commands
+        assert not rule("omarchy install *").matches("omarchy installed service dropbox")
+        assert rule("omarchy installed *").matches("omarchy installed service dropbox")
 
     def test_a_matcher_expands_to_what_it_covers(self, commands):
         covered = rule("omarchy install *").covers(commands.values())
@@ -436,3 +446,101 @@ class TestTheShippedExample:
 
     def test_it_points_at_the_schema(self, example):
         assert '"$schema"' in example.read_text()
+
+
+class TestTheExplainer:
+    """"Why can the agent do this?" is the question a person opens this to ask,
+    and an answer that cannot name the rule and the file is not one."""
+
+    def test_a_rule_that_decided_is_named_with_its_file(self, commands):
+        row = describe(commands["omarchy install app"], pooled(allow=["omarchy install *"]))
+        assert row["rule"] == "omarchy install *"
+        assert row["source"] == "permissions.json"
+
+    def test_nothing_is_named_when_nothing_matched(self, commands):
+        """No rule may be credited with a decision it did not make."""
+        row = describe(commands["omarchy install app"], Permissions())
+        assert "rule" not in row and "source" not in row
+
+    def test_a_rule_is_shown_as_what_it_covers(self, commands):
+        report = explain(pooled(allow=["omarchy install *"]), commands)
+        rule = report["rules"][0]
+        expected = {
+            c.route
+            for c in commands.values()
+            if c.route == "omarchy install" or c.route.startswith("omarchy install ")
+        }
+        assert rule["covers"] == len(expected)
+        assert rule["routes"], "a rule with no expansion teaches nothing"
+        # The listing is what a person checks the rule against, so it must not
+        # quietly include the neighbouring `omarchy installed ...` routes.
+        assert not any(r.startswith("omarchy installed") for r in rule["routes"])
+
+    def test_a_long_expansion_is_cut_but_counted_exactly(self, commands):
+        report = explain(pooled(allow=["omarchy *"]), commands)
+        rule = report["rules"][0]
+        assert rule["covers"] == len(commands), "the count is never approximate"
+        assert len(rule["routes"]) == COVERED_SHOWN
+        assert rule["more"] == len(commands) - COVERED_SHOWN
+
+    def test_rules_come_back_in_precedence_order(self, commands):
+        report = explain(
+            pooled(allow=["omarchy theme *"], deny=["omarchy dev *"], ask=["omarchy install *"]),
+            commands,
+        )
+        assert [r["effect"] for r in report["rules"]] == ["deny", "ask", "allow"]
+        assert report["precedence"] == ["deny", "ask", "allow"]
+
+    def test_a_dead_rule_says_so_here(self, commands):
+        report = explain(pooled(deny=["omarchy nosuchthing *"]), commands)
+        assert "void" in report["rules"][0]
+        assert report["rules"][0]["covers"] == 0
+
+    def test_sudo_routes_are_counted_not_listed(self, commands):
+        """Over a hundred of them, refused whatever the document says. Listing
+        them would bury the routes it actually governs."""
+        report = explain(Permissions(), commands)
+        listed = {r["route"] for r in report["routes"]}
+        sudo = {c.route for c in commands.values() if c.requires_sudo}
+        assert not (listed & sudo)
+        assert report["counts"]["byEffect"]["deny"] >= len(sudo)
+
+    def test_a_safe_route_nothing_touches_is_omitted(self, commands):
+        report = explain(Permissions(), commands)
+        listed = {r["route"] for r in report["routes"]}
+        assert "omarchy theme list" not in listed
+
+    def test_a_safe_route_a_rule_touches_is_listed(self, commands):
+        report = explain(pooled(deny=["omarchy theme list"]), commands)
+        row = next(r for r in report["routes"] if r["route"] == "omarchy theme list")
+        assert row["effect"] == "deny"
+        assert row["rule"] == "omarchy theme list"
+
+    def test_every_guarded_route_is_accounted_for(self, commands):
+        report = explain(Permissions(), commands)
+        listed = {r["route"] for r in report["routes"]}
+        guarded = {c.route for c in commands.values() if base_tier(c) is Tier.GUARDED}
+        assert guarded <= listed, "a guarded route is exactly what this document governs"
+
+    def test_the_never_granted_route_is_flagged_where_it_appears(self, commands):
+        report = explain(pooled(allow=["omarchy *"]), commands)
+        row = next(r for r in report["routes"] if r["route"] in NEVER_STORE)
+        assert row["neverGranted"] is True
+        assert row["effect"] == "ask", "an allow cannot grant it"
+        assert report["neverGranted"] == sorted(NEVER_STORE)
+
+    def test_the_counts_add_up(self, commands):
+        report = explain(pooled(deny=["omarchy dev *"]), commands)
+        assert sum(report["counts"]["byEffect"].values()) == len(commands)
+        assert report["counts"]["commands"] == len(commands)
+        assert report["counts"]["listed"] == len(report["routes"])
+
+    def test_where_the_default_came_from_is_said(self, commands):
+        assert "built-in" in explain(Permissions(), commands)["guardedDefaultSource"]
+        report = explain(pooled(guardedDefault="deny"), commands)
+        assert report["guardedDefaultSource"] == "permissions.json"
+        assert report["guardedDefault"] == "deny"
+
+    def test_it_serialises(self, commands):
+        """It is published as JSON by a resource and by the CLI."""
+        json.dumps(explain(pooled(allow=["omarchy theme *"]), commands))

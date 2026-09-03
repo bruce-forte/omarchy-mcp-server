@@ -641,12 +641,112 @@ def describe(cmd: Command, perms: Permissions) -> dict[str, object]:
         "tier": outcome.tier.value,
         "runnable": outcome.allowed or outcome.asks,
     }
+    # Which rule decided, and which file it came from. The question a person
+    # opens the panel to ask is "why can the agent do this?", and an answer that
+    # cannot name the rule and the file is not one -- it is also what stops a
+    # surface offering a Revoke button for a rule it cannot revoke.
+    if outcome.rule is not None:
+        row["rule"] = outcome.rule.matcher
+        row["source"] = outcome.rule.source
     if outcome.asks:
         row["asks"] = True
         row["note"] = ASK_NOTE
     elif not outcome.allowed:
         row["refusal"] = outcome.reason
     return row
+
+
+#: How many covered routes a rule lists before the rest become a count.
+#:
+#: `omarchy *` covers every route Omarchy ships, and a listing that prints all of
+#: them buries the twelve rules around it. The count is always exact; only the
+#: enumeration is cut, and it says so.
+COVERED_SHOWN = 12
+
+
+def explain(perms: Permissions, commands: dict[str, Command]) -> dict[str, object]:
+    """The whole permission state, for a person who asked what an agent may do.
+
+    Not the same thing as `omarchy://commands`, which annotates every route with
+    a verdict. This is the other direction: the *rules*, what each one actually
+    covers on this machine, and then only the routes whose answer is not simply
+    "runs". A listing of 426 rows where 370 say "safe, runs" hides the fifty-odd
+    that matter.
+
+    Every count here is computed against the live registry rather than the
+    document, which is the point: a rule is static and the registry moves under
+    it, so "what does this rule cover" is a question only the pair can answer.
+    """
+    rows = []
+    findings = {id(f.rule): f for f in check(perms, commands)}
+    for rule in perms.rules:
+        covered = rule.covers(commands.values())
+        row: dict[str, object] = {
+            "effect": rule.effect.value,
+            "matcher": rule.matcher,
+            "source": rule.source,
+            "covers": len(covered),
+            "routes": list(covered[:COVERED_SHOWN]),
+        }
+        if len(covered) > COVERED_SHOWN:
+            row["more"] = len(covered) - COVERED_SHOWN
+        finding = findings.get(id(rule))
+        if finding is not None:
+            row[finding.level] = finding.reason
+        rows.append(row)
+
+    interesting = []
+    counts = {effect.value: 0 for effect in Effect}
+    for cmd in sorted(commands.values(), key=lambda c: c.route):
+        outcome = decide(cmd, perms)
+        counts[outcome.effect.value] += 1
+        # Two uninteresting majorities are left out, and counted instead.
+        #
+        # A safe route nothing touches simply runs, and there are hundreds. A
+        # `blocked` route is refused whatever the document says, and there are
+        # over a hundred of those -- listing them would bury the fifty-odd
+        # routes this document actually governs under a wall of "needs sudo".
+        # What is left is exactly the set a person is asking about: every route
+        # whose answer the document had a hand in.
+        if outcome.tier is Tier.BLOCKED:
+            continue
+        if outcome.effect is Effect.ALLOW and outcome.rule is None and outcome.tier is Tier.SAFE:
+            continue
+        entry: dict[str, object] = {
+            "route": cmd.route,
+            "tier": outcome.tier.value,
+            "effect": outcome.effect.value,
+        }
+        if outcome.rule is not None:
+            entry["rule"] = outcome.rule.matcher
+            entry["source"] = outcome.rule.source
+        if cmd.route in NEVER_STORE:
+            entry["neverGranted"] = True
+        interesting.append(entry)
+
+    return {
+        "guardedDefault": perms.guarded_default.value,
+        "guardedDefaultSource": perms.guarded_default_source or "the built-in default",
+        "askTimeoutSeconds": perms.ask_timeout_s,
+        "precedence": [effect.value for effect in PRECEDENCE],
+        "rules": rows,
+        "counts": {
+            "commands": len(commands),
+            "byEffect": counts,
+            "rules": len(perms.rules),
+            "listed": len(interesting),
+        },
+        "neverGranted": sorted(NEVER_STORE),
+        "routes": interesting,
+        "note": (
+            "Rules are read deny, then ask, then allow; the first match decides, and a "
+            "narrower rule never reorders that. `routes` lists only what this document "
+            "has a hand in: routes that are safe and matched by no rule are omitted "
+            "because they simply run, and routes needing sudo are omitted because they "
+            "are refused whatever the document says. `counts.byEffect` covers all of "
+            "them."
+        ),
+    }
 
 
 def decide(cmd: Command, perms: Permissions) -> Outcome:

@@ -124,12 +124,13 @@ better-shaped door onto the same room, never a way around the lock. Any of them
 can be switched off in the config, and everything they do stays reachable
 through `omarchy_run`.
 
-**Seven resources** carry the reference material. Tools are how an agent acts;
+**Eight resources** carry the reference material. Tools are how an agent acts;
 resources are how a person reads — in Claude Code they appear as `@` mentions:
 
 | URI | Holds |
 |-----|-------|
 | `omarchy://commands` | The whole registry, annotated with what this server may run |
+| `omarchy://permissions` | The rules in force, what each covers here, and every route they decide |
 | `omarchy://shell/targets` | Every IPC target with full method signatures — documented nowhere upstream |
 | `omarchy://desktop/state` | Monitors, workspaces, windows, focus |
 | `omarchy://system/status` | The system status aggregate |
@@ -324,8 +325,14 @@ Copy [`permissions.example.json`](permissions.example.json) to start, and check
 your edits before restarting anything:
 
 ```bash
-omarchy-mcpd --check-permissions
+omarchy-mcpd --check-permissions   # would the daemon start?
+omarchy-mcpd --permissions         # what is in force, and what each rule covers
 ```
+
+`--permissions` answers the question you actually have — *why can it do that?* —
+by expanding every rule against the commands your Omarchy ships and listing the
+routes the document decides. Agents read the same report as
+`omarchy://permissions`.
 
 **A file that does not load stops the server.** Not "is ignored with a warning"
 — ignoring it would mean running under rules nobody wrote, and an ignored `deny`

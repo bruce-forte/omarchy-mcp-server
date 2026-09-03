@@ -19,9 +19,10 @@ from omarchy_mcp.server import build
 
 from .test_server import BASE_URL, PROTOCOL, TOKEN, parse, rpc
 
-#: The four that appear in a client's `@` menu.
+#: The five that appear in a client's `@` menu.
 CONCRETE = {
     "omarchy://commands",
+    "omarchy://permissions",
     "omarchy://shell/targets",
     "omarchy://desktop/state",
     "omarchy://system/status",
@@ -145,3 +146,26 @@ def test_shell_target_template_resolves(session_client):
     if "error" in body and "not on PATH" in body["error"]:
         pytest.skip("omarchy-shell is not running")
     assert body["target"] == "media"
+
+
+def test_the_permissions_resource_explains_itself(session_client):
+    """The half a person reads: which rule decided, and which file it came
+    from. Read by URI rather than asserted on the function, so the wiring is
+    covered too."""
+    client, session = session_client
+    response = rpc(
+        client,
+        "resources/read",
+        {"uri": "omarchy://permissions"},
+        session=session,
+    )
+    body = json.loads(parse(response)["result"]["contents"][0]["text"])
+
+    assert body["precedence"] == ["deny", "ask", "allow"]
+    assert body["guardedDefault"] in ("ask", "deny")
+    assert body["counts"]["commands"] > 0
+    # Every guarded route is accounted for; the safe majority and the sudo
+    # majority are counted rather than listed.
+    assert body["routes"], "the routes this document governs are the point"
+    assert body["counts"]["listed"] == len(body["routes"])
+    assert body["counts"]["listed"] < body["counts"]["commands"]

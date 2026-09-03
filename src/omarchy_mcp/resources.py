@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import json
 
-from . import desktop, registry, shell
+from . import desktop, permissions, registry, shell
 from .config import Config
 from .permissions import describe
 from .settings import Settings
@@ -38,6 +38,21 @@ def register(mcp, settings: Settings, log) -> None:
     )
     def commands_resource() -> str:
         return json.dumps(_annotated(registry.all_commands().values()), indent=2)
+
+    @mcp.resource(
+        "omarchy://permissions",
+        name="What this agent is permitted to run",
+        description=(
+            "The permission rules in force, what each one covers on this machine, "
+            "and every route whose answer they had a hand in. Read this to find out "
+            "why a command was refused, or which rule to change."
+        ),
+        mime_type="application/json",
+    )
+    def permissions_resource() -> str:
+        return json.dumps(
+            permissions.explain(settings.permissions, registry.all_commands()), indent=2
+        )
 
     @mcp.resource(
         "omarchy://shell/targets",
