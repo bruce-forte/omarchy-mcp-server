@@ -10,7 +10,7 @@
 PLUGIN_ID := io.github.bruce-forte.mcp-server
 export UV_PROJECT_ENVIRONMENT := $(if $(XDG_STATE_HOME),$(XDG_STATE_HOME),$(HOME)/.local/state)/$(PLUGIN_ID)/dev-venv
 
-.PHONY: check test lint validate tools sync clean run guard py
+.PHONY: check test lint validate tools schema sync clean run guard py
 
 check: guard test lint validate
 
@@ -50,11 +50,20 @@ validate:
 	  echo "error: TOOLS.md is stale. Run 'make tools' and commit it."; exit 1; }
 	@grep -vE '^[[:space:]]*(#|$$)' config.example.toml | grep -vE '^\[' >/dev/null && { \
 	  echo "error: config.example.toml has an uncommented key."; exit 1; } || true
+	@PYTHONPATH=src uv run --frozen python -m tests.generate_permissions_schema \
+	  > /tmp/permissions.schema.json.check
+	@diff -q permissions.schema.json /tmp/permissions.schema.json.check >/dev/null || { \
+	  echo "error: permissions.schema.json is stale. Run 'make schema' and commit it."; exit 1; }
 
 # Regenerate TOOLS.md from the server's own schemas, so the documentation
 # cannot drift from what the server actually advertises.
 tools: sync
 	PYTHONPATH=src uv run --frozen python -m tests.generate_tools_doc > TOOLS.md
+
+# Regenerate the permissions JSON Schema from the pydantic models that enforce
+# it, so an editor and the daemon cannot disagree about what the file may say.
+schema: sync
+	PYTHONPATH=src uv run --frozen python -m tests.generate_permissions_schema > permissions.schema.json
 
 # Ad-hoc python against the dev environment, without creating ./.venv:
 #   make py CMD='-c "import omarchy_mcp; print(omarchy_mcp.__version__)"'
