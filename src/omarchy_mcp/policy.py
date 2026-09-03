@@ -98,6 +98,20 @@ class Verdict:
     askable: bool = False
 
 
+#: Guarded routes that may be asked about and never granted outright.
+#:
+#: The criterion is narrow on purpose: **the route's own argument is a command
+#: line**. `omarchy update lock run <command> [args...]` runs whatever it is
+#: handed, so one standing grant on it is a standing grant on everything, shown
+#: in a permissions review as a single calm row.
+#:
+#: The wider reading -- "could lead to running attacker-chosen code" -- would
+#: swallow `install`, `pkg aur add` and `dev link`, and then nothing worth
+#: granting could be granted. This is not a tier: such a route is perfectly
+#: runnable, and a person answering a question about a specific call is exactly
+#: the right amount of friction for it.
+NEVER_STORE = frozenset({"omarchy update lock"})
+
 #: The IPC verbs on this plugin's own target that an agent may call.
 #:
 #: Both are read-only and both answer a question an agent has a good reason to

@@ -23,6 +23,22 @@ STATE_DIR = _xdg("XDG_STATE_HOME", ".local/state") / PLUGIN_ID
 CONFIG_DIR = _xdg("XDG_CONFIG_HOME", ".config") / "omarchy" / "mcp"
 CONFIG_FILE = CONFIG_DIR / "config.toml"
 
+#: What an agent is permitted to do. Two files, both here rather than one here
+#: and one in the state directory: a person opening this folder has to see
+#: everything that decides what an agent may do, in one place. Splitting the two
+#: halves of one answer across two directories is how somebody reads half their
+#: permissions and believes it is all of them.
+#:
+#: The first is the user's, hand-edited, and meant to be checked into a dotfiles
+#: repository. The second is the daemon's, written when a person answers "always"
+#: at the desk, and belongs in .gitignore. The daemon never writes the first.
+PERMISSIONS_FILE = CONFIG_DIR / "permissions.json"
+PERMISSIONS_LOCAL_FILE = CONFIG_DIR / "permissions.local.json"
+
+#: Read in the order given: pooled either way, but the user's own rule is the one
+#: the explainer should quote when both say the same thing.
+PERMISSIONS_FILES = (PERMISSIONS_FILE, PERMISSIONS_LOCAL_FILE)
+
 #: Dies with the session.
 RUNTIME_DIR = Path(os.environ.get("XDG_RUNTIME_DIR") or "/tmp")
 

@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/bruce-forte/omarchy-mcp-server/master/permissions.schema.json",
+  "title": "Omarchy MCP server permissions",
+  "description": "What an agent connected to the Omarchy MCP server is permitted to do. Rules are consulted deny, then ask, then allow; the first match decides, and a narrower rule never reorders that. A matcher is either an exact route (\"omarchy install app\") or a prefix with a trailing \" *\" (\"omarchy install *\"), which also matches the bare route. Commands requiring sudo are refused whatever this file says.",
+  "$defs": {
+    "PermissionsBlock": {
+      "additionalProperties": false,
+      "properties": {
+        "guardedDefault": {
+          "anyOf": [
+            {
+              "enum": [
+                "ask",
+                "deny"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "What a destructive command does when no rule matches it. 'ask' raises a notification on the desktop naming the command and what it resolved to; 'deny' refuses it outright. Commands that are not destructive always run, and commands requiring sudo never do.",
+          "title": "Guardeddefault"
+        },
+        "deny": {
+          "description": "Refused outright. Consulted first, and a narrower allow never overrides one.",
+          "items": {
+            "$ref": "#/$defs/RuleModel"
+          },
+          "title": "Deny",
+          "type": "array"
+        },
+        "ask": {
+          "description": "Asked about on the desktop every time. Consulted before allow.",
+          "items": {
+            "$ref": "#/$defs/RuleModel"
+          },
+          "title": "Ask",
+          "type": "array"
+        },
+        "allow": {
+          "description": "Runs without asking. Consulted last, so a matching deny or ask wins.",
+          "items": {
+            "$ref": "#/$defs/RuleModel"
+          },
+          "title": "Allow",
+          "type": "array"
+        }
+      },
+      "title": "PermissionsBlock",
+      "type": "object"
+    },
+    "RuleModel": {
+      "additionalProperties": false,
+      "description": "One rule as it appears on disk.\n\nAn object rather than upstream's ``Tool(specifier)`` string, so `kind`\nvalidates as an enum and a second kind is an enum addition rather than a\nparser change.",
+      "properties": {
+        "kind": {
+          "const": "route",
+          "description": "What the matcher names. Only routes today; a second kind is an addition here.",
+          "title": "Kind",
+          "type": "string"
+        },
+        "matcher": {
+          "description": "An exact route (\"omarchy install app\"), or a prefix with a trailing \" *\" (\"omarchy install *\"), which also matches the bare route. Wildcards anywhere else are rejected: the route space is closed, so there is nothing for them to express.",
+          "examples": [
+            "omarchy install app",
+            "omarchy install *"
+          ],
+          "pattern": "^[^\\s*]+( [^\\s*]+)*( \\*)?$",
+          "title": "Matcher",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "matcher"
+      ],
+      "title": "RuleModel",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "$Schema"
+    },
+    "permissions": {
+      "$ref": "#/$defs/PermissionsBlock"
+    }
+  },
+  "type": "object"
+}
