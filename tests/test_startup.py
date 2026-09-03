@@ -207,3 +207,56 @@ def test_permissions_module_is_the_one_that_decides():
     from omarchy_mcp import policy
 
     assert not hasattr(policy, "decide"), "the ladder lives in permissions.py"
+
+
+class TestPrintPermissions:
+    """The same report as `omarchy://permissions`, for a terminal -- including
+    the terminal of somebody whose daemon is refusing to start."""
+
+    def test_no_rules_says_so_rather_than_printing_nothing(self, permission_files, capsys):
+        assert entry._print_permissions(LOG) == 0
+        out = capsys.readouterr().out
+        assert "No rules" in out
+        assert "guardedDefault: ask" in out
+
+    def test_a_rule_is_printed_with_its_file_and_what_it_covers(
+        self, permission_files, capsys
+    ):
+        permission_files[0].write_text(doc(deny=["omarchy dev *"]))
+        assert entry._print_permissions(LOG) == 0
+        out = capsys.readouterr().out
+        assert "omarchy dev *" in out
+        assert "permissions.json" in out
+        assert "omarchy dev link" in out, "the expansion is the point"
+
+    def test_precedence_is_stated_not_implied(self, permission_files, capsys):
+        entry._print_permissions(LOG)
+        assert "deny -> ask -> allow" in capsys.readouterr().out
+
+    def test_a_dead_rule_is_flagged(self, permission_files, capsys):
+        permission_files[0].write_text(doc(deny=["omarchy nosuchthing *"]))
+        entry._print_permissions(LOG)
+        assert "[void]" in capsys.readouterr().out
+
+    def test_json_is_the_same_report_the_resource_serves(self, permission_files, capsys):
+        permission_files[0].write_text(doc(allow=["omarchy theme *"]))
+        assert entry._print_permissions(LOG, as_json=True) == 0
+
+        from omarchy_mcp import permissions as perms_module
+        from omarchy_mcp import registry
+
+        printed = json.loads(capsys.readouterr().out)
+        expected = perms_module.explain(
+            perms_module.load(permission_files), registry.all_commands()
+        )
+        assert printed == expected
+
+    def test_a_defective_document_exits_ex_config(self, permission_files, capsys):
+        permission_files[0].write_text("{")
+        assert entry._print_permissions(LOG) == entry.EX_CONFIG
+        assert "would not start" in capsys.readouterr().out
+
+    def test_it_notifies_nobody(self, permission_files, notifications):
+        permission_files[0].write_text("{")
+        entry._print_permissions(LOG)
+        assert notifications == []

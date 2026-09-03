@@ -196,6 +196,18 @@ recognises so it stops retrying, and says why on the desktop, in the journal,
 and in the bar panel. `omarchy-mcpd --check-permissions` validates a fix without
 starting anything.
 
+### You can ask what the rules actually do
+
+A rule is written once and read against a registry that moves. `omarchy-mcpd
+--permissions`, and the `omarchy://permissions` resource, expand every rule
+against the commands installed right now: what it covers, how many, from which
+file, and whether it has stopped covering anything at all. Every route whose
+answer the document had a hand in is listed with the rule that decided it.
+
+The same provenance rides on `omarchy_search_commands` and
+`omarchy://commands`, so *"why can the agent do this?"* has an answer that names
+a matcher and a filename rather than a tier.
+
 ### No rule can promote what the derivation refuses
 
 Two things beat every rule anyone can write, and both are enforced in one place:

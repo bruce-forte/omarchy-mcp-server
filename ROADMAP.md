@@ -19,13 +19,13 @@ reasons matter more than the choices when something needs revisiting.
 | 7 | **Self-healing bash wrapper** builds the venv, then `exec`s | `omarchy plugin add` runs no build and no install hook, by design. Bootstrap has to be lazy, and QML is the wrong place for it |
 | 8 | **`kinds: ["service", "bar-widget"]`** | A daemon whose only client is an agent fails silently and invisibly. The bar icon is the cheapest compliance with "never fail silently" |
 | 9 | **7 IPC functions**, health probed not assumed | `qs ipc show` is the discovery mechanism, so the names are documentation. A wedged HTTP loop still shows a live pid, so liveness needs a real probe |
-| 10 | **4 concrete resources + 3 URI templates** | Covers all 356 commands and ~20 IPC targets. 356 concrete resources would bloat `resources/list` and blow up in any client that injects the list into context |
+| 10 | **Concrete resources + URI templates** (4 + 3 at the time; `omarchy://permissions` made it 5 + 3 in N10 c) | Covers all 356 commands and ~20 IPC targets. 356 concrete resources would bloat `resources/list` and blow up in any client that injects the list into context |
 | 11 | **Optional TOML config, every key commented out** | Live keys freeze v1 defaults forever. Commented keys let upstream defaults flow through |
 | 12 | **Daemon health notifies; request failures do not** | The agent already receives tool errors in the response. Toasting them would fire constantly on a wrong `omarchy_run` |
 | 13 | **Never install our own package into the venv** | An editable install writes build artifacts into the plugin directory, which Omarchy watches — every bootstrap would reload the shell |
 | 14 | **uv only, no pip fallback** | Two bootstrap paths means the rare one is the least tested and, without `uv.lock`, the least safe |
 | 15 | **Visibility before curated tools** | Building 15 tools on a daemon you can only observe through `journalctl` means debugging blind |
-| 16 | **Keep 4 concrete resources + 3 templates** even though Claude Code never enumerates templates (F8) | Resources are for a human typing `@`; agents discover through tools. 61 concrete group resources would bury `omarchy://shell/targets`, the entry actually wanted |
+| 16 | **Keep the concrete resources + 3 templates** even though Claude Code never enumerates templates (F8) | Resources are for a human typing `@`; agents discover through tools. 61 concrete group resources would bury `omarchy://shell/targets`, the entry actually wanted |
 | 17 | **Dev virtualenv lives outside the repository** | `omarchy plugin validate` rejects symlinks anywhere in a plugin folder, and a virtualenv is largely symlinks. The `Makefile` enforces it |
 | 18 | **Permissions are their own JSON document**, `deny` → `ask` → `allow`, not `config.toml` keys | Two files that both decide what an agent may do is a second source of truth. JSON gets a published schema an editor checks before the daemon sees the file, and the three-list shape is one a user of this plugin has probably already met — N10 |
 
@@ -50,9 +50,9 @@ reasons matter more than the choices when something needs revisiting.
       user can see what an agent did, answer for the calls that warrant it, and
       stop the thing. N12 is done; N11 remains. N10 grew into the phase's
       largest item — five commits and its own permissions document — and N13
-      and N14 came out of it. **N10 a and b are done**: the document decides,
-      and a defective one stops the daemon. c, d and e remain. See
-      [Next steps](#next-steps).
+      and N14 came out of it. **N10 a, b and c are done**: the document
+      decides, a defective one stops the daemon, and every route can say which
+      rule decided it. d and e remain. See [Next steps](#next-steps).
 
 Tests are not a phase. `policy.py` and the auth checks are tested in the phase
 that creates them — they are the security boundary, and tests retrofitted to a
@@ -970,7 +970,7 @@ Argument resolution was considered as a sixth and left out: it is true and
 distinctive, but it already has a worked example under *What an agent is allowed
 to run*, and six items read as a list rather than a claim.
 
-### N10 — Permissions, reviewed by diff — a and b done
+### N10 — Permissions, reviewed by diff — a, b and c done
 
 Depends on N4 for the question, on N6's panel for the surface a notification
 cannot provide, and on N7's holder, since permissions the daemon owns have to
@@ -1348,7 +1348,7 @@ unreviewable exactly where review matters most.
 |---|---|---|
 | **a** ✅ | `permissions.py`: schema, matcher, rule pool, the ladder, void classification. Pure, unwired | unchanged |
 | **b** ✅ | Wire it. `[policy]` leaves `config.toml`. `guardedDefault: "ask"`. Startup refusal, exit `78`, `Service.qml` stops respawning. `permissionsOk` | **the behaviour change**, alone in its diff. Guarded routes ask through N4; approve-once works |
-| **c** | Explainer data: `rule`/`source` on annotated rows, `omarchy://permissions`, `--permissions` | you can see why every route is what it is |
+| **c** ✅ | Explainer data: `rule`/`source` on annotated rows, `omarchy://permissions`, `--permissions` | you can see why every route is what it is |
 | **d** | Answer vocabulary: helper verbs, `asking` frame, panel Allow-once / Always / Deny, `permission` events | "always" exists |
 | **e** | The delta: `registry-seen.json`, forward-quarantine, `critical` notification, panel section, acknowledge | complete |
 
@@ -1387,6 +1387,28 @@ disagrees with it, and why.
 - **The suite could drive the machine it ran on.** Not a design change — a fault
   the behaviour change exposed, at the cost of a reboot. See **F29**; the fix is
   two autouse fixtures and a test file for them.
+
+And from **c**:
+
+- **`omarchy://permissions` lists rules, not commands.** The plan said
+  "explainer data" without saying what the surface holds. `omarchy://commands`
+  already annotates all 426 routes; a second listing of the same shape would
+  have been the same thing twice. This one goes the other way — the *rules*,
+  what each covers on this machine, and then only the routes whose answer the
+  document had a hand in. The safe-and-unmatched majority and the sudo majority
+  are counted rather than listed, because 370 rows saying "runs" and 120 saying
+  "needs sudo" bury the fifty-odd that were actually decided.
+- **A rule's expansion is capped at twelve and counted exactly.** `omarchy *`
+  covers every route Omarchy ships; printing them buries the rules around it.
+  The count is never approximate, only the enumeration is cut, and it says so.
+- **`omarchy installed ...` is a real route.** The matcher design rejected
+  mid-token wildcards partly to avoid upstream's `Bash(ls*)`-matches-`lsof`
+  behaviour, and the example given for it was a hypothetical `omarchy installer`.
+  It is not hypothetical: Omarchy ships `omarchy installed service dropbox`
+  alongside `omarchy install app`, so a laxer matcher would have folded the
+  `installed` routes into every `omarchy install *` rule anyone wrote. Found by
+  a test of mine that asserted the wrong count, and now pinned by
+  `test_a_prefix_does_not_match_a_longer_token`.
 
 #### Watch for
 

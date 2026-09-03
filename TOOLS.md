@@ -211,12 +211,13 @@ Turn a desktop feature on, off, or over: bar, do_not_disturb, idle, nightlight, 
 
 Tools are how an agent acts; resources are how a person reads. In Claude Code they appear as `@` mentions.
 
-### The 4 concrete resources
+### The 5 concrete resources
 
 | URI | Holds |
 |-----|-------|
 | `omarchy://commands` | Every Omarchy command with its route, arguments, summary, examples, and whether the MCP server may run it. |
 | `omarchy://desktop/state` | Monitors, workspaces, open windows, and which window is focused. |
+| `omarchy://permissions` | The permission rules in force, what each one covers on this machine, and every route whose answer they had a hand in. Read this to find out why a command was refused, or which rule to change. |
 | `omarchy://shell/targets` | Every IPC target the running shell exposes, with the exact signature of each method. This is the interface plugins are driven through, and it is documented nowhere else. |
 | `omarchy://system/status` | CPU, memory, battery, network, theme, background, idle, font, monitor. |
 
