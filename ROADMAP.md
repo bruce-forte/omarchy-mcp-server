@@ -50,7 +50,9 @@ reasons matter more than the choices when something needs revisiting.
       user can see what an agent did, answer for the calls that warrant it, and
       stop the thing. N12 is done; N11 remains. N10 grew into the phase's
       largest item — five commits and its own permissions document — and N13
-      and N14 came out of it. See [Next steps](#next-steps).
+      and N14 came out of it. **N10 a and b are done**: the document decides,
+      and a defective one stops the daemon. c, d and e remain. See
+      [Next steps](#next-steps).
 
 Tests are not a phase. `policy.py` and the auth checks are tested in the phase
 that creates them — they are the security boundary, and tests retrofitted to a
@@ -968,7 +970,7 @@ Argument resolution was considered as a sixth and left out: it is true and
 distinctive, but it already has a worked example under *What an agent is allowed
 to run*, and six items read as a list rather than a claim.
 
-### N10 — Permissions, reviewed by diff
+### N10 — Permissions, reviewed by diff — a and b done
 
 Depends on N4 for the question, on N6's panel for the surface a notification
 cannot provide, and on N7's holder, since permissions the daemon owns have to
@@ -1344,9 +1346,9 @@ unreviewable exactly where review matters most.
 
 | | Contents | After it |
 |---|---|---|
-| **a** | `permissions.py`: schema, matcher, rule pool, the ladder, void classification. Pure, unwired | unchanged |
-| **b** | Wire it. `[policy]` leaves `config.toml`. `guardedDefault: "ask"`. Startup refusal, exit `78`, `Service.qml` stops respawning. `permissionsOk` | **the behaviour change**, alone in its diff. Guarded routes ask through N4; approve-once works |
-| **c** | Explainer data: `rule`/`source` on annotated rows, `omarchy://permissions`, `--permissions`, `--check-permissions`. Read-only | you can see why every route is what it is |
+| **a** ✅ | `permissions.py`: schema, matcher, rule pool, the ladder, void classification. Pure, unwired | unchanged |
+| **b** ✅ | Wire it. `[policy]` leaves `config.toml`. `guardedDefault: "ask"`. Startup refusal, exit `78`, `Service.qml` stops respawning. `permissionsOk` | **the behaviour change**, alone in its diff. Guarded routes ask through N4; approve-once works |
+| **c** | Explainer data: `rule`/`source` on annotated rows, `omarchy://permissions`, `--permissions` | you can see why every route is what it is |
 | **d** | Answer vocabulary: helper verbs, `asking` frame, panel Allow-once / Always / Deny, `permission` events | "always" exists |
 | **e** | The delta: `registry-seen.json`, forward-quarantine, `critical` notification, panel section, acknowledge | complete |
 
@@ -1354,6 +1356,37 @@ Between **b** and **e** an `allow` wildcard is fully forward-looking — the
 weaker semantics this item rejects. Named rather than discovered: the window is
 a few commits in an unreleased plugin, and `guardedDefault: "ask"` means a new
 route asks anyway unless a wildcard already covers it.
+
+#### What a and b did differently from this plan
+
+Written before the code and left standing above; these are the places the code
+disagrees with it, and why.
+
+- **`check()` is separate from `parse()`.** The plan treated validation as one
+  step. It is two, because half of it needs the registry and its answer changes
+  without the file changing: the same document is clean today and has a dead
+  rule after an `omarchy update`. `parse` raises on shape; `check` returns
+  findings, and only an `error` finding stops the daemon.
+- **A wildcard covering a sudo route is not an error.** Only an *exact* matcher
+  is an assertion about one route. `omarchy update *` is a reasonable thing to
+  write and several `update` routes need sudo — refusing it would make prefixes
+  unusable, which is most of what the syntax is for.
+- **`askTimeoutSeconds` moved into the document**, alongside `guardedDefault`,
+  rather than staying a scalar somewhere else. Both are settings rather than
+  rules, so `parse` returns an `Options` and `load` refuses a key claimed by two
+  files: each decides one thing, so it belongs in one place.
+- **`--check-permissions` landed in b, not c.** The plan filed it under the
+  explainer. It stopped being optional the moment a defective document could
+  stop the daemon: with the daemon down the panel is the only surface left, and
+  it has to be able to say *"valid now, press Start"*.
+- **`describe()` replaced two annotators, one commit early.** `resources.py` and
+  `generic.py` each carried a comment claiming to be "one derivation, shared
+  with the other" while being a copy of it. Both had to change anyway. Side
+  effect: `omarchy://commands` now carries `refusal` on refused rows, which only
+  `omarchy_search_commands` did before.
+- **The suite could drive the machine it ran on.** Not a design change — a fault
+  the behaviour change exposed, at the cost of a reboot. See **F29**; the fix is
+  two autouse fixtures and a test file for them.
 
 #### Watch for
 
@@ -1604,3 +1637,4 @@ tool from the client itself. The patch was reverted; nothing here was committed.
 | F26 | A click does not dismiss the notification — `omarchy notification dismiss` exists for exactly that, and matches a **summary substring**, not an id | Every ask needs a distinct headline, or two concurrent prompts dismiss each other |
 | F28 | **Nothing after `uvicorn.run()` runs.** Uvicorn restores the default signal handler and re-raises the signal that stopped it, so the process dies *by signal* — verified, exit status 143 on SIGTERM. A `finally`, an `atexit`, a non-daemon thread: none of them get a turn | The activity log's `stopped` marker was never written and its queue was never flushed, on every ordinary shutdown. Not catchable by unit tests, which fake `uvicorn.run` as a normal return; found by SIGTERMing the real daemon. Shutdown work now hangs off the **ASGI lifespan**, which completes before the re-raise (`activity.Closing`) |
 | F27 | `omarchy-shell <id> restart` left the daemon in `Waiting for connections to close` **indefinitely**, port unbound and process alive, because an attached client still held its stream open. It took `kill -9` | The reload rule `CLAUDE.md` documents hung whenever a client was attached, which is whenever it matters. **Fixed.** Three faults in one bug: uvicorn's `timeout_graceful_shutdown` defaults to waiting forever and an attached client never closes its stream; nothing escalated past `SIGTERM`; and `restart()` guessed 250ms, so `start()` returned early on a process that was still shutting down and left `wantRunning` false — which is why every hang also needed a manual `start`. The daemon now bounds its own shutdown, `Service.qml` puts a deadline on `SIGTERM`, and a restart waits for the actual exit. Verified with a client attached: 600ms, unattended |
+| F29 | **The test suite rebooted the developer's machine.** Three tests used `omarchy system reboot` as their example of a guarded route, on the sound assumption that a guarded route is refused and nothing happens. N10's commit b flipped the guarded default from *refuse* to *ask*, so the gate resolved the call and raised a real `-u critical` notification instead — `tests/test_server.py` and `tests/test_activity.py` mock neither `prompt.send` nor `execute.run`. It was clicked, in good faith, and the reboot ran. The journal shows two `systemctl reboot --no-wall` two seconds apart: two of the three tests got that far before the machine went down | The lesson is not "pick a gentler route". A suite must not be **one behaviour change away from executing whatever it names**, and pinning the registry, the state directory and the resolver sources was never the same thing as pinning execution. Two autouse fixtures now stand in the way: `_no_real_omarchy` fails any spawn of `omarchy`, `omarchy-shell`, `hyprctl`, `qs` or `wl-copy` against the live system, and `_no_desktop_prompts` keeps `prompt.send` off the desktop entirely. Both are tested in `tests/test_conftest_guards.py`, because a guard nobody exercises stops working silently. The opt-ins are narrow and already existed: redirect `execute.SEARCH` at a fixture directory, or mark the test `needs_omarchy` |

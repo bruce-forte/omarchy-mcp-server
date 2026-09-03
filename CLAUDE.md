@@ -8,7 +8,7 @@ Read these first, in this order:
 | File | For |
 |------|-----|
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | How it works and why it is shaped this way. **Start here before touching the source** |
-| [`SECURITY.md`](SECURITY.md) | The threat model. Read before changing `policy.py`, `auth.py`, or `execute.py` |
+| [`SECURITY.md`](SECURITY.md) | The threat model. Read before changing `policy.py`, `permissions.py`, `auth.py`, or `execute.py` |
 | [`ROADMAP.md`](ROADMAP.md) | Decisions with their reasons, phases, and what was rejected — check before proposing a feature |
 | `README.md` | The user-facing side |
 
@@ -20,49 +20,71 @@ This file is the working agreement.
 - **No AI attribution in commit messages.** No `Co-Authored-By`, no
   `Generated with`, no session trailer.
 - Run `make check` before committing. It runs the tests, `qmllint`,
-  `shellcheck`, `omarchy plugin validate`, and two staleness gates: that
-  `TOOLS.md` matches the server's current schemas, and that
-  `config.example.toml` still pins no defaults. CI runs the same things.
+  `shellcheck`, `omarchy plugin validate`, and three staleness gates: that
+  `TOOLS.md` matches the server's current schemas, that
+  `permissions.schema.json` matches the pydantic models that enforce it, and
+  that `config.example.toml` still pins no defaults. CI runs the same things.
 - **Use the `Makefile`, not bare `uv`.** It sets `UV_PROJECT_ENVIRONMENT` so the
   dev virtualenv lands outside the repository. A `.venv` here makes
   `omarchy plugin validate` fail, because it rejects symlinks inside a plugin
   folder.
 - Regenerate `TOOLS.md` with `make tools` whenever a tool's name, description,
-  schema, or annotations change. It is generated; never edit it by hand, and
-  `make check` fails if it is stale.
+  schema, or annotations change, and `permissions.schema.json` with
+  `make schema` whenever `permissions.py`'s models change. Both are generated;
+  never edit either by hand, and `make check` fails if either is stale.
 - Tests read committed snapshots in `tests/fixtures/`, never the installed
   Omarchy: `commands.json` (`omarchy commands --all --json`), `themes.txt`
   (`omarchy theme list`), `monitors.json` (`hyprctl -j monitors`, trimmed by
-  hand), `ipc-show.txt` (`qs ipc show`). Autouse fixtures pin all of them. That
-  is what lets the suite run in CI, and it stops tests changing meaning the next
-  time `omarchy update` renames a route. Refresh one deliberately, in its own
+  hand), `ipc-show.txt` (`qs ipc show`). Autouse fixtures pin all of them, and
+  two more stop any test spawning a real `omarchy` or raising a real
+  notification. That is what lets the suite run in CI, it stops tests changing
+  meaning the next time `omarchy update` renames a route, and it stops the suite
+  driving the machine it runs on. Refresh a snapshot deliberately, in its own
   commit.
 - A tool argument that names something — a theme, a monitor, a path, a URL —
   gets a resolver in `resolve.py` and a route in its table, so the refusal
   happens before anything is spawned and the call carries a human label for the
-  approval prompt N4 will put on screen. No resolver without a source of truth:
+  approval prompt N4 puts on screen. No resolver without a source of truth:
   package names have none, and refusing one that is not installed yet would
   refuse every install.
 
 ## The security boundary
 
-`policy.py`, `auth.py`, `execute.py`, `gate.py` and `prompt.py` are the
-boundary. Changes to them need tests in the same commit, and the existing tests
-are the specification:
+`policy.py`, `permissions.py`, `auth.py`, `execute.py`, `gate.py` and
+`prompt.py` are the boundary. Changes to them need tests in the same commit, and
+the existing tests are the specification:
 
-- Every sudo command classifies `blocked`, and no configuration can promote it.
-- Guarded commands are refused with a reason that names the config file.
+- Every sudo command classifies `blocked`, and **no rule** can promote it.
+  Naming one in `allow` or `ask` stops the daemon rather than being void.
+- `deny` → `ask` → `allow`, first match wins, and specificity never reorders it.
+- A route whose own argument is a command line (`NEVER_STORE`) may be asked
+  about and never granted.
+- **Any** defect in the permissions document refuses it. At startup that means
+  the daemon does not start, exit `78`; at reload the last good document stands.
 - `argv` never passes through a shell. `tests/test_execute.py` writes a canary
   file and asserts it survives an injection attempt.
 - Missing, wrong, and truncated tokens are all rejected; `/health` is the only
   route without one.
 - A foreign `Origin` gets 403, a foreign `Host` gets 421.
-- Nothing is asked about that must not be: `blocked` and `policy.deny` are
+- Nothing is asked about that must not be: `blocked` and a `deny` rule are
   refused before a question exists. Only an accept runs anything.
 - A consent token is both the filename and the contents, and is never given to
   the model. A file that merely exists is not a click.
+- An agent cannot switch off its own supervision. `policy.self_refusal` reads a
+  call's *arguments*, so it sits ahead of the tier rather than in it, and covers
+  all three doors: `omarchy_shell_call`, the `omarchy shell` route reached
+  through `omarchy_run`, and `omarchy plugin disable|remove|…` naming this
+  plugin.
 
 Do not add a config key for the listen address. See `SECURITY.md`.
+
+**Nothing in the test suite may reach the machine it runs on.** Two autouse
+fixtures in `conftest.py` enforce it, and `tests/test_conftest_guards.py` tests
+them. They exist because the suite once rebooted the developer's machine — see
+`ROADMAP.md` F29 — and the rule that came out of it is that a suite must not be
+one behaviour change away from executing whatever it names. Do not weaken them
+to make a test pass; the opt-ins are to redirect `execute.SEARCH` at a fixture
+directory, or to mark the test `needs_omarchy`.
 
 ## Never fail silently
 
@@ -249,18 +271,29 @@ one window where `serviceFor` has not resolved yet, and it stays that size:
 whether the daemon is up, on what port, and what it last did. New state belongs
 on the service object, where a binding already updates the widget.
 
-The consent store (N10) is the next thing that will want this, and it should
-call the service rather than build a second channel to the same process.
+N10's remaining commits are the next thing that will want this — the delta
+review and the Always button — and they should call the service rather than
+build a second channel to the same process. **Read-only IPC verbs only**: an
+agent can reach this plugin's own target, so a verb that grants a permission or
+acknowledges a review would let it permit itself. Acknowledge, allow and revoke
+belong in the panel and in `bin/omarchy-mcp-consent`, which are surfaces a
+person reaches at the desk.
 
 ### Reload rules
 
 - Editing Python: `omarchy-shell io.github.bruce-forte.mcp-server restart`
 - Editing QML: `omarchy restart shell` — the shell holds the object it already
   instantiated, so neither saving the file nor `rescanPlugins` swaps it in
-- Editing `~/.config/omarchy/mcp/config.toml`: nothing. The daemon re-reads it
-  within two seconds and applies it in place — tools appear and disappear on
-  attached clients, and `[policy]` takes effect on the next call.
-  `omarchy-shell io.github.bruce-forte.mcp-server reloadConfig` sends `SIGHUP`
-  and skips the wait; it is no longer a restart. `server.port` and the `[log]`
-  activity settings still need one, because the socket is bound and the log is
-  open.
+- Editing `~/.config/omarchy/mcp/config.toml` or `permissions.json`: nothing.
+  The daemon re-reads both within two seconds and applies them in place — tools
+  appear and disappear on attached clients, and a rule change takes effect on
+  the next call. `omarchy-shell io.github.bruce-forte.mcp-server reloadConfig`
+  sends `SIGHUP` and skips the wait; it is no longer a restart. `server.port`
+  and the `[log]` activity settings still need one, because the socket is bound
+  and the log is open.
+- A **broken** `permissions.json` behaves differently depending on when it is
+  read. At reload the last good document stands and the bar says so. At startup
+  the daemon does not start at all, and exits `78` so `Service.qml` stops
+  respawning rather than blaming the venv. `omarchy-mcpd --check-permissions`,
+  or the panel's **Check permissions** button, validates a fix without
+  restarting anything.

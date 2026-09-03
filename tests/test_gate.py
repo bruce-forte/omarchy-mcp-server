@@ -4,7 +4,7 @@ specification rather than a set of examples.
 The rules that must never regress, in the order they matter:
 
 - a `blocked` route is refused without anyone being asked anything
-- a `policy.deny` route is refused without anyone being asked anything
+- a route a `deny` rule covers is refused without anyone being asked anything
 - only an accept runs; every other way of leaving the question refuses
 - a click cannot be forged by a file merely existing, or replayed
 - the notification comes down on every exit path, cancellation included
