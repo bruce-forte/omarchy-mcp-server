@@ -12,13 +12,21 @@ involved.
 
 from __future__ import annotations
 
+import json
+
 import logging
 
 import anyio
 import pytest
 
 from omarchy_mcp import consent
-from omarchy_mcp.config import Config, load
+from omarchy_mcp.permissions import (
+    ASK_TIMEOUT_BOUNDS,
+    DEFAULT_ASK_TIMEOUT_S,
+    Permissions,
+    PermissionsError,
+    parse,
+)
 
 
 class Reply:
@@ -146,24 +154,34 @@ class TestClientCapability:
         answer = consent.unsupported("reboot")
         assert answer.outcome is consent.Outcome.UNSUPPORTED
         assert not answer.accepted
-        assert "config.toml" in answer.reason
+        assert "permissions.json" in answer.reason
 
 
-class TestTimeoutConfig:
+class TestTheTimeout:
+    """It lives with the permissions now, because it is one of their terms: how
+    long a question stands before silence answers it."""
+
     def test_the_default_is_sixty_seconds(self):
-        assert Config().ask_timeout_s == 60
+        assert Permissions().ask_timeout_s == DEFAULT_ASK_TIMEOUT_S == 60
 
-    def test_a_value_in_range_is_taken(self, tmp_path):
-        path = tmp_path / "config.toml"
-        path.write_text("[policy]\nask_timeout_s = 120\n")
-        assert load(path).ask_timeout_s == 120
+    def test_a_value_in_range_is_taken(self):
+        _, options = parse(
+            json.dumps({"permissions": {"askTimeoutSeconds": 120}}), source="permissions.json"
+        )
+        assert options.ask_timeout_s == 120
 
-    @pytest.mark.parametrize("value", ["1", "3600", '"soon"'])
-    def test_an_impossible_wait_falls_back_and_says_so(self, tmp_path, value):
+    @pytest.mark.parametrize("value", [1, 3600, "soon"])
+    def test_an_impossible_wait_refuses_the_document(self, value):
         """A second is not long enough to read the question; ten minutes is a
-        request parked on a desk nobody is at."""
-        path = tmp_path / "config.toml"
-        path.write_text(f"[policy]\nask_timeout_s = {value}\n")
-        config = load(path)
-        assert config.ask_timeout_s == 60
-        assert any("ask_timeout_s" in p for p in config.problems)
+        request parked on a desk nobody is at. Unlike config.toml, an
+        out-of-range value here is not clamped and warned about -- the whole
+        document is refused, because a permissions file we cannot read as
+        written is intent we do not know."""
+        with pytest.raises(PermissionsError):
+            parse(
+                json.dumps({"permissions": {"askTimeoutSeconds": value}}),
+                source="permissions.json",
+            )
+
+    def test_the_bounds_are_the_ones_the_message_promises(self):
+        assert ASK_TIMEOUT_BOUNDS == (5, 600)

@@ -60,15 +60,25 @@ def call(tool: str, outcome: str) -> None:
     emit("call", tool=tool, outcome=outcome)
 
 
-def reloaded(tools: int, declared: int, config_ok: bool) -> None:
+def reloaded(tools: int, declared: int, config_ok: bool, permissions_ok: bool = True) -> None:
     """The config file was re-read.
 
-    Counts, never contents. The bar shows "Tools 18 of 19" and whether the file
-    was rejected; which tools, and what the policy says, are answered by the
-    config file the person just edited.
+    Counts, never contents. The bar shows "Tools 18 of 19" and whether either
+    file was rejected; which tools, and what the rules now say, are answered by
+    the files the person just edited.
+
+    Two health flags rather than one. `config.toml` and the permissions document
+    fail independently and are fixed in different places, so a single lamp would
+    say "something is wrong" and leave the person to guess which.
 
     Like `call`, this exists so the widget learns now rather than at the next
     ten-second `/health` poll -- the person has just saved a file and is looking
     at the bar to find out whether it took.
     """
-    emit("reloaded", tools=tools, declared=declared, config_ok=config_ok)
+    emit(
+        "reloaded",
+        tools=tools,
+        declared=declared,
+        config_ok=config_ok,
+        permissions_ok=permissions_ok,
+    )

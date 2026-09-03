@@ -87,7 +87,7 @@ confused agent cannot reboot your machine while trying to change your wallpaper.
 
 ### Approving a guarded command at the time
 
-With `policy.ask = true`, a guarded route raises a critical desktop notification
+A guarded route raises a critical desktop notification
 naming the command and the resolved target, and clicking it approves **that one
 call**. Two properties matter more than the convenience:
 
@@ -106,7 +106,7 @@ passes arguments to hundreds of commands this project did not write, and if the
 mere existence of a path counted as consent, an agent that talked any one of
 them into writing a file would approve its own guarded call.
 
-`ask` never reaches sudo, and never reaches a route you put in `policy.deny`.
+Asking never reaches sudo, and never reaches a route a `deny` rule covers.
 The first cannot work; the second is a decision you already took.
 
 The text you are shown is assembled from a fixed frame, and every argument in it
@@ -164,11 +164,11 @@ arbitrary command execution into a network service with a single bearer token in
 front of it. If it is ever supported it will be a named feature with its own
 documentation and its own warnings, not a key someone flips without reading.
 
-### The config file is read while the daemon runs
+### The rules are read while the daemon runs
 
-`config.toml` is re-read within about two seconds of being saved, so a change to
-`policy.allow`, `policy.deny` or `policy.ask` takes effect without a restart and
-without dropping attached sessions.
+`config.toml` and `permissions.json` are both re-read within about two seconds
+of being saved, so a rule change takes effect without a restart and without
+dropping attached sessions.
 
 This does not widen what anybody can do. Anything that could write that file
 could already make it take effect — `omarchy_shell_call` reached this plugin's
@@ -178,15 +178,39 @@ below), and what live reload changed is the latency. Two rules bound it:
 - **`blocked` is computed from the command, not from the config.** A route that
   needs sudo classifies `blocked` whatever the file says, before and after a
   reload, and no configuration promotes it.
-- **A policy change is announced.** When a reload actually changes
-  `allow`, `allow_groups`, `deny`, `ask` or `ask_timeout_s`, a desktop
-  notification names what moved — a widening because it matters, a narrowing
-  because it explains a refusal that would otherwise look like a bug. Silent
-  widening is the thing that must not exist.
+- **A rule change is announced.** When a reload actually changes what the
+  document says, a desktop notification names what moved — a widening because it
+  matters, a narrowing because it explains a refusal that would otherwise look
+  like a bug. Silent widening is the thing that must not exist.
 
-A file that does not parse is refused outright and the running configuration
-stands, precisely because the alternative — falling back to defaults — would
-empty the deny list and re-enable every disabled tool on a typo.
+A file that does not parse is refused outright and the running rules stand,
+precisely because the alternative — falling back to defaults — would drop the
+user's `deny` rules and re-enable every disabled tool on a typo.
+
+**At startup the permissions document is stricter than that: any defect at all
+and the daemon does not start.** There is no known-good document to fall back to,
+and "no rules" is not the safe floor — a hand-written `deny` demotes routes the
+derivation calls safe, so ignoring the file loses protection rather than
+withholding permission. It exits `78` (`EX_CONFIG`), which the supervisor
+recognises so it stops retrying, and says why on the desktop, in the journal,
+and in the bar panel. `omarchy-mcpd --check-permissions` validates a fix without
+starting anything.
+
+### No rule can promote what the derivation refuses
+
+Two things beat every rule anyone can write, and both are enforced in one place:
+
+- **A command needing sudo.** Refused whatever the document says. Naming one in
+  `allow` or `ask` is not silently void — it stops the daemon, because believing
+  you granted something you did not is worse than being told.
+- **A route whose own argument is a command line.** `omarchy update lock` runs
+  whatever it is handed, so one standing grant on it is a standing grant on
+  everything. It can be asked about and never allowed.
+
+Rules are read `deny` → `ask` → `allow`, first match wins, and specificity never
+reorders that — which is what stops a broad `deny` being defeated by a narrower
+grant. A matcher is an exact route or a prefix with a trailing ` *`; wildcards
+anywhere else are refused rather than guessed at.
 
 ### An agent cannot switch off its own supervision
 
@@ -208,7 +232,7 @@ which are not lifecycle verbs at all: `copyClientConfig` puts the bearer token
 on the clipboard, and `omarchy_clipboard_read` is a tool.
 
 The refusal is **not a tier and not configurable**. It is decided on what the
-call *names*, before the tier is computed, so no `policy.allow` reaches it —
+call *names*, before the tier is computed, so no `allow` rule reaches it —
 the route `omarchy shell` stays perfectly safe when it names somebody else's
 target. It refuses rather than asking, because every verb behind it has a
 button in the bar panel: the refusal tells the agent to send the user there,

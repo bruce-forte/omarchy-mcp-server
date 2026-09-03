@@ -237,7 +237,7 @@ Every command is classified from `omarchy commands --json`. `omarchy_search_comm
 | Tier | Rule | Behaviour |
 |------|------|-----------|
 | `blocked` | needs sudo | Refused always. The server has no controlling terminal, so a password prompt could never be answered. Not overridable |
-| `guarded` | destructive | Refused unless allowed in `~/.config/omarchy/mcp/config.toml` |
+| `guarded` | destructive | Asked about on the desktop, unless `~/.config/omarchy/mcp/permissions.json` says otherwise |
 | `safe` | everything else | Runs |
 
 Guarded groups: `apply`, `channel`, `dev`, `drive`, `hibernation`, `install`, `migrate`, `pkg`, `plugin`, `provision`, `reinstall`, `remove`, `setup`, `snapshot`, `update`, `upgrade`.

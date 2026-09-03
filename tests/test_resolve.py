@@ -21,6 +21,7 @@ import pytest
 
 from omarchy_mcp import resolve
 from omarchy_mcp.config import Config
+from omarchy_mcp.permissions import Permissions
 from omarchy_mcp.stats import Stats
 from omarchy_mcp.tools._shared import run_route
 
@@ -205,6 +206,7 @@ class TestTheGate:
                 "omarchy theme set",
                 ["Tokoy Night"],
                 config=Config(),
+                perms=Permissions(),
                 stats=Stats(),
                 log=logging.getLogger("test"),
                 tool="omarchy_theme",
@@ -227,6 +229,7 @@ class TestTheGate:
                 "omarchy theme set",
                 ["tokyo night"],
                 config=Config(),
+                perms=Permissions(),
                 stats=Stats(),
                 log=logging.getLogger("test"),
                 tool="omarchy_theme",

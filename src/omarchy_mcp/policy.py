@@ -1,7 +1,10 @@
-"""What an agent is allowed to run.
+"""What kind of thing a command is.
 
-Three tiers, derived from the registry rather than hand-written, so the policy
-does not rot when Omarchy adds commands:
+Three tiers, derived from the registry rather than hand-written, so the
+classification does not rot when Omarchy adds commands. Whether a guarded
+command actually runs is `permissions.py`'s question; this module answers only
+what sort of command it is, plus the one refusal that is about a call's
+arguments rather than its route -- see `self_refusal`.
 
 ``BLOCKED``
     Refused unconditionally, and not promotable from configuration. Two things
@@ -12,11 +15,11 @@ does not rot when Omarchy adds commands:
     rather than what the route is, and so cannot be a tier.
 
 ``GUARDED``
-    Destructive but perfectly runnable. Refused unless the user has opted in
-    per-route or per-group.
+    Destructive but perfectly runnable. What happens to it is decided by the
+    permissions document: asked about by default, denied or allowed by a rule.
 
 ``SAFE``
-    Everything else.
+    Everything else. Runs, unless a `deny` rule says otherwise.
 
 This module is the security boundary. It is pure, takes the registry as an
 argument, and is tested against every route Omarchy ships.
@@ -25,10 +28,8 @@ argument, and is tested against every route Omarchy ships.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
 from enum import Enum
 
-from .config import Config
 from .paths import PLUGIN_ID
 from .registry import Command
 
@@ -82,35 +83,6 @@ class Tier(str, Enum):
     GUARDED = "guarded"
     BLOCKED = "blocked"
 
-
-@dataclass(frozen=True)
-class Verdict:
-    tier: Tier
-    allowed: bool
-    reason: str = ""
-    #: Whether this refusal is one a person may overturn at call time.
-    #:
-    #: Not derivable from ``tier`` and ``allowed`` by the caller, which is the
-    #: reason it is stated here. A ``policy.deny`` demotion also refuses at
-    #: ``GUARDED``, and re-asking it would turn a decision the user already took
-    #: into a question. ``BLOCKED`` is never askable: no answer makes a sudo
-    #: command runnable -- decision 4.
-    askable: bool = False
-
-
-#: Guarded routes that may be asked about and never granted outright.
-#:
-#: The criterion is narrow on purpose: **the route's own argument is a command
-#: line**. `omarchy update lock run <command> [args...]` runs whatever it is
-#: handed, so one standing grant on it is a standing grant on everything, shown
-#: in a permissions review as a single calm row.
-#:
-#: The wider reading -- "could lead to running attacker-chosen code" -- would
-#: swallow `install`, `pkg aur add` and `dev link`, and then nothing worth
-#: granting could be granted. This is not a tier: such a route is perfectly
-#: runnable, and a person answering a question about a specific call is exactly
-#: the right amount of friction for it.
-NEVER_STORE = frozenset({"omarchy update lock"})
 
 #: The IPC verbs on this plugin's own target that an agent may call.
 #:
@@ -208,42 +180,3 @@ def base_tier(cmd: Command) -> Tier:
     if cmd.group in GUARDED_GROUPS or cmd.route in GUARDED_ROUTES:
         return Tier.GUARDED
     return Tier.SAFE
-
-
-def decide(cmd: Command, config: Config) -> Verdict:
-    """Whether ``cmd`` may run, and why not when it may not."""
-    tier = base_tier(cmd)
-
-    if tier is Tier.BLOCKED:
-        return Verdict(
-            tier,
-            False,
-            f"`{cmd.route}` requires sudo. The MCP server runs without a "
-            f"controlling terminal, so a password prompt could never be "
-            f"answered. Run it yourself in a terminal.",
-        )
-
-    # A demotion applies to commands that would otherwise be safe.
-    if tier is Tier.SAFE and cmd.route in config.deny:
-        return Verdict(
-            Tier.GUARDED,
-            False,
-            f"`{cmd.route}` is listed in policy.deny in "
-            f"~/.config/omarchy/mcp/config.toml.",
-        )
-
-    if tier is Tier.GUARDED:
-        if cmd.route in config.allow or cmd.group in config.allow_groups:
-            return Verdict(Tier.GUARDED, True, "")
-        return Verdict(
-            Tier.GUARDED,
-            False,
-            f"`{cmd.route}` is guarded because it can change the system in ways "
-            f"that are hard to undo. To allow it, add it to policy.allow (or its "
-            f'group "{cmd.group}" to policy.allow_groups) in '
-            f"~/.config/omarchy/mcp/config.toml. To be asked at the time instead, "
-            f"set policy.ask = true there.",
-            askable=True,
-        )
-
-    return Verdict(Tier.SAFE, True, "")

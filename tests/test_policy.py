@@ -1,11 +1,15 @@
 """Policy is the security boundary, so it is tested against every route Omarchy
-ships rather than against a handful of examples."""
+ships rather than against a handful of examples.
+
+What a tier *means* for a given call -- refused, asked about, allowed -- is
+`permissions.py`'s question and is tested in `test_permissions.py`. This file is
+about the classification itself, and about the one refusal that reads a call's
+arguments rather than its route."""
 
 from __future__ import annotations
 
 import pytest
 
-from omarchy_mcp.config import Config
 from omarchy_mcp.paths import PLUGIN_ID
 from omarchy_mcp.policy import (
     GUARDED_GROUPS,
@@ -13,7 +17,6 @@ from omarchy_mcp.policy import (
     SELF_READ_VERBS,
     Tier,
     base_tier,
-    decide,
     self_refusal,
     shell_call_refusal,
 )
@@ -25,60 +28,21 @@ def test_every_sudo_command_is_blocked(commands):
     assert all(base_tier(c) is Tier.BLOCKED for c in sudo)
 
 
-def test_blocked_cannot_be_promoted_by_config(commands):
-    """A sudo command stays refused however generous the configuration is."""
-    sudo = next(c for c in commands.values() if c.requires_sudo)
-    permissive = Config(
-        allow=(sudo.route,),
-        allow_groups=tuple(sorted({c.group for c in commands.values()})),
-    )
-    verdict = decide(sudo, permissive)
-    assert verdict.tier is Tier.BLOCKED
-    assert verdict.allowed is False
-    assert "sudo" in verdict.reason
-
-
-def test_blocked_refusal_explains_why_not_just_that(commands):
-    sudo = next(c for c in commands.values() if c.requires_sudo)
-    reason = decide(sudo, Config()).reason
-    assert "terminal" in reason  # names the actual cause, not a policy opinion
-
-
-def test_guarded_groups_are_refused_by_default(commands):
+def test_guarded_groups_classify_as_guarded(commands):
     guarded = [c for c in commands.values() if not c.requires_sudo and c.group in GUARDED_GROUPS]
     assert guarded
-    assert all(decide(c, Config()).allowed is False for c in guarded)
-
-
-def test_guarded_route_allowed_when_listed(commands):
-    route = "omarchy system reboot"
-    cmd = commands[route]
-    assert decide(cmd, Config()).allowed is False
-    assert decide(cmd, Config(allow=(route,))).allowed is True
-
-
-def test_guarded_group_allowed_when_listed(commands):
-    cmd = next(c for c in commands.values() if not c.requires_sudo and c.group == "install")
-    assert decide(cmd, Config()).allowed is False
-    assert decide(cmd, Config(allow_groups=("install",))).allowed is True
-
-
-def test_deny_demotes_a_safe_route(commands):
-    cmd = commands["omarchy theme current"]
-    assert decide(cmd, Config()).allowed is True
-    verdict = decide(cmd, Config(deny=("omarchy theme current",)))
-    assert verdict.allowed is False
-    assert verdict.tier is Tier.GUARDED
-
-
-def test_refusals_name_the_config_file(commands):
-    cmd = next(c for c in commands.values() if base_tier(c) is Tier.GUARDED)
-    assert "config.toml" in decide(cmd, Config()).reason
+    assert all(base_tier(c) is Tier.GUARDED for c in guarded)
 
 
 def test_ordinary_read_only_commands_are_safe(commands):
     for route in ("omarchy theme list", "omarchy battery status", "omarchy network status"):
-        assert decide(commands[route], Config()).allowed is True
+        assert base_tier(commands[route]) is Tier.SAFE
+
+
+def test_every_command_classifies(commands):
+    """No route falls through the classifier."""
+    for cmd in commands.values():
+        assert isinstance(base_tier(cmd), Tier)
 
 
 @pytest.mark.parametrize("route", sorted(GUARDED_ROUTES))
@@ -94,12 +58,6 @@ def test_guarded_groups_still_exist(commands):
     live = {c.group for c in commands.values()}
     stale = GUARDED_GROUPS - live
     assert not stale, f"these guarded groups no longer exist in Omarchy: {sorted(stale)}"
-
-
-def test_every_command_classifies(commands):
-    """No route falls through the classifier."""
-    for cmd in commands.values():
-        assert isinstance(decide(cmd, Config()).tier, Tier)
 
 
 # --- N12: an agent must not be able to switch off its own supervisor ---------
@@ -183,15 +141,12 @@ def test_self_refusal_ignores_unrelated_routes():
     assert self_refusal("omarchy plugin list", [PLUGIN_ID]) is None
 
 
-def test_self_refusal_is_not_promotable_by_config(commands):
-    """No configuration reaches it: it is decided before `decide` is called,
-    and `decide` never sees the arguments that make the call what it is."""
+def test_self_refusal_reads_arguments_which_no_tier_does(commands):
+    """No rule reaches it, because it is decided before the ladder runs and the
+    ladder never sees the arguments that make the call what it is."""
     cmd = commands["omarchy shell"]
-    permissive = Config(
-        allow=(cmd.route,),
-        allow_groups=tuple(sorted({c.group for c in commands.values()})),
-    )
     # The route itself is safe and stays so...
-    assert decide(cmd, permissive).allowed is True
+    assert base_tier(cmd) is Tier.SAFE
     # ...and the call is refused anyway, on its arguments.
     assert self_refusal(cmd.route, [PLUGIN_ID, "stop"]) is not None
+    assert self_refusal(cmd.route, ["omarchy.power", "toggle"]) is None

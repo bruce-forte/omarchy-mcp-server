@@ -6,6 +6,8 @@ import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 
+from omarchy_mcp import execute, prompt  # noqa: E402  -- after the path insert
+
 FIXTURES = pathlib.Path(__file__).parent / "fixtures"
 
 
@@ -57,6 +59,73 @@ def _pin_state_dir(monkeypatch, tmp_path_factory):
     import omarchy_mcp.activity as activity
 
     monkeypatch.setattr(activity, "STATE_DIR", tmp_path_factory.mktemp("state"))
+
+
+#: What `execute.SEARCH` is when nobody has redirected it: the real Omarchy.
+#: Captured at import so `_no_real_omarchy` can tell "this test pointed the
+#: resolver at a fixture directory" from "this test is about to drive the
+#: machine the suite is running on".
+REAL_SEARCH = tuple(execute.SEARCH)
+
+#: Spawning either of these against the live system reaches the desktop the
+#: suite is running on. `omarchy system reboot` is the one that taught us.
+DESKTOP_BINARIES = frozenset({"omarchy", "omarchy-shell", "hyprctl", "qs", "wl-copy"})
+
+
+@pytest.fixture(autouse=True)
+def _no_real_omarchy(monkeypatch, request):
+    """No test drives the developer's own desktop.
+
+    This exists because the suite once did. Three tests used
+    `omarchy system reboot` as their example of a guarded route, on the
+    reasonable assumption that a guarded route is refused and nothing happens.
+    A change to what "guarded" defaults to turned that refusal into a real
+    approval notification on a real desktop; it was clicked, in good faith, and
+    the machine rebooted mid-run.
+
+    The lesson is not "pick a gentler route" -- it is that a test suite must not
+    be one behaviour change away from executing whatever it names. So the
+    resolver is the thing that is guarded, not the route:
+
+    - a test that redirects `execute.SEARCH` at a fixture directory is building
+      its own fake binary and is left alone
+    - a test marked `needs_omarchy` has declared that it reads the installed
+      system, which is the existing opt-in for exactly this
+    - anything else spawning `omarchy` and friends fails loudly, naming the argv
+
+    `test_execute.py` and `test_binaries.py` keep spawning `echo`, `sleep` and
+    their own fakes, which is what they are for.
+    """
+    if request.node.get_closest_marker("needs_omarchy") is not None:
+        # Declared drift checks against the installed Omarchy. They read; they
+        # are skipped in CI; and the marker is the opt-in.
+        return
+
+    real_run = execute.run
+
+    def guarded(argv, **kwargs):
+        if tuple(execute.SEARCH) == REAL_SEARCH and argv and argv[0] in DESKTOP_BINARIES:
+            raise AssertionError(
+                "a test tried to run this against the real desktop: "
+                + " ".join(map(str, argv))
+                + ". Mock it, or point execute.SEARCH at a fixture directory. "
+                "Nothing in the suite may reach the machine it runs on."
+            )
+        return real_run(argv, **kwargs)
+
+    monkeypatch.setattr(execute, "run", guarded)
+
+
+@pytest.fixture(autouse=True)
+def _no_desktop_prompts(monkeypatch):
+    """No test puts a question in front of a person.
+
+    A notification the suite raised is a machine only pretending to ask, and
+    answering it is how a human ends up inside a test run. Tests that care what
+    was asked patch these themselves and see their own recorder instead.
+    """
+    monkeypatch.setattr(prompt, "send", lambda *a, **k: None)
+    monkeypatch.setattr(prompt, "dismiss", lambda *a, **k: None)
 
 
 @pytest.fixture(scope="session")

@@ -54,7 +54,15 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats) -> None:
         # One snapshot per call: a reload between two calls is seen, a reload
         # during one is not.
         return await run_route(
-            route, args, config=settings.current, stats=stats, log=log, tool=tool, ctx=ctx, **kw
+            route,
+            args,
+            config=settings.current,
+            perms=settings.permissions,
+            stats=stats,
+            log=log,
+            tool=tool,
+            ctx=ctx,
+            **kw,
         )
 
     # ---------------------------------------------------------------- theme

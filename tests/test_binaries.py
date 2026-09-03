@@ -24,6 +24,7 @@ import pytest
 
 from omarchy_mcp import execute
 from omarchy_mcp.config import Config
+from omarchy_mcp.permissions import Permissions
 from omarchy_mcp.stats import Stats
 from omarchy_mcp.tools._shared import run_route
 
@@ -144,6 +145,7 @@ class TestWhatTheAgentSees:
                 [],
                 config=Config(),
                 stats=Stats(),
+                perms=Permissions(),
                 log=logging.getLogger("test"),
                 tool="omarchy_theme",
             )

@@ -24,6 +24,21 @@
           "description": "What a destructive command does when no rule matches it. 'ask' raises a notification on the desktop naming the command and what it resolved to; 'deny' refuses it outright. Commands that are not destructive always run, and commands requiring sudo never do.",
           "title": "Guardeddefault"
         },
+        "askTimeoutSeconds": {
+          "anyOf": [
+            {
+              "maximum": 600,
+              "minimum": 5,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "How long an approval notification waits before the call is refused. No answer means denied: a prompt that granted on expiry would grant to an empty room.",
+          "title": "Asktimeoutseconds"
+        },
         "deny": {
           "description": "Refused outright. Consulted first, and a narrower allow never overrides one.",
           "items": {

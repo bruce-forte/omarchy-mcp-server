@@ -51,6 +51,15 @@ Item {
   // keeps running the configuration it had; the bar is where that is visible.
   property bool   configOk: true
 
+  // False when the permissions document would not load. Two flags rather than
+  // one: the two files fail independently and are fixed in different places, so
+  // a single lamp would say "something is wrong" and leave the person to guess.
+  //
+  // At startup this is fatal -- the daemon refuses to start rather than run
+  // under rules nobody wrote -- and `lastError` carries the reason. At reload
+  // the daemon keeps the document it had and only this goes false.
+  property bool   permissionsOk: true
+
   property bool   wantRunning: true
   property int    failures: 0
 
@@ -69,6 +78,11 @@ Item {
   // The setup line reached the clipboard. The panel says so for a moment.
   signal clientConfigCopied()
 
+  // A permissions check finished. The panel shows the verdict, which is the
+  // whole point: with the daemon down it is the only surface left.
+  signal permissionsChecked(bool ok, string detail)
+  property string permissionsCheck: ""
+
   // Whether a Stop survives a shell restart. Held in the state directory
   // rather than in memory: an off switch that turns itself back on at the next
   // login is not an off switch.
@@ -80,6 +94,13 @@ Item {
   // the process still running, returned from start() without setting
   // wantRunning, and left the daemon stopped for good when it finally exited.
   property bool   restartPending: false
+
+  // The daemon exits with this when its permissions document will not load.
+  // Retrying cannot help -- the file has to be edited -- and the generic
+  // "keeps failing, try rebuild" path would delete a perfectly good virtualenv
+  // while the real cause sits in a JSON file. So this one exit code stops the
+  // supervisor rather than starting the backoff.
+  readonly property int exitBadPermissions: 78
 
   // A daemon that dies immediately -- a broken venv, a syntax error -- must not
   // be respawned in a tight loop. Back off, and cap the delay so a transient
@@ -172,6 +193,12 @@ Item {
   // The daemon re-reads config.toml by itself within a couple of seconds. This
   // is the impatient path: SIGHUP makes it look now. Not a restart -- a restart
   // drops every attached MCP session, which is the thing N7 exists to avoid.
+  function checkPermissions() {
+    if (checkProc.running)
+      return
+    checkProc.running = true
+  }
+
   function reloadConfig() {
     if (!daemon.running)
       return false
@@ -189,6 +216,7 @@ Item {
       tools: root.tools,
       toolsDeclared: root.toolsDeclared,
       configOk: root.configOk,
+      permissionsOk: root.permissionsOk,
       error: root.lastError,
       pid: daemon.processId || 0
     }))
@@ -237,6 +265,7 @@ Item {
             root.tools = Number(frame.tools || 0)
             root.toolsDeclared = Number(frame.declared || 0)
             root.configOk = frame.config_ok !== false
+            root.permissionsOk = frame.permissions_ok !== false
             return
           }
 
@@ -278,6 +307,21 @@ Item {
         root.phase = "stopped"
         return
       }
+
+      if (exitCode === root.exitBadPermissions) {
+        // The daemon has already said what is wrong -- on stderr, in a `failed`
+        // frame, and in a critical notification naming the file. Nothing to add
+        // and nothing to retry.
+        root.wantRunning = false
+        root.phase = "failed"
+        root.permissionsOk = false
+        if (root.lastError === "")
+          root.lastError = "permissions.json does not load; the server did not start"
+        root.writeState()
+        console.warn("omarchy-mcp: permissions rejected; not restarting until it is fixed")
+        return
+      }
+
       root.failures += 1
       root.phase = "failed"
       root.lastError = "daemon exited with code " + exitCode
@@ -391,6 +435,7 @@ Item {
         tools: root.tools,
         toolsDeclared: root.toolsDeclared,
         configOk: root.configOk,
+        permissionsOk: root.permissionsOk,
         failures: root.failures,
         error: root.lastError
       }, null, 2)
@@ -432,6 +477,14 @@ Item {
       return "restarting"
     }
 
+    function checkPermissions(): string {
+      // The daemon refuses to start on a defective permissions document, so
+      // there has to be a way to test a fix without restarting to find out.
+      checkProc.running = true
+      return "checking ~/.config/omarchy/mcp/permissions.json; see the journal, or run:\n"
+           + "  " + root.pluginDir + "bin/omarchy-mcpd --check-permissions"
+    }
+
     function reloadConfig(): string {
       // No longer a restart: the daemon re-reads the file in place and tells
       // attached clients if the tool set moved. It would do this within two
@@ -444,6 +497,24 @@ Item {
     function rebuild(): string {
       rebuildProc.running = true
       return "rebuilding the environment; the daemon will restart when it finishes"
+    }
+  }
+
+  // Validates the permissions document without starting anything. Read-only,
+  // and the one verb that is useful precisely when the daemon is down.
+  Process {
+    id: checkProc
+    command: [root.pluginDir + "bin/omarchy-mcpd", "--check-permissions"]
+
+    stdout: StdioCollector {
+      id: checkOut
+      waitForEnd: true
+    }
+
+    onExited: function (exitCode) {
+      root.permissionsCheck = checkOut.text.trim()
+      root.permissionsChecked(exitCode === 0, root.permissionsCheck)
+      console.log("omarchy-mcp: permissions check exited", exitCode, "\n" + checkOut.text)
     }
   }
 

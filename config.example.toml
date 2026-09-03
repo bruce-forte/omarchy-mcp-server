@@ -34,43 +34,16 @@
 # This server runs commands on your desktop; putting that on the network would
 # leave a single bearer token between your machine and everything else on it.
 
-[policy]
-# Commands are classified automatically from `omarchy commands --json`:
+# What an agent is allowed to run is not here. It lives in permissions.json
+# beside this file, because two files that both decide it is a second source of
+# truth, and because the rules wanted a shape TOML arrays could not carry.
 #
-#   blocked   Requires sudo. Refused always -- the server has no terminal, so a
-#             password prompt could never be answered. Not overridable here.
-#   guarded   Installs, removes, migrates, or otherwise changes the system in a
-#             way that is hard to undo. Refused unless allowed below.
-#   safe      Everything else. Runs.
-#
-# See how any command is classified with the omarchy_search_commands tool.
-
-# Allow specific guarded routes:
-# allow = ["omarchy theme remove", "omarchy system reboot"]
-
-# Allow every command in a group. Groups are shown in search results.
-# allow_groups = ["install", "remove"]
-
-# Demote otherwise-safe routes to guarded, so they are refused:
-# deny = ["omarchy launch browser"]
-
-# Ask at the time instead of refusing. With this on, a guarded route raises a
-# critical notification naming the command and what it would act on; clicking it
-# approves that one call. Nothing else approves it -- not dismissing it, not
-# ignoring it, and not the deadline passing.
-#
-# Routes in `deny` above are never asked about, because that is a decision you
-# already took. Nothing that needs sudo is ever asked about either.
-# ask = false
-
-# How long a call waits for you to answer before it is refused, in seconds.
-# Bounded to 5-600: a second is not long enough to read the question, and ten
-# minutes is a request parked on a desk nobody is at.
-# ask_timeout_s = 60
+# See permissions.example.json, and validate yours with:
+#   omarchy-mcpd --check-permissions
 
 [tools]
 # Curated tools to switch off by name. Anything disabled here can still be
-# reached through omarchy_run, subject to [policy].
+# reached through omarchy_run, subject to permissions.json.
 # disabled = ["omarchy_screenshot", "omarchy_clipboard_write"]
 
 [log]

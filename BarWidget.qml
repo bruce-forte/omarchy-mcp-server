@@ -56,6 +56,7 @@ Panel {
   property int    fileTools: 0
   property int    fileToolsDeclared: 0
   property bool   fileConfigOk: true
+  property bool   filePermissionsOk: true
 
   readonly property string phase: service ? service.phase : filePhase
   readonly property bool   serving: service ? service.serving : fileServing
@@ -70,6 +71,7 @@ Panel {
   readonly property int  tools: service ? service.tools : fileTools
   readonly property int  toolsDeclared: service ? service.toolsDeclared : fileToolsDeclared
   readonly property bool configOk: service ? service.configOk : fileConfigOk
+  readonly property bool permissionsOk: service ? service.permissionsOk : filePermissionsOk
 
   readonly property var recent: service ? service.recent : []
   readonly property bool recentLoading: service ? service.recentLoading : false
@@ -129,9 +131,18 @@ Panel {
     target: root.service
     function onCallSeen(tool, outcome) { root.noteCall() }
     function onClientConfigCopied() { root.copied = true; copiedFor.restart() }
+    function onPermissionsChecked(ok, detail) {
+      root.permissionsCheckOk = ok
+      root.permissionsCheck = detail
+    }
   }
 
   property bool copied: false
+
+  // The last permissions check, and whether it passed. Held rather than read
+  // off the service every frame: it is a one-shot answer to a button press.
+  property string permissionsCheck: ""
+  property bool   permissionsCheckOk: true
 
   Timer {
     id: copiedFor
@@ -162,6 +173,7 @@ Panel {
       fileTools = Number(data.tools || 0)
       fileToolsDeclared = Number(data.toolsDeclared || 0)
       fileConfigOk = data.configOk !== false
+      filePermissionsOk = data.permissionsOk !== false
     } catch (e) {
       // A partial read; the next write brings a whole one.
       fileServing = false
@@ -332,14 +344,44 @@ Panel {
         }
 
         // The daemon keeps serving when config.toml stops parsing, on purpose:
-        // a stray keystroke must not empty the policy or switch tools back on.
-        // Which makes this the only place the person finds out.
+        // a stray keystroke must not switch every disabled tool back on. Which
+        // makes this the only place the person finds out.
         Text {
           width: parent.width
           wrapMode: Text.WordWrap
           visible: !root.configOk
           text: "config.toml does not parse. Still running the previous configuration."
           color: Color.urgent
+          font.family: Style.font.family
+          font.pixelSize: Style.font.bodySmall
+        }
+
+        // Its own line, not folded into the one above. The two files fail
+        // independently and are fixed in different places, and this one is the
+        // more serious: at startup it stops the daemon rather than being
+        // ignored, because running under rules nobody wrote is worse than not
+        // running.
+        Text {
+          width: parent.width
+          wrapMode: Text.WordWrap
+          visible: !root.permissionsOk
+          text: root.serving
+            ? "permissions.json does not load. Still running the permissions it had."
+            : "permissions.json does not load, so the server did not start. Fix it, "
+              + "press Check, then Start."
+          color: Color.urgent
+          font.family: Style.font.family
+          font.pixelSize: Style.font.bodySmall
+        }
+
+        // The verdict of the last Check. With the daemon down this is the only
+        // way to find out whether an edit worked without restarting to see.
+        Text {
+          width: parent.width
+          wrapMode: Text.WordWrap
+          visible: root.permissionsCheck !== ""
+          text: root.permissionsCheck
+          color: root.permissionsCheckOk ? Qt.darker(Color.foreground, 1.4) : Color.urgent
           font.family: Style.font.family
           font.pixelSize: Style.font.bodySmall
         }
@@ -419,6 +461,16 @@ Panel {
           // is here for the case that makes waiting unbearable: the file was
           // rejected, you have just fixed it, and you want the answer now
           // rather than a wait you cannot tell from "still broken".
+          // Validating without restarting matters here in a way it does not for
+          // config.toml: a defective permissions document stops the daemon, so
+          // without this the only way to test a fix is to try to start and see.
+          Button {
+            text: "Check permissions"
+            bordered: true
+            enabled: root.service !== null
+            onClicked: root.service.checkPermissions()
+          }
+
           Button {
             text: "Reload config"
             bordered: true
