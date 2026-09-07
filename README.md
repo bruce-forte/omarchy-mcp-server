@@ -361,7 +361,13 @@ your edits before restarting anything:
 omarchy-mcpd --check-permissions   # would the daemon start?
 omarchy-mcpd --permissions         # what is in force, and what each rule covers
 omarchy-mcpd --review              # what changed under it since you last looked
+omarchy-mcpd --edit permissions    # open it in your editor, with a template if new
 ```
+
+`--edit` takes `permissions`, `local` or `config`. It opens the file in whatever
+editor you use, and if the permissions file is not there yet it writes a
+starting one first — an empty rule block and the `$schema` line, so your editor
+checks a matcher as you type it. It never changes a file that already exists.
 
 `--permissions` answers the question you actually have — *why can it do that?* —
 by expanding every rule against the commands your Omarchy ships and listing the

@@ -68,6 +68,10 @@ WRITTEN_PATHS = (
     ("omarchy_mcp.gate", "PERMISSIONS_LOCAL_FILE", "permissions.local.json"),
     ("omarchy_mcp.reload", "PERMISSIONS_LOCAL_FILE", "permissions.local.json"),
     ("omarchy_mcp.__main__", "PERMISSIONS_LOCAL_FILE", "permissions.local.json"),
+    # `--edit` may *create* this one from a template when it is absent, which
+    # is the only thing in the daemon that writes the file a person checks into
+    # git. Unpinned, a test of that would seed the developer's own.
+    ("omarchy_mcp.__main__", "PERMISSIONS_FILE", "permissions.json"),
 )
 
 

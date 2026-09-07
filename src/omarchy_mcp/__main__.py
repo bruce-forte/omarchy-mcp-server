@@ -18,6 +18,7 @@ from . import (
     __version__,
     activity,
     config as config_module,
+    execute,
     frames,
     notify,
     delta as delta_module,
@@ -220,6 +221,12 @@ def _print_review(log, *, as_json: bool = False) -> int:
     return 0
 
 
+#: Worst first, because a rule carries at most one and the flag beside it is
+#: the first thing read. An error stops the daemon; a shadowed rule silently
+#: does nothing; a redundant one is merely removable.
+FINDING_LEVELS = ("error", "void", "shadowed", "redundant")
+
+
 def _print_permissions(log, *, as_json: bool = False) -> int:
     """What an agent may run, and which rule says so.
 
@@ -255,14 +262,14 @@ def _print_permissions(log, *, as_json: bool = False) -> int:
     if not report["rules"]:
         print("No rules. Guarded commands take the default above; everything else runs.\n")
     for rule in report["rules"]:
-        flag = " [void]" if "void" in rule else (" [error]" if "error" in rule else "")
+        flag = next((f" [{level}]" for level in FINDING_LEVELS if level in rule), "")
         print(f"{rule['effect']:>5}  {rule['matcher']}{flag}")
         print(f"       {rule['source']} -- covers {rule['covers']}")
         for route in rule["routes"]:
             print(f"         {route}")
         if "more" in rule:
             print(f"         ... and {rule['more']} more")
-        for level in ("error", "void"):
+        for level in FINDING_LEVELS:
             if level in rule:
                 print(f"       {level}: {rule[level]}")
         print()
@@ -319,6 +326,73 @@ def _check_permissions(log) -> int:
     return 0
 
 
+#: The three files a person edits, and the only things `--edit` will open.
+#:
+#: Fixed names rather than a path argument: the verb is reachable from a bar
+#: button, and one that could be talked into opening -- or creating -- anything
+#: else is a different feature with a different threat model.
+EDITABLE = ("config", "local", "permissions")
+
+
+def _editable(which: str):
+    """The path for one of those names, looked up **when it is asked for**.
+
+    Not a module-level dict. `from .paths import X` copies the value at import,
+    so a table built at import time holds the real paths however the test suite
+    redirects this module's bindings -- and `conftest.WRITTEN_PATHS` redirects
+    exactly these. A table like that would have written the developer's own
+    `permissions.json` the first time a test ran `--edit`.
+    """
+    return {
+        "permissions": PERMISSIONS_FILE,
+        "local": PERMISSIONS_LOCAL_FILE,
+        "config": CONFIG_FILE,
+    }[which]
+
+#: How long the spawn itself is given. The editor is detached, so this bounds
+#: starting it, not using it.
+EDITOR_TIMEOUT_MS = 5_000
+
+
+def _edit(which: str, log) -> int:
+    """Open one of the three files in the user's editor, creating it if absent.
+
+    `omarchy launch editor` is Omarchy's own opener, so this finds whatever
+    editor the user actually has -- the case N8 refused to break by rewriting
+    `PATH`.
+
+    **Seeding is why this is a command rather than a button that spawns an
+    editor.** A permissions file that does not exist yet opens as an empty
+    buffer with no ``$schema`` line, and that line is what makes an editor
+    validate a matcher before the daemon ever sees it. The template lives in
+    `permissions.py` beside the writer, not in QML: it is business, not chrome.
+
+    `config.toml` is not seeded here. `bin/omarchy-mcpd` owns that template,
+    documented knobs and all, and a second copy in Python would be a second
+    thing to keep current.
+    """
+    path = _editable(which)
+    if which != "config" and permissions_module.seed(path):
+        print(f"{path}: created")
+    elif not path.exists():
+        print(f"{path}: not present yet; it is written when the daemon starts")
+
+    try:
+        result = execute.run(
+            ["omarchy", "launch", "editor", str(path)],
+            timeout_ms=EDITOR_TIMEOUT_MS,
+            max_output_b=4096,
+            detach=True,
+        )
+    except execute.NotInstalled as exc:
+        print(f"cannot open an editor: {exc}")
+        return 1
+
+    log.info("editing %s (pid %s)", path, result.pid)
+    print(f"opened {path}")
+    return 0
+
+
 def _refuse_to_start(log, detail: str) -> None:
     """Say it three ways, because each reaches a different person.
 
@@ -370,6 +444,11 @@ def main(argv: list[str] | None = None) -> int:
         help="print the rules in force and what they cover, and exit",
     )
     parser.add_argument(
+        "--edit",
+        choices=EDITABLE,
+        help="open a file in your editor, creating it from a template if absent",
+    )
+    parser.add_argument(
         "--check-permissions",
         action="store_true",
         help="validate permissions.json and exit; 0 if the daemon would start",
@@ -409,6 +488,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.check_permissions:
         return _check_permissions(log)
+
+    if args.edit:
+        return _edit(args.edit, log)
 
     permissions = _load_permissions(log)
     if permissions is None:

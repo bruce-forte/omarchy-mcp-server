@@ -41,6 +41,28 @@ def frames_out(monkeypatch):
 
 
 @pytest.fixture
+def config_file(tmp_path, monkeypatch):
+    path = tmp_path / "config.toml"
+    monkeypatch.setattr(entry, "CONFIG_FILE", path)
+    return path
+
+
+@pytest.fixture
+def spawned(monkeypatch):
+    """What `--edit` handed to `execute.run`. Nothing reaches a real editor."""
+    calls = []
+
+    def fake(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return entry.execute.Result(
+            exit_code=None, stdout="", stderr="", timed_out=False, detached=True, pid=4321
+        )
+
+    monkeypatch.setattr(entry.execute, "run", fake)
+    return calls
+
+
+@pytest.fixture
 def permission_files(tmp_path, monkeypatch):
     """The two real paths, redirected. Never the developer's own."""
     paths = (tmp_path / "permissions.json", tmp_path / "permissions.local.json")
@@ -426,3 +448,98 @@ class TestPrunableAtStartup:
         monkeypatch.setattr(entry, "REGISTRY_SEEN_FILE", path)
         delta.save_seen(path, commands)
         return path
+
+
+class TestEditing:
+    """The Edit button's other half. It opens a file, and the only thing it may
+    write is one that is not there yet."""
+
+    def test_it_opens_the_users_own_file(self, permission_files, spawned):
+        assert entry._edit("permissions", LOG) == 0
+        argv, kwargs = spawned[0]
+        assert argv == ["omarchy", "launch", "editor", str(permission_files[0])]
+        assert kwargs["detach"] is True, "an editor outlives the daemon that opened it"
+
+    def test_it_opens_the_daemons_own_file(self, permission_files, spawned):
+        entry._edit("local", LOG)
+        assert spawned[0][0][-1] == str(permission_files[1])
+
+    def test_it_opens_the_config(self, config_file, spawned):
+        entry._edit("config", LOG)
+        assert spawned[0][0][-1] == str(config_file)
+
+    def test_a_missing_permissions_file_is_seeded_first(self, permission_files, spawned):
+        """An empty buffer has no $schema line, and that line is what validates
+        a matcher before this daemon ever sees it."""
+        entry._edit("permissions", LOG)
+        body = json.loads(permission_files[0].read_text())
+        assert body["$schema"] == permissions_module.SCHEMA_URL
+        assert permissions_module.load([permission_files[0]]).rules == ()
+
+    def test_an_existing_file_is_never_rewritten(self, permission_files, spawned):
+        permission_files[0].write_text(doc(allow=["omarchy theme set"]))
+        before = permission_files[0].read_text()
+        entry._edit("permissions", LOG)
+        assert permission_files[0].read_text() == before
+
+    def test_the_config_is_never_seeded_here(self, config_file, spawned):
+        """`bin/omarchy-mcpd` owns that template, documented knobs and all. A
+        second copy in Python would be a second thing to keep current."""
+        entry._edit("config", LOG)
+        assert not config_file.exists()
+
+    def test_it_opens_nothing_else(self):
+        """Fixed names, no path argument: the verb is reachable from a bar
+        button."""
+        assert set(entry.EDITABLE) == {"config", "local", "permissions"}
+        with pytest.raises(KeyError):
+            entry._editable("/etc/shadow")
+
+    def test_the_paths_are_read_when_asked_for_rather_than_at_import(
+        self, permission_files
+    ):
+        """`conftest.WRITTEN_PATHS` redirects this module's bindings. A table
+        built at import would hold the real paths through all of it."""
+        assert entry._editable("permissions") == permission_files[0]
+
+    def test_no_editor_is_reported_rather_than_raised(self, permission_files, monkeypatch):
+        def missing(argv, **kwargs):
+            raise entry.execute.NotInstalled("omarchy")
+
+        monkeypatch.setattr(entry.execute, "run", missing)
+        assert entry._edit("permissions", LOG) == 1
+
+    def test_it_notifies_nobody(self, permission_files, spawned, notifications):
+        entry._edit("permissions", LOG)
+        assert notifications == []
+
+
+class TestFlagsInTheReport:
+    def test_a_shadowed_rule_is_flagged(self, permission_files, capsys):
+        permission_files[0].write_text(
+            doc(ask=["omarchy install *"], allow=["omarchy install app"])
+        )
+        assert entry._print_permissions(LOG) == 0
+        out = capsys.readouterr().out
+        assert "[shadowed]" in out
+        assert "omarchy install *" in out
+
+    def test_a_redundant_rule_is_flagged(self, permission_files, capsys):
+        permission_files[0].write_text(
+            doc(allow=["omarchy install *", "omarchy install app"])
+        )
+        entry._print_permissions(LOG)
+        assert "[redundant]" in capsys.readouterr().out
+
+    def test_a_shadowed_rule_does_not_stop_the_daemon(self, permission_files):
+        permission_files[0].write_text(
+            doc(deny=["omarchy install *"], allow=["omarchy install app"])
+        )
+        assert entry._load_permissions(LOG) is not None
+
+    def test_check_names_it_and_still_exits_zero(self, permission_files, capsys):
+        permission_files[0].write_text(
+            doc(deny=["omarchy install *"], allow=["omarchy install app"])
+        )
+        assert entry._check_permissions(LOG) == 0
+        assert "shadowed" in capsys.readouterr().out
