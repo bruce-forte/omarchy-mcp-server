@@ -1905,9 +1905,16 @@ Prune already toasts at the person who just pressed Prune, and the same was
 noted about Always at the end of N10. Revoke would be the third instance.
 
 The rule, stated once: **the daemon announces changes the person did not make.**
-A hand edit, a grant written while a call was parked, an upstream rename — news.
-A button pressed on this panel two seconds ago — not. The reloader marks the
-cycle it caused and skips that one toast.
+A hand edit, an upstream rename — news. A button pressed on this panel two
+seconds ago — not, and that includes the grant an *always* press writes: since
+F31 the answer to a prompt is a button on this panel, so every grant is a press
+somebody is looking at.
+
+Matching on **content** rather than passing a flag around is what makes that one
+rule cover all three writers. `_write_local` digests what it wrote; the reloader
+suppresses the toast when the local file's bytes are exactly that and nothing
+else moved. `grant` is called from the gate and has never had a way to reach the
+reloader, and now does not need one.
 
 This is state in the boundary, so the test that matters is not that the press is
 quiet: it is that a **hand edit landing in the same poll window still notifies**.

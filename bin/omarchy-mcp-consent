@@ -9,6 +9,8 @@
 #   deny        <token>   the bar panel's Deny button
 #   acknowledge <token>   the bar panel's Acknowledge button, for a review
 #   prune       <token>   the bar panel's Prune button, for dead rules
+#   revoke      <token> <effect> <matcher>
+#                         the bar panel's Remove button, for one grant
 #
 # `acknowledge` answers a different question -- "I have seen what changed" rather
 # than "yes, run this" -- but it travels the same way and for the same reason.
@@ -38,10 +40,19 @@ CONSENT_DIR="${XDG_RUNTIME_DIR:-/tmp}/$PLUGIN_ID/consent"
 
 usage() {
   echo "usage: omarchy-mcp-consent {approve|always|deny|acknowledge|prune} <token>" >&2
+  echo "       omarchy-mcp-consent revoke <token> <effect> <matcher>" >&2
   exit 2
 }
 
-[[ $# -eq 2 ]] || usage
+# `revoke` is the one verb that names something: the others answer a question
+# the daemon already knows the subject of, and this one picks a rule out of a
+# list. What it may mean is still decided in permissions.py -- this validates
+# the shape and nothing else.
+if [[ ${1:-} == revoke ]]; then
+  [[ $# -eq 4 ]] || usage
+else
+  [[ $# -eq 2 ]] || usage
+fi
 
 # `approve` is spelled that way in every notification this daemon has ever sent,
 # including ones already on screen when it was upgraded. It writes the bare
@@ -58,6 +69,12 @@ case "$1" in
   # `deny` somebody hand-added to this file is a protection that stopped
   # working, and that is worth seeing before it is tidied away.
   prune)       verb=""; marker="prune" ;;
+  # Removing a grant only ever narrows what an agent may do, so the token is
+  # long-lived rather than spent per press. That makes the *file name* the thing
+  # that has to be unique: two presses inside one poll would otherwise collapse,
+  # the second overwriting the first, and a rule the user removed would quietly
+  # stay. One file per press, drained in order.
+  revoke)      verb="" ;;
   *)       usage ;;
 esac
 
@@ -75,7 +92,24 @@ token="$2"
 # as long as it sits there, and the daemon deletes it as soon as it reads it.
 umask 077
 mkdir -p "$CONSENT_DIR"
-if [[ -n ${marker:-} ]]; then
+if [[ $1 == revoke ]]; then
+  effect="$3"
+  matcher="$4"
+  # The vocabulary lives here, in one place, as it does for the verbs above. A
+  # daemon that has not heard of an effect must read this as no answer.
+  case "$effect" in
+    allow|ask|deny) ;;
+    *) echo "omarchy-mcp-consent: not an effect" >&2; exit 2 ;;
+  esac
+  # Shape only: a route is words, spaces and a trailing star. Whether this rule
+  # exists, is in the right file, and may go is the daemon's decision.
+  [[ $matcher =~ ^[A-Za-z0-9][A-Za-z0-9_.:-]*([[:space:]][A-Za-z0-9_.:*-]+)*$ ]] || {
+    echo "omarchy-mcp-consent: not a matcher" >&2
+    exit 2
+  }
+  file=$(mktemp "$CONSENT_DIR/revoke-$token.XXXXXX")
+  printf '%s revoke %s %s' "$token" "$effect" "$matcher" >"$file"
+elif [[ -n ${marker:-} ]]; then
   printf '%s' "$token" >"$CONSENT_DIR/$marker-$token"
 else
   printf '%s%s' "$token" "$verb" >"$CONSENT_DIR/$token"

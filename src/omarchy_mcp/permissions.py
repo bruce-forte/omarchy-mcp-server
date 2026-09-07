@@ -52,6 +52,7 @@ for why each of those is load-bearing.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from collections.abc import Iterable, Sequence
@@ -1066,6 +1067,25 @@ def _read_local(path: Path) -> tuple[list[Rule], Options]:
     return list(rules), options
 
 
+#: The document this daemon last wrote to `permissions.local.json`, digested.
+#:
+#: The reloader watches these files and announces what changed. What it must not
+#: announce is a change the person is already looking at -- they pressed Always,
+#: or Remove, or Prune two seconds ago, and a toast telling them the permissions
+#: changed is the daemon reporting their own press back to them. Matching on the
+#: content rather than passing a flag around means it works for every writer,
+#: including `grant`, which is called from the gate and has never had a way to
+#: reach the reloader.
+_self_written = ""
+
+
+def wrote_ourselves(raw: bytes | None) -> bool:
+    """Whether ``raw`` is exactly the document this daemon last wrote itself."""
+    if not raw or not _self_written:
+        return False
+    return hashlib.sha256(raw).hexdigest() == _self_written
+
+
 def _write_local(path: Path, rules: Sequence[Rule], options: Options) -> None:
     """Replace the file atomically, `0600`, in a `0700` directory.
 
@@ -1088,12 +1108,15 @@ def _write_local(path: Path, rules: Sequence[Rule], options: Options) -> None:
         "permissions": body,
     }
 
+    text = json.dumps(document, indent=2) + "\n"
+    global _self_written
+    _self_written = hashlib.sha256(text.encode()).hexdigest()
+
     path.parent.mkdir(parents=True, exist_ok=True)
     os.chmod(path.parent, 0o700)
     tmp = path.with_name(f".{path.name}.tmp")
     with open(tmp, "w") as handle:
-        json.dump(document, handle, indent=2)
-        handle.write("\n")
+        handle.write(text)
         handle.flush()
         os.fsync(handle.fileno())
     os.chmod(tmp, 0o600)

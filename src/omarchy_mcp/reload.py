@@ -111,6 +111,8 @@ class Reloaded:
     acknowledged: bool = False
     #: Somebody pressed Prune, and this many dead rules left the daemon's file.
     pruned: int = 0
+    #: Somebody pressed Remove, and this many grants left it.
+    revoked: int = 0
 
     def __bool__(self) -> bool:
         return (
@@ -119,6 +121,7 @@ class Reloaded:
             or self.permissions_changed
             or self.acknowledged
             or bool(self.pruned)
+            or bool(self.revoked)
         )
 
 
@@ -165,6 +168,7 @@ class Reloader:
         self._review = review if review is not None else delta_module.Review()
         self._local_path = local_path
         self._prune_token = ""
+        self._revoke_token = ""
 
     # -- reading -------------------------------------------------------------
 
@@ -294,6 +298,81 @@ class Reloader:
             )
         return len(gone)
 
+    @property
+    def revoke_token(self) -> str:
+        return self._revoke_token
+
+    def offer_revoke(self, token: str) -> None:
+        """Publish the token the panel removes grants with.
+
+        Unlike the others this is not spent per use. Removing an ``allow`` rule
+        narrows what an agent may do, so the capability cannot be used to widen
+        anything -- the worst it does is disarm whoever holds it. Spending it per
+        press would mean three of four presses landing on a dead token inside one
+        poll, which is exactly the workflow the button exists for.
+        """
+        self._revoke_token = token
+
+    def _poll_revoke(self) -> int:
+        """Whether somebody pressed Remove, and how many rules went.
+
+        One file per press -- the helper makes each unique with `mktemp` -- so
+        two presses inside one poll are two removals rather than one overwriting
+        the other. Drained oldest first, because they are a sequence of separate
+        decisions and the log should read as one.
+
+        Each file is removed whether or not it was current, and each has to name
+        the token as its first word: a file that merely exists is not a press.
+        """
+        if not self._revoke_token:
+            return 0
+
+        markers = sorted(
+            self._consent_dir.glob(f"revoke-{self._revoke_token}.*"),
+            key=lambda p: (p.stat().st_mtime_ns, p.name),
+        )
+        gone = 0
+        for marker in markers:
+            try:
+                body = marker.read_text().strip()
+            except OSError:
+                continue
+            finally:
+                try:
+                    marker.unlink()
+                except OSError:
+                    pass
+
+            token, _, rest = body.partition(" ")
+            verb, _, subject = rest.partition(" ")
+            effect, _, matcher = subject.partition(" ")
+            if token != self._revoke_token or verb != "revoke" or not matcher:
+                self._log.warning("a consent file did not name this daemon's token")
+                continue
+
+            try:
+                removed = permissions_module.revoke(
+                    self._local_path, permissions_module.Effect(effect), matcher
+                )
+            except PermissionsError as exc:
+                self._log.error("cannot edit a file that does not load: %s", exc)
+                continue
+            except (ValueError, permissions_module.RevokeRefused) as exc:
+                # `Effect(effect)` raises on a word this daemon has not heard of;
+                # `RevokeRefused` on one it will not act on. Both read as no
+                # answer rather than as a yes, which is what an older daemon
+                # meeting a newer vocabulary has to do.
+                self._log.error("revoke refused: %s", exc)
+                continue
+
+            for rule in removed:
+                gone += 1
+                self._log.info("revoked %r from %s", rule.matcher, self._local_path.name)
+                activity.note(
+                    "permission", verb="revoke", route=rule.matcher, via="panel"
+                )
+        return gone
+
     def recompute_review(self) -> None:
         """Read the delta again, because the rules or the registry moved.
 
@@ -319,6 +398,7 @@ class Reloader:
         permissions = self._poll_permissions()
         acknowledged = self._poll_acknowledgement()
         pruned = self._poll_prune()
+        revoked = self._poll_revoke()
 
         if permissions is not None and permissions[0]:
             # A new rule can quarantine or release routes, so the delta is read
@@ -332,9 +412,11 @@ class Reloader:
                 base, permissions_changed=changed, permissions_rejected=rejected
             )
 
-        if acknowledged or pruned:
+        if acknowledged or pruned or revoked:
             base = result if result is not None else Reloaded(config=self._settings.current)
-            result = replace(base, acknowledged=acknowledged, pruned=pruned)
+            result = replace(
+                base, acknowledged=acknowledged, pruned=pruned, revoked=revoked
+            )
 
         if result is not None and self._on_change is not None:
             self._on_change(result)
@@ -352,7 +434,9 @@ class Reloader:
         raw = self._read_permissions()
         if raw == self._permissions_seen:
             return None
+        previous = self._permissions_seen
         self._permissions_seen = raw
+        ours = self._is_our_own_write(previous, raw)
 
         try:
             loaded = permissions_module.load(self._permission_paths)
@@ -371,14 +455,20 @@ class Reloader:
                 )
             return (False, True)
 
-        previous = self._settings.swap_permissions(loaded)
-        changed = _describe(previous, loaded)
+        before = self._settings.swap_permissions(loaded)
+        changed = _describe(before, loaded)
         if changed:
             self._log.info("permissions reloaded: %s", changed)
             # Announced in both directions. A widening is the one that matters
             # most, but a narrowing explains a refusal that is about to happen
             # and would otherwise look like a bug.
-            notify.send("MCP server: permissions changed", changed, log=self._log)
+            #
+            # Except when this daemon wrote it. The rule is that the daemon
+            # announces changes the person did not make: they pressed Always, or
+            # Remove, or Prune, and a toast a second later is their own press
+            # read back to them.
+            if not ours:
+                notify.send("MCP server: permissions changed", changed, log=self._log)
         else:
             self._log.info("permissions reloaded: nothing an agent can tell apart")
 
@@ -390,6 +480,26 @@ class Reloader:
                 log=self._log,
             )
         return (bool(changed), False)
+
+    def _is_our_own_write(
+        self, previous: tuple[bytes | None, ...], raw: tuple[bytes | None, ...]
+    ) -> bool:
+        """Whether the only thing that moved is a file this daemon just wrote.
+
+        Deliberately narrow. A hand edit landing in the same two-second window as
+        a grant is still news, so the user's own file having moved at all is
+        enough to announce -- and so is a local file whose contents are not the
+        ones written here.
+        """
+        try:
+            index = self._permission_paths.index(self._local_path)
+        except ValueError:
+            return False
+        if len(previous) != len(raw):
+            return False
+        if any(a != b for position, (a, b) in enumerate(zip(previous, raw)) if position != index):
+            return False
+        return permissions_module.wrote_ourselves(raw[index])
 
     def _poll_config(self) -> Reloaded | None:
         raw = self._read()

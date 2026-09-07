@@ -84,6 +84,17 @@ class TestTheHelperIsTheOnlyWriter:
                 continue
             assert re.search(rf"^\s*{verb}\)", body, re.M), f"{verb} is not a helper verb"
 
+    def test_the_helper_knows_how_to_name_a_rule(self):
+        """`revoke` is the one verb with a subject: the others answer a question
+        the daemon already knows the subject of."""
+        import pathlib
+        import re
+
+        helper = (pathlib.Path(__file__).resolve().parents[1] / "bin" / "omarchy-mcp-consent")
+        body = helper.read_text()
+        assert re.search(r"^\s*revoke\)", body, re.M)
+        assert "mktemp" in body, "one file per press, or two presses collapse into one"
+
     def test_the_qml_answers_through_the_helper(self):
         import pathlib
 
