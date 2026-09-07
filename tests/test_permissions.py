@@ -30,7 +30,9 @@ from omarchy_mcp.permissions import (
     describe,
     errors,
     evaluate,
+    GrantRefused,
     explain,
+    grant,
     load,
     parse,
 )
@@ -544,3 +546,109 @@ class TestTheExplainer:
     def test_it_serialises(self, commands):
         """It is published as JSON by a resource and by the CLI."""
         json.dumps(explain(pooled(allow=["omarchy theme *"]), commands))
+
+
+class TestGranting:
+    """What the daemon writes when somebody answers *always* at the desk.
+
+    Every invariant is checked here rather than only where the button was drawn.
+    A surface that hides the button is a UI; this is the security artifact, and
+    the two are allowed to disagree only in the safe direction.
+    """
+
+    @pytest.fixture
+    def local(self, tmp_path):
+        return tmp_path / "permissions.local.json"
+
+    def test_it_writes_an_exact_route_and_nothing_wider(self, local, commands):
+        rule = grant(local, "omarchy install app", Permissions(), commands)
+        assert rule.matcher == "omarchy install app"
+        assert not rule.wild, "a click consents to what was on the screen"
+        assert rule.effect is Effect.ALLOW
+
+    def test_clicking_the_same_prefix_never_collapses_to_a_wildcard(self, local, commands):
+        """Nine clicks under `omarchy install` stay nine exact rules. Inferring
+        a prefix would grant routes nobody was shown."""
+        perms = Permissions()
+        for route in ("omarchy install app", "omarchy install font", "omarchy install browser"):
+            grant(local, route, perms, commands)
+            perms = load((local.with_name("permissions.json"), local))
+        assert all(not r.wild for r in perms.rules)
+        assert {r.matcher for r in perms.rules} == {
+            "omarchy install app",
+            "omarchy install font",
+            "omarchy install browser",
+        }
+
+    def test_what_it_writes_loads_back(self, local, commands):
+        """The daemon's own file must not be one the daemon then refuses to
+        start on."""
+        grant(local, "omarchy install app", Permissions(), commands)
+        reloaded = load((local.with_name("permissions.json"), local))
+        assert [r.matcher for r in reloaded.rules] == ["omarchy install app"]
+        assert reloaded.rules[0].source == "permissions.local.json"
+        assert check(reloaded, commands) == ()
+
+    def test_the_file_is_not_world_readable(self, local, commands):
+        grant(local, "omarchy install app", Permissions(), commands)
+        assert local.stat().st_mode & 0o077 == 0
+        assert local.parent.stat().st_mode & 0o077 == 0
+
+    def test_it_leaves_no_temporary_file_behind(self, local, commands):
+        grant(local, "omarchy install app", Permissions(), commands)
+        assert [p.name for p in local.parent.iterdir()] == [local.name]
+
+    def test_a_deny_in_the_pool_refuses_the_grant(self, local, commands):
+        """The user's own file grew a matching deny while the prompt was up.
+        That deny is newer than the question."""
+        perms = pooled(deny=["omarchy install *"])
+        with pytest.raises(GrantRefused) as exc:
+            grant(local, "omarchy install app", perms, commands)
+        assert "omarchy install *" in str(exc.value)
+        assert not local.exists(), "nothing is written on a refusal"
+
+    def test_an_ask_in_the_pool_refuses_the_grant(self, local, commands):
+        """An allow shadowed by a broader ask is a rule with no effect, and
+        writing one would tell the user they had done something they had not."""
+        with pytest.raises(GrantRefused):
+            grant(local, "omarchy install app", pooled(ask=["omarchy install *"]), commands)
+
+    def test_a_sudo_route_is_never_granted(self, local, commands):
+        sudo = next(c for c in commands.values() if c.requires_sudo)
+        with pytest.raises(GrantRefused) as exc:
+            grant(local, sudo.route, Permissions(), commands)
+        assert "sudo" in str(exc.value)
+
+    @pytest.mark.parametrize("route", sorted(NEVER_STORE))
+    def test_a_never_granted_route_is_never_granted(self, local, route, commands):
+        with pytest.raises(GrantRefused) as exc:
+            grant(local, route, Permissions(), commands)
+        assert "command line" in str(exc.value)
+
+    def test_a_route_that_does_not_exist_is_refused(self, local, commands):
+        with pytest.raises(GrantRefused):
+            grant(local, "omarchy nosuchthing", Permissions(), commands)
+
+    def test_granting_twice_is_refused_rather_than_duplicated(self, local, commands):
+        grant(local, "omarchy install app", Permissions(), commands)
+        perms = load((local.with_name("permissions.json"), local))
+        with pytest.raises(GrantRefused) as exc:
+            grant(local, "omarchy install app", perms, commands)
+        assert "already allowed" in str(exc.value)
+
+    def test_it_keeps_rules_it_did_not_write(self, local, commands):
+        """The file is replaced, not appended to, so anything already in it has
+        to survive the round trip -- including a hand-added one."""
+        local.write_text(doc(allow=["omarchy theme set"], deny=["omarchy dev link"]))
+        grant(local, "omarchy install app", Permissions(), commands)
+        reloaded = load((local.with_name("permissions.json"), local))
+        assert {(r.effect, r.matcher) for r in reloaded.rules} == {
+            (Effect.DENY, "omarchy dev link"),
+            (Effect.ALLOW, "omarchy theme set"),
+            (Effect.ALLOW, "omarchy install app"),
+        }
+
+    def test_it_keeps_a_setting_it_did_not_write(self, local, commands):
+        local.write_text(json.dumps({"permissions": {"askTimeoutSeconds": 120}}))
+        grant(local, "omarchy install app", Permissions(), commands)
+        assert load((local.with_name("permissions.json"), local)).ask_timeout_s == 120

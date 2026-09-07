@@ -196,6 +196,33 @@ recognises so it stops retrying, and says why on the desktop, in the journal,
 and in the bar panel. `omarchy-mcpd --check-permissions` validates a fix without
 starting anything.
 
+### What "always" may write, and what it may not
+
+Answering *always* appends one `allow` rule, and every limit on it is enforced
+where the file is written rather than where the button is drawn:
+
+- **an exact route, never a wildcard.** A click consents to what was on the
+  screen. `omarchy install app` pressed nine times stays nine exact rules;
+  inferring `omarchy install *` would grant routes nobody was shown.
+- **`permissions.local.json`, never `permissions.json`.** The daemon does not
+  write the file you check into git.
+- **never a sudo route, and never one whose argument is a command line.**
+- **never one a `deny` or `ask` rule already covers.** If your own file grew a
+  matching `deny` while the prompt was on screen, that `deny` is newer than the
+  question: the rule is not written and **the call is refused**, rather than run
+  because a click was in flight.
+
+The write is atomic — temp file, `fsync`, rename, `0600` — so a half-written
+permissions file cannot be read back after a crash. Grants are recorded in the
+activity log as `permission` events, which answers *when did I allow this* long
+after the fact.
+
+The answer travels one channel: a one-time token the daemon mints per question,
+written by `bin/omarchy-mcp-consent`. The panel shells out to that helper rather
+than writing the file itself, so the token is validated in one place and the
+vocabulary is defined in one place. The token is never given to the model, never
+written to the state file, and never rendered on screen.
+
 ### You can ask what the rules actually do
 
 A rule is written once and read against a registry that moves. `omarchy-mcpd

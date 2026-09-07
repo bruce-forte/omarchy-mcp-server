@@ -73,6 +73,15 @@ Panel {
   readonly property bool configOk: service ? service.configOk : fileConfigOk
   readonly property bool permissionsOk: service ? service.permissionsOk : filePermissionsOk
 
+  // The question currently on screen, if any. No file fallback: answering needs
+  // the one-time token, which lives only on the service object and deliberately
+  // never reaches the state file. A widget that has not resolved the service
+  // yet cannot answer, and should not pretend it can.
+  readonly property bool   asking: service ? service.asking : false
+  readonly property string askRoute: service ? service.pendingRoute : ""
+  readonly property var    askArgs: service ? service.pendingArgs : []
+  readonly property string askTarget: service ? service.pendingTarget : ""
+
   readonly property var recent: service ? service.recent : []
   readonly property bool recentLoading: service ? service.recentLoading : false
   readonly property bool activityLogged: service ? service.activityLogged : true
@@ -297,6 +306,76 @@ Panel {
         id: column
         width: parent.width
         spacing: Style.spacing.md
+
+        // First, above everything: a call is parked waiting for this. The
+        // notification is the other surface, and it can only say yes -- these
+        // are the two answers it has no room for.
+        Column {
+          width: parent.width
+          spacing: Style.spacing.sm
+          visible: root.asking
+
+          PanelSectionHeader { text: "APPROVAL NEEDED" }
+
+          Text {
+            width: parent.width
+            wrapMode: Text.WordWrap
+            text: root.askRoute + (root.askArgs.length > 0
+                    ? " " + root.askArgs.map(function (a) { return "'" + a + "'" }).join(" ")
+                    : "")
+            color: Color.urgent
+            font.family: Style.font.family
+            font.pixelSize: Style.font.bodySmall
+            font.bold: true
+          }
+
+          Text {
+            width: parent.width
+            wrapMode: Text.WordWrap
+            // Named target or not, this line is always shown: "not resolvable"
+            // is information, and a prompt that silently omits it reads as one
+            // that checked.
+            text: root.askTarget !== "" ? "Target: " + root.askTarget
+                                        : "Target: not resolvable to a known object"
+            color: Qt.darker(Color.foreground, 1.4)
+            font.family: Style.font.family
+            font.pixelSize: Style.font.bodySmall
+          }
+
+          Row {
+            spacing: Style.spacing.controlGap
+
+            Button {
+              text: "Allow once"
+              bordered: true
+              onClicked: root.service.answer("approve")
+            }
+
+            Button {
+              text: "Always"
+              bordered: true
+              onClicked: root.service.answer("always")
+            }
+
+            Button {
+              text: "Deny"
+              bordered: true
+              onClicked: root.service.answer("deny")
+            }
+          }
+
+          Text {
+            width: parent.width
+            wrapMode: Text.WordWrap
+            text: "Always writes an allow rule for this exact command to "
+                + "permissions.local.json. Ignoring this refuses it."
+            color: Qt.darker(Color.foreground, 1.6)
+            font.family: Style.font.family
+            font.pixelSize: Style.font.bodySmall
+          }
+
+          PanelSeparator { width: parent.width }
+        }
 
         Text {
           text: root.serving ? "Serving on 127.0.0.1:" + root.port

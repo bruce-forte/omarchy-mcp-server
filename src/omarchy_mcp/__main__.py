@@ -21,10 +21,10 @@ from . import (
     frames,
     notify,
     permissions as permissions_module,
+    registry,
     token as token_module,
 )
 from .paths import CONFIG_FILE, PERMISSIONS_FILE, PERMISSIONS_FILES
-from .registry import RegistryError, all_commands
 from .server import build, client_config_json, client_config_line
 from .settings import Settings
 from .stats import Stats
@@ -83,8 +83,8 @@ def _load_permissions(log):
     # skipping the check here is better than refusing to start over a registry
     # that was never going to load.
     try:
-        commands = all_commands()
-    except RegistryError as exc:
+        commands = registry.all_commands()
+    except registry.RegistryError as exc:
         log.warning("permissions not checked against the registry: %s", exc)
         return loaded
 
@@ -110,8 +110,8 @@ def _print_permissions(log, *, as_json: bool = False) -> int:
         return EX_CONFIG
 
     try:
-        commands = all_commands()
-    except RegistryError as exc:
+        commands = registry.all_commands()
+    except registry.RegistryError as exc:
         print(f"The registry is unavailable, so rules cannot be expanded: {exc}")
         return 1
 
@@ -176,8 +176,8 @@ def _check_permissions(log) -> int:
         return EX_CONFIG
 
     try:
-        commands = all_commands()
-    except RegistryError as exc:
+        commands = registry.all_commands()
+    except registry.RegistryError as exc:
         print(f"\nParses. Not checked against the registry: {exc}")
         return 0
 
