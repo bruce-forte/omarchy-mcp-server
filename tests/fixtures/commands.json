@@ -5988,6 +5988,22 @@
       ]
     },
     {
+      "route": "omarchy theme set browser policy",
+      "binary": "omarchy-theme-set-browser-policy",
+      "group": "theme",
+      "name": "set browser policy",
+      "summary": "Write the current theme color into the browser policy directories",
+      "requires_sudo": false,
+      "hidden": true,
+      "args": "<rrggbb>",
+      "examples": [],
+      "aliases": [],
+      "filename_route": "omarchy theme set browser policy",
+      "routes": [
+        "omarchy theme set browser policy"
+      ]
+    },
+    {
       "route": "omarchy theme set claude",
       "binary": "omarchy-theme-set-claude",
       "group": "theme",
