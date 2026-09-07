@@ -52,13 +52,16 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats | None = No
             # One snapshot per call: what this reports about a route -- its tier,
             # whether it is runnable -- is a claim about the config in force now.
             perms = settings.permissions
+            unreviewed = settings.unreviewed
             rec.args = (query,) if query else ()
             limit = max(1, min(limit, 100))
             hits = registry.search(query, limit=limit, include_hidden=include_hidden)
             rows = []
             for cmd in hits:
                 # One derivation, shared with the commands resource.
-                rows.append(registry.as_dict(cmd) | describe(cmd, perms))
+                rows.append(
+                    registry.as_dict(cmd) | describe(cmd, perms, unreviewed=unreviewed)
+                )
             return json.dumps({"query": query, "count": len(rows), "commands": rows}, indent=2)
 
     @tools.tool(
@@ -107,7 +110,13 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats | None = No
             # its route must not skip a check that reaching it by a tool applies --
             # including the one that asks the user.
             decision = await gate.authorize(
-                cmd, args, perms=settings.permissions, ctx=ctx, log=log, offload=offload
+                cmd,
+                args,
+                perms=settings.permissions,
+                unreviewed=settings.unreviewed,
+                ctx=ctx,
+                log=log,
+                offload=offload,
             )
             if isinstance(decision, gate.Refused):
                 rec.outcome = "refused"

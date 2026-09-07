@@ -62,6 +62,7 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats) -> None:
         return await run_route(
             "omarchy notification send", args,
             config=settings.current, perms=settings.permissions,
+            unreviewed=settings.unreviewed,
             stats=stats, log=log, tool="omarchy_notify", ctx=ctx,
         )
 
@@ -102,5 +103,6 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats) -> None:
         return await run_route(
             "omarchy osd", args,
             config=settings.current, perms=settings.permissions,
+            unreviewed=settings.unreviewed,
             stats=stats, log=log, tool="omarchy_osd", ctx=ctx,
         )

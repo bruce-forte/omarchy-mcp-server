@@ -4,9 +4,17 @@
 #
 # Two surfaces call this, and that is the point of it existing at all:
 #
-#   approve <token>   the notification's --exec, when the user clicks it
-#   always  <token>   the bar panel's Always button
-#   deny    <token>   the bar panel's Deny button
+#   approve     <token>   the notification's --exec, when the user clicks it
+#   always      <token>   the bar panel's Always button
+#   deny        <token>   the bar panel's Deny button
+#   acknowledge <token>   the bar panel's Acknowledge button, for a review
+#
+# `acknowledge` answers a different question -- "I have seen what changed" rather
+# than "yes, run this" -- but it travels the same way and for the same reason.
+# Acknowledging is silent by design: it consumes a warning and raises nothing. An
+# agent able to do it could clear its own review with nothing on screen, so the
+# token is minted by the daemon, published only on the frame the shell reads, and
+# never given to the model.
 #
 # A notification carries exactly one action, so it can say yes and nothing else.
 # The panel has room for the other two. Both write here rather than either one
@@ -28,7 +36,7 @@ PLUGIN_ID="io.github.bruce-forte.mcp-server"
 CONSENT_DIR="${XDG_RUNTIME_DIR:-/tmp}/$PLUGIN_ID/consent"
 
 usage() {
-  echo "usage: omarchy-mcp-consent {approve|always|deny} <token>" >&2
+  echo "usage: omarchy-mcp-consent {approve|always|deny|acknowledge} <token>" >&2
   exit 2
 }
 
@@ -41,6 +49,9 @@ case "$1" in
   approve) verb="" ;;
   always)  verb=" always" ;;
   deny)    verb=" deny" ;;
+  # Not an answer to a prompt, so it lands under its own name rather than in a
+  # pending call's file. The daemon looks for it on its poll.
+  acknowledge) verb=""; ack=1 ;;
   *)       usage ;;
 esac
 
@@ -58,4 +69,8 @@ token="$2"
 # as long as it sits there, and the daemon deletes it as soon as it reads it.
 umask 077
 mkdir -p "$CONSENT_DIR"
-printf '%s%s' "$token" "$verb" >"$CONSENT_DIR/$token"
+if [[ ${ack:-0} -eq 1 ]]; then
+  printf '%s' "$token" >"$CONSENT_DIR/ack-$token"
+else
+  printf '%s%s' "$token" "$verb" >"$CONSENT_DIR/$token"
+fi

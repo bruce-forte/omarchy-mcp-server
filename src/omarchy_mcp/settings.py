@@ -38,6 +38,7 @@ class Settings:
     def __init__(self, config: Config, permissions: Permissions | None = None) -> None:
         self._current = config
         self._permissions = permissions if permissions is not None else Permissions()
+        self._unreviewed: frozenset[str] = frozenset()
 
     @property
     def current(self) -> Config:
@@ -59,6 +60,21 @@ class Settings:
         """Point at a new permissions document. Returns the one it replaced."""
         previous = self._permissions
         self._permissions = permissions
+        return previous
+
+    @property
+    def unreviewed(self) -> frozenset[str]:
+        """Routes an update added under an existing `allow`, not yet reviewed.
+
+        Held here rather than inside `Permissions` because it is not something
+        the user wrote: it is the difference between the document and the
+        machine, and it is cleared by acknowledging rather than by editing.
+        """
+        return self._unreviewed
+
+    def swap_unreviewed(self, routes: frozenset[str]) -> frozenset[str]:
+        previous = self._unreviewed
+        self._unreviewed = routes
         return previous
 
     @classmethod

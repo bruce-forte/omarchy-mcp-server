@@ -575,7 +575,9 @@ class Outcome:
         return self.rule is not None
 
 
-def evaluate(route: str, tier: Tier, perms: Permissions) -> Outcome:
+def evaluate(
+    route: str, tier: Tier, perms: Permissions, *, unreviewed: frozenset[str] = frozenset()
+) -> Outcome:
     """The whole ladder, in one function, so it cannot be half-applied.
 
     ::
@@ -633,6 +635,20 @@ def evaluate(route: str, tier: Tier, perms: Permissions) -> Outcome:
             f"`{route}` takes a command line as its argument, so it is asked about "
             f"every time and never granted outright.",
         )
+
+    # Restrictions extend forward; grants do not. A route that appeared under an
+    # existing `allow` was never seen by the person who wrote that rule, so it
+    # is asked about once rather than running on arrival. `deny` and `ask` are
+    # untouched: protection propagating is the point. See `delta.py`.
+    if outcome.effect is Effect.ALLOW and route in unreviewed:
+        return Outcome(
+            Effect.ASK,
+            tier,
+            outcome.rule,
+            f"`{route}` is new since you last reviewed permissions, and is covered "
+            f"by an existing allow rule rather than one written for it. It is asked "
+            f"about until the review in the bar panel is acknowledged.",
+        )
     return outcome
 
 
@@ -642,7 +658,9 @@ ASK_NOTE = (
 )
 
 
-def describe(cmd: Command, perms: Permissions) -> dict[str, object]:
+def describe(
+    cmd: Command, perms: Permissions, *, unreviewed: frozenset[str] = frozenset()
+) -> dict[str, object]:
     """This server's verdict on one command, for anything that publishes it.
 
     One derivation with two readers -- `omarchy_search_commands` and the commands
@@ -653,7 +671,7 @@ def describe(cmd: Command, perms: Permissions) -> dict[str, object]:
     a careful agent never call it, so the prompt never fires and the feature is
     invisible to the only caller there is.
     """
-    outcome = decide(cmd, perms)
+    outcome = decide(cmd, perms, unreviewed=unreviewed)
     row: dict[str, object] = {
         "tier": outcome.tier.value,
         "runnable": outcome.allowed or outcome.asks,
@@ -874,10 +892,12 @@ def _write_local(path: Path, rules: Sequence[Rule], options: Options) -> None:
     os.replace(tmp, path)
 
 
-def decide(cmd: Command, perms: Permissions) -> Outcome:
+def decide(
+    cmd: Command, perms: Permissions, *, unreviewed: frozenset[str] = frozenset()
+) -> Outcome:
     """What happens to ``cmd``. The tier and the document, in one call.
 
     The one entry point, so that a caller cannot apply the derivation and forget
     the rules -- or read the rules and forget that sudo beats them.
     """
-    return evaluate(cmd.route, base_tier(cmd), perms)
+    return evaluate(cmd.route, base_tier(cmd), perms, unreviewed=unreviewed)

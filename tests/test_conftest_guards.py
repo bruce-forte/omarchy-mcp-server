@@ -124,3 +124,34 @@ def test_nothing_binds_all_commands_at_import():
     assert offenders == [], (
         "call registry.all_commands() through the module so the fixture can pin it"
     )
+
+
+def test_every_written_path_is_pinned():
+    """`_pin_state_dir` patches bindings, not one constant, because
+    `from .paths import X` copies the value at import. A module that starts
+    writing somewhere new has to be added to `WRITTEN_PATHS` or the suite will
+    write into the developer's own state directory -- which has now happened
+    twice, once with the activity log and once with `registry-seen.json`."""
+    import pathlib
+    import re
+
+    from .conftest import WRITTEN_PATHS
+
+    pinned = {(module.rpartition(".")[2], attribute) for module, attribute, _ in WRITTEN_PATHS}
+    src = pathlib.Path(__file__).resolve().parents[1] / "src" / "omarchy_mcp"
+    # `ACTIVITY_FILE` is deliberately absent: it is a bare filename, joined onto
+    # the state directory by its caller, so pinning it would pin nothing.
+    written = ("STATE_DIR", "REGISTRY_SEEN_FILE", "CONSENT_DIR", "TOKEN_FILE")
+
+    missing = []
+    for path in sorted(src.rglob("*.py")):
+        if path.name == "paths.py":
+            continue
+        for match in re.finditer(r"^from \.{1,2}\w*\s+import\s+(.+)$", path.read_text(), re.M):
+            for name in (n.strip() for n in match.group(1).split(",")):
+                if name in written and (path.stem, name) not in pinned:
+                    missing.append(f"{path.stem}.{name}")
+    assert missing == [], (
+        "add these to conftest.WRITTEN_PATHS so the suite cannot write to the real "
+        f"state directory: {missing}"
+    )

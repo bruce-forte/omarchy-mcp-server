@@ -35,12 +35,12 @@ This file is the working agreement.
 - Tests read committed snapshots in `tests/fixtures/`, never the installed
   Omarchy: `commands.json` (`omarchy commands --all --json`), `themes.txt`
   (`omarchy theme list`), `monitors.json` (`hyprctl -j monitors`, trimmed by
-  hand), `ipc-show.txt` (`qs ipc show`). Autouse fixtures pin all of them, and
-  two more stop any test spawning a real `omarchy` or raising a real
-  notification. That is what lets the suite run in CI, it stops tests changing
-  meaning the next time `omarchy update` renames a route, and it stops the suite
-  driving the machine it runs on. Refresh a snapshot deliberately, in its own
-  commit.
+  hand), `ipc-show.txt` (`qs ipc show`). Autouse fixtures pin all of them, pin
+  every path the daemon writes to, and stop any test spawning a real `omarchy`
+  or raising a real notification. That is what lets the suite run in CI, it stops
+  tests changing meaning the next time `omarchy update` renames a route, and it
+  stops the suite driving — or writing to — the machine it runs on. Refresh a
+  snapshot deliberately, in its own commit.
 - A tool argument that names something — a theme, a monitor, a path, a URL —
   gets a resolver in `resolve.py` and a route in its table, so the refusal
   happens before anything is spawned and the call carries a human label for the
@@ -61,6 +61,11 @@ the existing tests are the specification:
   about and never granted.
 - **Any** defect in the permissions document refuses it. At startup that means
   the daemon does not start, exit `78`; at reload the last good document stands.
+- **Restrictions extend forward, grants do not.** A route that appeared under an
+  existing `allow` is held at `ask` until the review is acknowledged; `deny` and
+  `ask` cover a new route the moment it arrives.
+- The registry snapshot advances **only** on acknowledgement — never on startup,
+  except the first run, which has nothing to compare against.
 - `argv` never passes through a shell. `tests/test_execute.py` writes a canary
   file and asserts it survives an injection attempt.
 - Missing, wrong, and truncated tokens are all rejected; `/health` is the only
@@ -78,13 +83,21 @@ the existing tests are the specification:
 
 Do not add a config key for the listen address. See `SECURITY.md`.
 
-**Nothing in the test suite may reach the machine it runs on.** Two autouse
+**Nothing in the test suite may reach the machine it runs on.** Autouse
 fixtures in `conftest.py` enforce it, and `tests/test_conftest_guards.py` tests
 them. They exist because the suite once rebooted the developer's machine — see
 `ROADMAP.md` F29 — and the rule that came out of it is that a suite must not be
 one behaviour change away from executing whatever it names. Do not weaken them
 to make a test pass; the opt-ins are to redirect `execute.SEARCH` at a fixture
 directory, or to mark the test `needs_omarchy`.
+
+**Nor may it write there.** `conftest.WRITTEN_PATHS` pins every module-level
+*binding* of every path the daemon writes — bindings rather than one constant,
+because `from .paths import X` copies the value at import and patching `paths`
+would reach nobody. A module that starts writing somewhere new goes in that
+list; `test_every_written_path_is_pinned` fails until it does. This has gone
+wrong twice, with the activity log and with `registry-seen.json`, and the guard
+then found that the suite could rotate the user's bearer token.
 
 ## Never fail silently
 
@@ -271,13 +284,13 @@ one window where `serviceFor` has not resolved yet, and it stays that size:
 whether the daemon is up, on what port, and what it last did. New state belongs
 on the service object, where a binding already updates the widget.
 
-N10's remaining commits are the next thing that will want this — the delta
-review and the Always button — and they should call the service rather than
-build a second channel to the same process. **Read-only IPC verbs only**: an
-agent can reach this plugin's own target, so a verb that grants a permission or
-acknowledges a review would let it permit itself. Acknowledge, allow and revoke
-belong in the panel and in `bin/omarchy-mcp-consent`, which are surfaces a
-person reaches at the desk.
+N10 did exactly this: the pending question and the delta review both live on the
+service object, and the panel reads them from there. **Read-only IPC verbs
+only** — an agent can reach this plugin's own target, so a verb that granted a
+permission or acknowledged a review would let it permit itself. `status`,
+`recent`, `pending` and `review` report; answering and acknowledging go through
+`bin/omarchy-mcp-consent`, with a token the daemon publishes only on the frame
+the shell reads. Keep new verbs on that side of the line.
 
 ### Reload rules
 

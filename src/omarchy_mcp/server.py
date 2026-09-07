@@ -77,6 +77,7 @@ def build(
     *,
     stats: Stats | None = None,
     reload_from: Path | None = None,
+    review: object | None = None,
 ):
     """Build the ASGI application for the MCP server.
 
@@ -159,6 +160,8 @@ def build(
             sink = getattr(stats, "sink", None)
             if sink is None:
                 return
+            if result.acknowledged:
+                sink.event("acknowledged")
             if result.rejected:
                 sink.event("config_rejected")
             if result.permissions_rejected:
@@ -177,7 +180,14 @@ def build(
             await clients.tools_changed()
 
         reloader = Reloader(
-            settings, catalogue, mcp, log, path=reload_from, announce=announce, on_change=note
+            settings,
+            catalogue,
+            mcp,
+            log,
+            path=reload_from,
+            announce=announce,
+            on_change=note,
+            review=review,
         )
 
     @mcp.custom_route("/health", methods=["GET"])

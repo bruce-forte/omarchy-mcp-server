@@ -223,6 +223,43 @@ than writing the file itself, so the token is validated in one place and the
 vocabulary is defined in one place. The token is never given to the model, never
 written to the state file, and never rendered on screen.
 
+### A rule is static; the registry moves under it
+
+The most useful thing this server does with permissions is notice that a rule
+you wrote covers more than it did. `omarchy install *` is a prefix, not a list,
+so an `omarchy update` can add commands inside a sentence you already agreed to.
+
+The rule is **restrictions extend forward, grants do not**:
+
+| A newly-arrived route matched by | On arrival |
+|---|---|
+| a `deny` rule | denied |
+| an `ask` rule | asks |
+| **only an `allow` rule** | **held at `ask` until acknowledged** |
+| nothing | the guarded default, or it is simply safe |
+
+That is the precedence ladder extended across time, and it is why a wildcard
+keeps meaning what a wildcard means without silently granting what nobody saw.
+
+Also reported: a rule that has **stopped matching** — a silent loss of
+protection when it is a `deny` — and commands arriving in a **group this plugin
+has never classified**, which is the honest limit of deriving tiers from
+`GUARDED_GROUPS`. Those two raise a `critical` notification; a handful of new
+guarded routes that will ask anyway do not.
+
+The comparison is against `registry-seen.json` in the state directory, which
+holds the **route list**, not a hash: a fingerprint says something changed and
+cannot say what. It advances **only when you acknowledge**, never on startup —
+otherwise the next boot would overwrite the evidence before anybody looked. The
+one exception is the first run, which has nothing to compare against.
+
+**Acknowledging is silent by design** — it consumes a warning and raises
+nothing — so an agent able to do it could clear its own review with nothing on
+screen. It travels the consent channel: a token the daemon mints, publishes only
+on the frame the shell reads, and never gives to the model. `omarchy-mcpd
+--review` shows the review to anyone; it carries no token, and cannot
+acknowledge.
+
 ### You can ask what the rules actually do
 
 A rule is written once and read against a registry that moves. `omarchy-mcpd
