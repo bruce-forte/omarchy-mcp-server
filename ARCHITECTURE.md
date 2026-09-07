@@ -269,6 +269,16 @@ better message.
 ago, and it dies with the process. `activity.py` appends one JSON object per
 tool call to `activity.jsonl` in the state directory.
 
+**A session does not always get to close itself.** `omarchy restart shell` tears
+the whole shell down and Quickshell reaps its children within milliseconds --
+measured, and not something `Service.qml` can lengthen (finding F30). So the log
+legitimately holds a `started` with another `started` after it and no `stopped`
+between. `activity.mark_unclosed` derives *"this session has no recorded end"*
+when the log is **read**, from what is already on disk; nothing is written and no
+timestamp is invented, because a guess in an audit trail is worse than a gap in
+one. The last `started` in a window is never marked: it is the session still
+running.
+
 **One seam.** `stats.call(tool)` is a context manager. A tool opens one, fills
 in what it learns — the route, the resolved target, the tier, how the user
 answered, the exit code — and exactly one record is written when it leaves,

@@ -218,8 +218,15 @@ Panel {
     if (record.event) {
       if (record.event === "dropped")
         return "· " + Number(record.n || 0) + " records dropped"
-      if (record.event === "started")
-        return "· daemon started"
+      if (record.event === "started") {
+        // A session with no recorded end. The daemon cannot always write its
+        // own `stopped` -- on `omarchy restart shell` the whole shell is torn
+        // down and its children are reaped within milliseconds -- so a run of
+        // bare "daemon started" rows reads as a bug when it is not one.
+        // Derived when the log is read, never written: see ROADMAP.md F30.
+        return record.unclosed ? "· daemon started · previous session not closed"
+                               : "· daemon started"
+      }
       if (record.event === "stopped")
         return "· daemon stopped"
       if (record.event === "reloaded") {
@@ -257,8 +264,15 @@ Panel {
   }
 
   function rowColor(record) {
-    if (record.event)
-      return record.event === "dropped" ? Color.urgent : Qt.darker(Color.foreground, 1.8)
+    if (record.event) {
+      if (record.event === "dropped")
+        return Color.urgent
+      // Legible rather than alarming: an unclosed session is expected after a
+      // shell restart, and is only worth distinguishing from a clean one.
+      if (record.unclosed)
+        return Qt.darker(Color.foreground, 1.4)
+      return Qt.darker(Color.foreground, 1.8)
+    }
     return Color.foreground
   }
 
