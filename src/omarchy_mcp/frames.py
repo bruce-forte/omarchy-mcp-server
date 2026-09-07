@@ -22,6 +22,15 @@ write's argument *is* the clipboard -- and a channel the shell reads into a bar
 widget is the last place to relax it. The log keeps arguments behind a 0600
 file; this does not carry them at all.
 
+`asking` and `answered` are the deliberate exception, and it is worth saying why
+rather than letting it look like an oversight. An `asking` frame *must* carry the
+route and its arguments: consent that does not show what it is consenting to is
+not consent (N2), and the panel is one of the two surfaces where the question is
+put. It exposes nothing new -- `prompt.message` already puts those same flattened
+arguments on the desktop in the notification. It also carries the one-time token,
+which is why `Service.qml` holds it in memory and never writes it to the state
+file: it is a live capability for the length of one question.
+
 Call frames are written from request threads, so writes are serialised. Two
 threads interleaving a `print` produce a line the shell cannot parse, and the
 `SplitParser` on the other end would silently drop it.
@@ -58,6 +67,33 @@ def emit(state: str, **fields: object) -> None:
 def call(tool: str, outcome: str) -> None:
     """A tool call finished. See the module docstring for what is not in it."""
     emit("call", tool=tool, outcome=outcome)
+
+
+def asking(token: str, route: str, args: list[str], target: str | None, marker: str) -> None:
+    """A question is on screen, and this is what it says.
+
+    The panel needs all of it: the route and arguments to show, and the token to
+    answer with. `marker` is the notification's unique tail, so the panel can say
+    which prompt it is looking at when two clients ask at once.
+    """
+    emit(
+        "asking",
+        token=token,
+        route=route,
+        args=list(args),
+        target=target,
+        marker=marker,
+    )
+
+
+def answered(marker: str, outcome: str) -> None:
+    """The question is closed, however it closed.
+
+    A bar surface exists once per screen, so three panels can be showing one
+    pending ask. The first answer spends the token; this is what tells the others
+    to stop showing a question nobody can answer any more.
+    """
+    emit("answered", marker=marker, outcome=outcome)
 
 
 def reloaded(tools: int, declared: int, config_ok: bool, permissions_ok: bool = True) -> None:

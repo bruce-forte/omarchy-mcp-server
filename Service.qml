@@ -83,6 +83,46 @@ Item {
   signal permissionsChecked(bool ok, string detail)
   property string permissionsCheck: ""
 
+  // The question currently on screen, if any. The panel is the second surface
+  // it appears on: the notification carries one action (F25), so it can say yes
+  // and nothing else, while this can also say "yes, always" and "no".
+  //
+  // `pendingToken` is a live capability for the length of one question. It is
+  // held here and nowhere else -- never in `writeState()`, which lands in a file
+  // under $XDG_RUNTIME_DIR, and never rendered, because a bar popup is on
+  // screen, in screenshots, and in screen shares.
+  property string pendingToken: ""
+  property string pendingRoute: ""
+  property var    pendingArgs: []
+  property string pendingTarget: ""
+  property string pendingMarker: ""
+  readonly property bool asking: pendingToken !== ""
+
+  // Answering goes through the same helper the notification's --exec runs, not
+  // through a FileView here. That helper validates the token before using it as
+  // a filename and is the one place the vocabulary is defined; a second writer
+  // would be a second thing to get right, in a language with no tests in this
+  // repository.
+  function answer(verb) {
+    if (pendingToken === "")
+      return false
+    answerProc.verb = verb
+    answerProc.token = pendingToken
+    // Cleared optimistically: the daemon confirms with an `answered` frame, but
+    // the button should stop offering an answer the moment it is pressed.
+    clearPending()
+    answerProc.running = true
+    return true
+  }
+
+  function clearPending() {
+    pendingToken = ""
+    pendingRoute = ""
+    pendingArgs = []
+    pendingTarget = ""
+    pendingMarker = ""
+  }
+
   // Whether a Stop survives a shell restart. Held in the state directory
   // rather than in memory: an off switch that turns itself back on at the next
   // login is not an off switch.
@@ -256,6 +296,26 @@ Item {
             root.lastTool = frame.tool || ""
             root.callSeen(frame.tool || "", frame.outcome || "")
             root.writeState()
+            return
+          }
+
+          // A question is on screen. Not a lifecycle state: the daemon is
+          // still listening, and is parked on one call.
+          if (frame.state === "asking") {
+            root.pendingToken = frame.token || ""
+            root.pendingRoute = frame.route || ""
+            root.pendingArgs = frame.args || []
+            root.pendingTarget = frame.target || ""
+            root.pendingMarker = frame.marker || ""
+            return
+          }
+
+          // It closed, however it closed. A bar surface exists once per screen,
+          // so this is what takes a spent question off the panels that did not
+          // answer it.
+          if (frame.state === "answered") {
+            if (frame.marker === root.pendingMarker || root.pendingMarker === "")
+              root.clearPending()
             return
           }
 
@@ -485,6 +545,17 @@ Item {
            + "  " + root.pluginDir + "bin/omarchy-mcpd --check-permissions"
     }
 
+    function pending(): string {
+      // Read-only on purpose. An agent can reach this plugin's own target
+      // (N12), so a verb that *answered* a question would let it approve its
+      // own call. Answering is the panel's, and the notification's.
+      if (!root.asking)
+        return "nothing is waiting for an answer"
+      return "waiting for an answer: " + root.pendingRoute
+           + (root.pendingTarget !== "" ? " — " + root.pendingTarget : "")
+           + "\nAnswer it in the bar panel, or click the notification."
+    }
+
     function reloadConfig(): string {
       // No longer a restart: the daemon re-reads the file in place and tells
       // attached clients if the tool set moved. It would do this within two
@@ -515,6 +586,22 @@ Item {
       root.permissionsCheck = checkOut.text.trim()
       root.permissionsChecked(exitCode === 0, root.permissionsCheck)
       console.log("omarchy-mcp: permissions check exited", exitCode, "\n" + checkOut.text)
+    }
+  }
+
+  // Writes the answer through the helper. argv rather than stdin because the
+  // token is not a secret from the user's own processes -- it is a secret from
+  // the *model*, which never sees stdout or this argv.
+  Process {
+    id: answerProc
+    property string verb: ""
+    property string token: ""
+    command: [root.pluginDir + "bin/omarchy-mcp-consent", answerProc.verb, answerProc.token]
+
+    onExited: function (exitCode) {
+      if (exitCode !== 0)
+        console.warn("omarchy-mcp: could not record the answer; helper exited", exitCode)
+      answerProc.token = ""
     }
   }
 

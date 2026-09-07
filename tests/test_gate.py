@@ -18,7 +18,7 @@ import logging
 import anyio
 import pytest
 
-from omarchy_mcp import consent, gate, prompt
+from omarchy_mcp import consent, gate, permissions, prompt
 from omarchy_mcp.paths import PLUGIN_ID
 from omarchy_mcp.permissions import Effect, Permissions, Rule, decide
 from omarchy_mcp.policy import Tier, base_tier
@@ -393,26 +393,47 @@ class TestAClickCannotBeForged:
         token = prompt.new_token()
         prompt._prepare_dir()
         (consent_dir / token).write_text("")
-        assert prompt._accepted(token) is False
+        assert prompt._answer(token) is None
 
     def test_a_file_with_the_wrong_contents_is_not_consent(self, consent_dir):
         token = prompt.new_token()
         prompt._prepare_dir()
         (consent_dir / token).write_text(prompt.new_token())
-        assert prompt._accepted(token) is False
+        assert prompt._answer(token) is None
 
     def test_a_real_click_is_consent(self, consent_dir):
         token = prompt.new_token()
         prompt._prepare_dir()
         (consent_dir / token).write_text(token)
-        assert prompt._accepted(token) is True
+        assert prompt._answer(token) == "once"
+
+    @pytest.mark.parametrize("verb", sorted(prompt.VERBS))
+    def test_the_panel_verbs_need_the_secret_too(self, consent_dir, verb):
+        """The panel can say more than a notification can, through the same
+        one-time token. The verb is only ever read from a file that has already
+        proved it knows the secret."""
+        token = prompt.new_token()
+        prompt._prepare_dir()
+        (consent_dir / token).write_text(f"{token} {verb}")
+        assert prompt._answer(token) == verb
+
+        (consent_dir / token).write_text(f"{prompt.new_token()} {verb}")
+        assert prompt._answer(token) is None, "a verb does not excuse a wrong token"
+
+    def test_an_unknown_verb_is_silence_not_a_yes(self, consent_dir):
+        """A newer helper writing a word an older daemon does not know must read
+        as no answer. Silence already fails closed; guessing would not."""
+        token = prompt.new_token()
+        prompt._prepare_dir()
+        (consent_dir / token).write_text(f"{token} maybe")
+        assert prompt._answer(token) is None
 
     def test_a_token_is_spent_once(self, consent_dir):
         token = prompt.new_token()
         prompt._prepare_dir()
         (consent_dir / token).write_text(token)
         prompt._clear(token)
-        assert prompt._accepted(token) is False
+        assert prompt._answer(token) is None
 
     def test_the_directory_is_not_world_readable(self, consent_dir):
         prompt._prepare_dir()
@@ -602,3 +623,178 @@ class TestWhatComesBack:
 
 async def _reply_with(reply):
     return reply
+
+
+class TestAlways:
+    """The second answer, and the one a notification cannot carry."""
+
+    @pytest.fixture
+    def local(self, tmp_path, monkeypatch):
+        path = tmp_path / "permissions.local.json"
+        monkeypatch.setattr(gate, "PERMISSIONS_LOCAL_FILE", path)
+        return path
+
+    def _ctx(self, always):
+        return Ctx(
+            can_send_request=True,
+            caps=Caps(Elicitation(form=object())),
+            reply=Reply("accept", {"always": True} if always else None),
+        )
+
+    @pytest.mark.anyio
+    async def test_a_plain_accept_writes_nothing(self, commands, local, quiet_notifications):
+        decision = await gate.authorize(
+            guarded(commands), [], perms=asking(), ctx=self._ctx(False),
+            log=LOG, offload=offload,
+        )
+        assert isinstance(decision, gate.Allowed)
+        assert not local.exists(), "answering once must not grant forever"
+
+    @pytest.mark.anyio
+    async def test_always_writes_the_rule_and_still_runs_this_call(
+        self, commands, local, quiet_notifications
+    ):
+        cmd = guarded(commands)
+        decision = await gate.authorize(
+            cmd, [], perms=asking(), ctx=self._ctx(True), log=LOG, offload=offload
+        )
+        assert isinstance(decision, gate.Allowed)
+        assert decision.consent == "accepted"
+
+        written = permissions.load((local.with_name("permissions.json"), local))
+        assert [r.matcher for r in written.rules] == [cmd.route]
+
+    @pytest.mark.anyio
+    async def test_the_next_call_no_longer_asks(self, commands, local, quiet_notifications):
+        sent, _ = quiet_notifications
+        cmd = guarded(commands)
+        await gate.authorize(
+            cmd, [], perms=asking(), ctx=self._ctx(True), log=LOG, offload=offload
+        )
+        raised = len(sent)
+
+        # What the reloader will hand the gate a moment later.
+        written = permissions.load((local.with_name("permissions.json"), local))
+        decision = await gate.authorize(
+            cmd, [], perms=written, ctx=self._ctx(False), log=LOG, offload=offload
+        )
+        assert isinstance(decision, gate.Allowed)
+        assert decision.consent is None, "nobody was asked, so nothing was answered"
+        assert len(sent) == raised, "and no second prompt was raised"
+
+    @pytest.mark.anyio
+    async def test_a_grant_that_cannot_be_written_refuses_the_call(
+        self, commands, local, quiet_notifications, monkeypatch
+    ):
+        """The pool is the authority at the moment of execution. Running the
+        command because a click was in flight is indefensible."""
+        cmd = guarded(commands)
+
+        def refuse(*args, **kwargs):
+            raise permissions.GrantRefused("a deny rule appeared while you were deciding.")
+
+        monkeypatch.setattr(permissions, "grant", refuse)
+        decision = await gate.authorize(
+            cmd, [], perms=asking(), ctx=self._ctx(True), log=LOG, offload=offload
+        )
+        assert isinstance(decision, gate.Refused)
+        assert "deny rule appeared" in decision.reason
+        assert "refused rather than run" in decision.reason
+
+    @pytest.mark.anyio
+    async def test_a_grant_is_recorded_in_the_activity_log(
+        self, commands, local, quiet_notifications, monkeypatch
+    ):
+        """The most consequential thing a person does in this UI, and the file
+        it lands in says that it was granted but not when."""
+        noted = []
+        monkeypatch.setattr(gate.activity, "note", lambda name, **f: noted.append((name, f)))
+
+        cmd = guarded(commands)
+        await gate.authorize(
+            cmd, [], perms=asking(), ctx=self._ctx(True), log=LOG, offload=offload
+        )
+
+        assert noted == [("permission", {"verb": "allow", "route": cmd.route, "via": "panel"})]
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("data", [None, {}, {"always": False}, {"always": "yes"}, "always"])
+    async def test_anything_that_is_not_the_flag_is_a_plain_accept(
+        self, commands, local, quiet_notifications, data
+    ):
+        """`data` is whatever the asker handed back, and an eliciting client's is
+        a model the user filled in."""
+        ctx = Ctx(
+            can_send_request=True,
+            caps=Caps(Elicitation(form=object())),
+            reply=Reply("accept", data),
+        )
+        decision = await gate.authorize(
+            guarded(commands), [], perms=asking(), ctx=ctx, log=LOG, offload=offload
+        )
+        assert isinstance(decision, gate.Allowed)
+        assert not local.exists()
+
+
+class TestThePanelIsToldWhatIsAsked:
+    """The panel is the second surface the question appears on, and it learns
+    about it from a frame rather than a file it polls."""
+
+    @pytest.fixture
+    def emitted(self, monkeypatch):
+        seen = []
+        monkeypatch.setattr(gate.frames, "asking", lambda *a: seen.append(("asking", a)))
+        monkeypatch.setattr(gate.frames, "answered", lambda *a: seen.append(("answered", a)))
+        return seen
+
+    @pytest.mark.anyio
+    async def test_the_frame_carries_what_the_question_says(
+        self, commands, emitted, quiet_notifications
+    ):
+        cmd = commands["omarchy theme remove"]
+        await gate.authorize(
+            cmd, ["Tokyo Night"], perms=asking(), ctx=Ctx(), log=LOG, offload=offload
+        )
+
+        kind, (token, route, args, target, marker) = emitted[0]
+        assert kind == "asking"
+        assert token, "the panel cannot answer without it"
+        assert route == cmd.route
+        assert args == ["Tokyo Night"]
+        assert target == "Tokyo Night", "consent that cannot see the target is not consent"
+        assert marker
+
+        # The frame exposes nothing the notification did not: it carries the
+        # same resolved call, which is what makes it a justified exception to
+        # `frames.py`'s no-arguments rule rather than a quiet relaxation of it.
+        body = prompt.message(route, args, target)
+        assert all(repr(a) in body for a in args)
+        assert target in body
+
+    @pytest.mark.anyio
+    async def test_the_question_is_closed_however_it_closes(
+        self, commands, emitted, quiet_notifications
+    ):
+        await gate.authorize(
+            guarded(commands), [], perms=asking(), ctx=Ctx(), log=LOG, offload=offload
+        )
+        kinds = [kind for kind, _ in emitted]
+        assert kinds == ["asking", "answered"]
+        assert emitted[1][1][0] == emitted[0][1][4], "same marker, so the right panel clears"
+        assert emitted[1][1][1] == "timed_out"
+
+    @pytest.mark.anyio
+    async def test_an_eliciting_client_raises_no_panel_question(
+        self, commands, emitted, quiet_notifications
+    ):
+        """It answers in its own UI. A panel showing a question it cannot answer
+        is worse than showing none."""
+        ctx = Ctx(
+            can_send_request=True,
+            caps=Caps(Elicitation(form=object())),
+            reply=Reply("accept"),
+        )
+        await gate.authorize(
+            guarded(commands), [], perms=asking(), ctx=ctx, log=LOG, offload=offload
+        )
+        assert emitted == []

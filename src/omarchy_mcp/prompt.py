@@ -15,6 +15,12 @@ may not be looking at.
 It has exactly one action (F25). So a click is *yes* and silence is *no*, which
 is the rule `consent.py` already fails closed on -- the surface and the rule
 agree by construction rather than by care.
+
+The panel is the second surface, and it has room for the two answers a
+notification cannot carry: *yes, always* and *no*. It writes through the same
+one-time token, in the same directory, via the same helper -- see `VERBS`. One
+channel, one validator, one unguessable secret; a second way in would be a second
+thing to get right.
 """
 
 from __future__ import annotations
@@ -50,12 +56,31 @@ MAX_ARG_CHARS = 80
 _counter = itertools.count(1)
 
 
+#: The vocabulary the answer file may carry, and what each word means.
+#:
+#: `once` is the bare token, which is what a notification click writes and what
+#: this channel has always meant. The other two exist because N6's panel has room
+#: for buttons a notification does not: it carries exactly one action (F25), so
+#: it can express *yes* but not *yes, always* and not *no*.
+#:
+#: Anything not in here is **no answer at all** -- not a yes. A newer helper
+#: writing a word an older daemon does not know must read as silence, and
+#: silence already fails closed.
+VERBS = {
+    "once": ("accept", False),
+    "always": ("accept", True),
+    "deny": ("decline", False),
+}
+
+
 @dataclass(frozen=True)
 class Clicked:
     """What the desktop asker returns, shaped like an elicitation result.
 
     `consent._interpret` reads `action`, so the two askers hand back the same
-    thing and the rule does not learn which surface answered.
+    thing and the rule does not learn which surface answered. `always` rides in
+    `data` rather than being a fourth outcome: it is a rider on an accept, not a
+    different way of leaving the question.
     """
 
     action: str = "accept"
@@ -106,19 +131,26 @@ def _prepare_dir() -> None:
     os.chmod(CONSENT_DIR, 0o700)
 
 
-def _accepted(token: str) -> bool:
-    """Whether a real click landed, as opposed to a file merely existing.
+def _answer(token: str) -> str | None:
+    """Which of `VERBS` was written, or ``None`` for no answer yet.
 
     The agent is the untrusted party here, and `omarchy_run` passes arguments to
     hundreds of commands this project did not write. If the existence of a path
     were consent, an agent that talked any one of them into writing a file would
     approve its own guarded call. So the token is both the name and the
-    contents, and both have to match.
+    contents, and both have to match -- the verb is only ever read from a file
+    that has already proved it knows the secret.
     """
     try:
-        return _path(token).read_text().strip() == token
+        body = _path(token).read_text().strip()
     except OSError:
-        return False
+        return None
+    if body == token:
+        return "once"
+    head, _, verb = body.partition(" ")
+    if head != token:
+        return None
+    return verb if verb in VERBS else None
 
 
 def _clear(token: str) -> None:
@@ -172,13 +204,15 @@ async def pending(label: str, body: str, *, token: str | None, log, offload):
 
 
 async def desktop_ask(token: str) -> Clicked:
-    """Wait for the click. Returns only on a real one; the deadline is elsewhere.
+    """Wait for an answer. Returns only on a real one; the deadline is elsewhere.
 
     Deliberately has no timeout of its own. `consent.ask` owns the deadline for
     both askers, so there is one place where "no answer means denied" is
     implemented and one place to read it.
     """
     while True:
-        if await anyio.to_thread.run_sync(_accepted, token):
-            return Clicked()
+        verb = await anyio.to_thread.run_sync(_answer, token)
+        if verb is not None:
+            action, always = VERBS[verb]
+            return Clicked(action, {"always": True} if always else None)
         await anyio.sleep(POLL_INTERVAL_S)

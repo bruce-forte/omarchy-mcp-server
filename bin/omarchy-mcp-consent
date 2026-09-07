@@ -1,15 +1,22 @@
 #!/bin/bash
 #
-# Records an approval, when the user clicks the notification that asked for it.
+# Records an answer to an approval request.
 #
-# `omarchy notification send --exec` runs this with the token the daemon minted
-# for one specific call. The daemon is parked on that call, watching for the
-# token to appear; seeing it is what lets the command run.
+# Two surfaces call this, and that is the point of it existing at all:
 #
-# This is the whole answer channel, so it stays small and it validates what it
-# is given. The token is the filename *and* the contents: the daemon accepts
-# only when both match, which is what stops a file that happens to exist from
-# counting as a yes.
+#   approve <token>   the notification's --exec, when the user clicks it
+#   always  <token>   the bar panel's Always button
+#   deny    <token>   the bar panel's Deny button
+#
+# A notification carries exactly one action, so it can say yes and nothing else.
+# The panel has room for the other two. Both write here rather than either one
+# writing the file itself: this is the whole answer channel, so it stays small,
+# it validates what it is given, and there is one place the vocabulary is
+# defined. Business rules do not move into the UI layer.
+#
+# The token is the filename *and* the first word of the contents: the daemon
+# accepts only when both match, which is what stops a file that happens to exist
+# from counting as a yes. A verb never excuses a wrong token.
 #
 # Nothing here writes inside the plugin directory. The token lands in the
 # runtime directory and dies with the session, which is right -- an approval
@@ -21,12 +28,21 @@ PLUGIN_ID="io.github.bruce-forte.mcp-server"
 CONSENT_DIR="${XDG_RUNTIME_DIR:-/tmp}/$PLUGIN_ID/consent"
 
 usage() {
-  echo "usage: omarchy-mcp-consent approve <token>" >&2
+  echo "usage: omarchy-mcp-consent {approve|always|deny} <token>" >&2
   exit 2
 }
 
 [[ $# -eq 2 ]] || usage
-[[ $1 == "approve" ]] || usage
+
+# `approve` is spelled that way in every notification this daemon has ever sent,
+# including ones already on screen when it was upgraded. It writes the bare
+# token, which is what "once" has always meant on this channel.
+case "$1" in
+  approve) verb="" ;;
+  always)  verb=" always" ;;
+  deny)    verb=" deny" ;;
+  *)       usage ;;
+esac
 
 token="$2"
 
@@ -42,4 +58,4 @@ token="$2"
 # as long as it sits there, and the daemon deletes it as soon as it reads it.
 umask 077
 mkdir -p "$CONSENT_DIR"
-printf '%s' "$token" >"$CONSENT_DIR/$token"
+printf '%s%s' "$token" "$verb" >"$CONSENT_DIR/$token"

@@ -110,6 +110,18 @@
       "default": null,
       "title": "$Schema"
     },
+    "_comment": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Comment"
+    },
     "permissions": {
       "$ref": "#/$defs/PermissionsBlock"
     }

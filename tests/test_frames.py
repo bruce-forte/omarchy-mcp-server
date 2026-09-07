@@ -108,3 +108,31 @@ class TestTheSeam:
         with stats.call("omarchy_run") as rec:
             rec.exit = 0
         assert stats.snapshot()["calls"] == 1
+
+
+class TestTheQuestionFrames:
+    """`asking` is the deliberate exception to the no-arguments rule: consent
+    that does not show what it is consenting to is not consent."""
+
+    def test_asking_carries_the_call_and_the_token(self, capsys):
+        frames.asking("tok", "omarchy theme remove", ["Tokyo Night"], "Tokyo Night", "(#1)")
+        body = json.loads(capsys.readouterr().out)
+        assert body == {
+            "state": "asking",
+            "token": "tok",
+            "route": "omarchy theme remove",
+            "args": ["Tokyo Night"],
+            "target": "Tokyo Night",
+            "marker": "(#1)",
+        }
+
+    def test_answered_carries_the_marker_so_the_right_panel_clears(self, capsys):
+        frames.answered("(#2)", "accepted")
+        body = json.loads(capsys.readouterr().out)
+        assert body == {"state": "answered", "marker": "(#2)", "outcome": "accepted"}
+
+    def test_a_call_frame_still_carries_no_arguments(self, capsys):
+        """The exception is `asking` and nothing else."""
+        frames.call("omarchy_clipboard_write", "ok")
+        body = json.loads(capsys.readouterr().out)
+        assert set(body) == {"state", "tool", "outcome"}

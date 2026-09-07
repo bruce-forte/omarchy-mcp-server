@@ -60,3 +60,67 @@ class TestNothingAsksAPerson:
         and answering it is how a human ends up inside a test run."""
         assert prompt.send("Approval needed", "body", token="tok") is None
         assert prompt.dismiss("(#1)") is None
+
+
+class TestTheHelperIsTheOnlyWriter:
+    """`bin/omarchy-mcp-consent` validates the token before using it as a
+    filename and is the one place the answer vocabulary is defined. QML shells
+    out to it rather than writing the file, so there is one thing to get right
+    rather than two -- and the second would be in a language with no tests here."""
+
+    def test_the_helper_and_the_daemon_agree_on_the_verbs(self):
+        import pathlib
+        import re
+
+        from omarchy_mcp import prompt
+
+        helper = (pathlib.Path(__file__).resolve().parents[1] / "bin" / "omarchy-mcp-consent")
+        body = helper.read_text()
+        # `approve` is the helper's spelling of the daemon's `once`: it writes
+        # the bare token, which is what this channel has always meant.
+        assert re.search(r"^\s*approve\)", body, re.M)
+        for verb in prompt.VERBS:
+            if verb == "once":
+                continue
+            assert re.search(rf"^\s*{verb}\)", body, re.M), f"{verb} is not a helper verb"
+
+    def test_the_qml_answers_through_the_helper(self):
+        import pathlib
+
+        service = pathlib.Path(__file__).resolve().parents[1] / "Service.qml"
+        body = service.read_text()
+        assert "bin/omarchy-mcp-consent" in body
+        assert "CONSENT_DIR" not in body, "QML must not write the answer file itself"
+
+    def test_the_token_never_reaches_the_state_file(self):
+        """It is a live capability for the length of one question. The state
+        file lands under $XDG_RUNTIME_DIR and the panel is in screenshots."""
+        import pathlib
+        import re
+
+        service = pathlib.Path(__file__).resolve().parents[1] / "Service.qml"
+        body = service.read_text()
+        write_state = re.search(r"function writeState\(\) \{.*?\n  \}", body, re.S)
+        assert write_state, "writeState() moved; this guard needs updating"
+        assert "Token" not in write_state.group(0)
+        assert "token" not in write_state.group(0)
+
+
+def test_nothing_binds_all_commands_at_import():
+    """`_pin_registry` patches `registry.all_commands`, so a module that did
+    `from .registry import all_commands` keeps the real one and reads the
+    installed Omarchy in every test -- silently, and only on a machine that has
+    one. `__main__.py` did exactly that, and its `--permissions` output was
+    computed from the live system while the assertions used the fixture."""
+    import pathlib
+    import re
+
+    src = pathlib.Path(__file__).resolve().parents[1] / "src" / "omarchy_mcp"
+    offenders = [
+        path.name
+        for path in sorted(src.rglob("*.py"))
+        if re.search(r"^from \.{1,2}registry import .*\ball_commands\b", path.read_text(), re.M)
+    ]
+    assert offenders == [], (
+        "call registry.all_commands() through the module so the fixture can pin it"
+    )

@@ -341,6 +341,13 @@ naming the problem, the bar panel says so, and the panel's **Check permissions**
 button tells you when the fix is good. (An edit made while the server is running
 is gentler: a broken save leaves the rules it already had in force.)
 
+**Three answers, two surfaces.** The bar panel shows the pending question with
+**Allow once**, **Always** and **Deny**. *Always* writes an `allow` rule for that
+exact command into `permissions.local.json` — never a wildcard, however many
+times you press it, because a click consents to what was on the screen. The
+notification is the other surface and carries a single action, so clicking it
+means *allow once*.
+
 A guarded route raises a critical notification naming the command and what
 it resolved to — the theme, the monitor, the path — and **clicking it approves
 that one call**. Nothing else does. Dismissing it, ignoring it, and letting the

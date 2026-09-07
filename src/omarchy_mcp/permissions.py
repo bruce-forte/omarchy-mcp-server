@@ -40,15 +40,20 @@ unbounded string. This route space is closed and enumerable, which buys somethin
 better instead: a matcher can be expanded against the registry and shown as the
 concrete routes it covers.
 
-This module is pure. It reads text and returns values; it spawns nothing, reads
-no registry of its own, and decides nothing about the running daemon. What to do
-about a document that will not load -- refuse to start, keep the last good one --
-belongs to the caller, and the two answers are different.
+This module spawns nothing and decides nothing about the running daemon. What to
+do about a document that will not load -- refuse to start, keep the last good one
+-- belongs to the caller, and the two answers are different.
+
+It does own one write: `grant`, which appends an ``allow`` rule when a person
+answers *always* at the desk. The daemon is the only writer, it only ever writes
+`permissions.local.json`, and it only ever writes an exact route -- see `grant`
+for why each of those is load-bearing.
 """
 
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from enum import Enum
@@ -73,6 +78,13 @@ from .registry import Command
 #: runnable, and a person answering a question about a specific call is exactly
 #: the right amount of friction for it.
 NEVER_STORE = frozenset({"omarchy update lock"})
+
+#: Where the published schema lives, so an editor opening the daemon's own file
+#: validates it the same way it validates the user's.
+SCHEMA_URL = (
+    "https://raw.githubusercontent.com/bruce-forte/omarchy-mcp-server/master/"
+    "permissions.schema.json"
+)
 
 #: The wildcard suffix, space included. The space is part of the rule: a matcher
 #: is a sequence of whole route tokens, and `omarchy install*` is not a shorter
@@ -236,6 +248,11 @@ class PermissionsDocument(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     json_schema: str | None = Field(default=None, alias="$schema")
+    #: JSON has no comment syntax and this file is one somebody will find and
+    #: wonder about. Allowed rather than forbidden so the daemon can say what
+    #: `permissions.local.json` is, and so a person can leave themselves a note
+    #: without the document becoming defective and stopping the daemon.
+    comment: str | None = Field(default=None, alias="_comment")
     permissions: PermissionsBlock = Field(default_factory=PermissionsBlock)
 
 
@@ -747,6 +764,114 @@ def explain(perms: Permissions, commands: dict[str, Command]) -> dict[str, objec
             "them."
         ),
     }
+
+
+class GrantRefused(RuntimeError):
+    """An ``always`` that must not be written, and the call it came from refused.
+
+    The pool is the authority at the moment of execution. If the user's own file
+    grew a matching ``deny`` between the question going up and the answer coming
+    back, that ``deny`` is newer than the question, and running the command
+    because a click was in flight is indefensible.
+    """
+
+
+def grant(path: Path, route: str, perms: Permissions, commands: dict[str, Command]) -> Rule:
+    """Append an ``allow`` rule for ``route``, or refuse to.
+
+    **Only ever an exact route.** A click consents to what was on the screen.
+    `omarchy install app` clicked nine times never becomes `omarchy install *`,
+    however obvious the pattern looks: a wildcard is a thing a person types
+    having read what it covers, and inferring one would grant routes nobody was
+    shown. If collapsing a set of grants into a prefix is worth offering, it is
+    a suggestion a surface makes and the user accepts into their *own* file.
+
+    **Only ever `permissions.local.json`.** `permissions.json` is the user's, it
+    is meant to be checked into a dotfiles repository, and a daemon that rewrites
+    a tracked file lands in somebody's diff at the wrong moment.
+
+    **Every invariant is checked here**, not only where the button was drawn. A
+    surface that hides the button is a UI; this is the security artifact, and the
+    two are allowed to disagree only in the safe direction.
+    """
+    cmd = commands.get(route)
+    if cmd is None:
+        raise GrantRefused(f"`{route}` is not a command on this Omarchy.")
+    if cmd.requires_sudo:
+        raise GrantRefused(f"`{route}` needs sudo, which no rule can grant.")
+    if route in NEVER_STORE:
+        raise GrantRefused(
+            f"`{route}` takes a command line as its argument, so it is asked about "
+            f"every time and never granted."
+        )
+
+    shadow = perms.matching(route)
+    if shadow is not None and shadow.effect is not Effect.ALLOW:
+        raise GrantRefused(
+            f"`{route}` is covered by {shadow.matcher!r} in the "
+            f"{shadow.effect.value!r} list of {shadow.source}, so an allow rule "
+            f"would have no effect. Edit that file instead."
+        )
+    if shadow is not None:
+        raise GrantRefused(f"`{route}` is already allowed by {shadow.matcher!r}.")
+
+    existing, options = _read_local(path)
+    rule = Rule(
+        effect=Effect.ALLOW,
+        matcher=route,
+        source=path.name,
+        index=len(existing),
+    )
+    _write_local(path, [*existing, rule], options)
+    return rule
+
+
+def _read_local(path: Path) -> tuple[list[Rule], Options]:
+    """The daemon's own file as it stands. Missing reads as empty."""
+    try:
+        text = path.read_text()
+    except FileNotFoundError:
+        return [], Options()
+    rules, options = parse(text, source=path.name)
+    return list(rules), options
+
+
+def _write_local(path: Path, rules: Sequence[Rule], options: Options) -> None:
+    """Replace the file atomically, `0600`, in a `0700` directory.
+
+    Temp file in the same directory, `fsync`, rename: a half-written permissions
+    file read after a crash says something nobody chose, and a rename is the only
+    way to make the replacement all-or-nothing.
+    """
+    body: dict[str, object] = {}
+    named = options.named()
+    if named:
+        body.update(named)
+    for effect in PRECEDENCE:
+        matching = [r for r in rules if r.effect is effect]
+        if matching:
+            body[effect.value] = [{"kind": r.kind, "matcher": r.matcher} for r in matching]
+
+    document = {
+        "$schema": SCHEMA_URL,
+        "_comment": (
+            "Written by the Omarchy MCP server when you answer 'always' at the desk. "
+            "Safe to edit or delete by hand; gitignore it. Your own rules go in "
+            "permissions.json beside it."
+        ),
+        "permissions": body,
+    }
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    os.chmod(path.parent, 0o700)
+    tmp = path.with_name(f".{path.name}.tmp")
+    with open(tmp, "w") as handle:
+        json.dump(document, handle, indent=2)
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, path)
 
 
 def decide(cmd: Command, perms: Permissions) -> Outcome:

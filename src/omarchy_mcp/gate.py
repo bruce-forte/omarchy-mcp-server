@@ -30,7 +30,8 @@ from dataclasses import dataclass
 
 from pydantic import BaseModel
 
-from . import consent, prompt, resolve
+from . import activity, consent, frames, permissions, prompt, registry, resolve
+from .paths import PERMISSIONS_LOCAL_FILE
 from .permissions import Effect, Outcome, Permissions, decide
 from .policy import Tier, self_refusal
 from .registry import Command
@@ -147,7 +148,47 @@ async def authorize(
     log.info("consent %s route=%r", answer.outcome.value, cmd.route)
     if not answer.accepted:
         return Refused(answer.reason, outcome.tier.value, outcome=answer.outcome.value)
+
+    if _wants_always(answer):
+        try:
+            await offload(_write_grant, cmd.route, perms, log)
+        except permissions.GrantRefused as exc:
+            # The pool is the authority at the moment of execution. If the user's
+            # own file grew a matching `deny` while the prompt was up, that deny
+            # is newer than the question, and running the command because a click
+            # was in flight is indefensible.
+            log.warning("always refused route=%r: %s", cmd.route, exc)
+            return Refused(
+                f"{exc} The call was refused rather than run.",
+                outcome.tier.value,
+                outcome=answer.outcome.value,
+            )
+
     return Allowed(call, outcome, consent=answer.outcome.value)
+
+
+def _wants_always(answer: consent.Answer) -> bool:
+    """Whether the accept carried *and stop asking*.
+
+    Read defensively: `data` is whatever the asker handed back, and an eliciting
+    client's is a model the user filled in. Anything that is not exactly the flag
+    this daemon's own panel sets is a plain accept, which is the safe reading.
+    """
+    data = answer.data
+    return isinstance(data, dict) and data.get("always") is True
+
+
+def _write_grant(route: str, perms: Permissions, log) -> None:
+    """Append the `allow` rule, and say so where it will be kept.
+
+    Blocking: it reads a file, writes a temp file, fsyncs and renames. Called
+    through `offload` for the same reason every other filesystem touch here is.
+    """
+    rule = permissions.grant(
+        PERMISSIONS_LOCAL_FILE, route, perms, registry.all_commands()
+    )
+    log.info("granted route=%r via=panel", route)
+    activity.note("permission", verb="allow", route=rule.matcher, via="panel")
 
 
 async def _ask(cmd, call, *, perms, ctx, log, offload) -> consent.Answer:
@@ -171,19 +212,37 @@ async def _ask(cmd, call, *, perms, ctx, log, offload) -> consent.Answer:
 
     _pending[key] = holder
     try:
-        async with prompt.pending(label, body, token=token, log=log, offload=offload):
+        async with prompt.pending(label, body, token=token, log=log, offload=offload) as marker:
+            # The panel is the other surface the question is on, and it learns
+            # about it here rather than from a file it polls. Only when there is
+            # a token: an eliciting client answers in its own UI, and a panel
+            # showing a question it cannot answer is worse than showing none.
+            if token is not None:
+                frames.asking(
+                    token,
+                    cmd.route,
+                    list(call.args),
+                    call.target.label if call.target else None,
+                    marker,
+                )
             asker = (
                 (lambda: ctx.elicit(body, Approval))
                 if elicits
                 else (lambda: prompt.desktop_ask(token))
             )
-            return await consent.ask(
+            answer = await consent.ask(
                 asker,
                 what=label,
                 timeout_s=perms.ask_timeout_s,
                 clicked=not elicits,
                 log=log,
             )
+            if token is not None:
+                # A bar surface exists once per screen. Whichever panel answered
+                # spent the token; this is what takes the question off the
+                # others rather than leaving them showing a dead prompt.
+                frames.answered(marker, answer.outcome.value)
+            return answer
     finally:
         _pending.pop(key, None)
 

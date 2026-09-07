@@ -325,6 +325,37 @@ def rotated(path: Path) -> Path:
     return path.with_name(path.name + ".1")
 
 
+#: The sink the daemon is currently writing through, or ``None``.
+#:
+#: A module global for the same reason `frames.emit` is one: the events that
+#: want it are not tool calls and have no `Stats` to hang off. `stats.call(...)`
+#: stays the only way a *call* is recorded -- one record per call, on every exit
+#: path -- and this is for the handful of things that are not calls.
+_current: object | None = None
+
+
+def note(name: str, **fields: object) -> None:
+    """Record something that is not a tool call. Never raises.
+
+    A grant is the case this exists for. Somebody answered *always* at the desk
+    and a rule was written to a file; that is the most consequential thing a
+    person does in this UI, it outlives the daemon, and the file it lands in says
+    *that* it was granted but not when, from which surface, or in answer to what.
+
+    Off with `log.activity`, like everything else here. Slightly uncomfortable --
+    the audit of grants disappears with the audit of calls -- but a second switch
+    for one event kind is worse, and `permissions.local.json` still holds the
+    state itself.
+    """
+    sink = _current
+    if sink is None:
+        return
+    try:
+        sink.event(name, **fields)
+    except Exception:  # noqa: BLE001 -- an audit line must not fail a tool call
+        pass
+
+
 @contextmanager
 def writer(config, log):
     """Run the writer for as long as the daemon serves.
@@ -337,12 +368,16 @@ def writer(config, log):
         yield None
         return
 
+    global _current
+
     sink = Sink(path_for(config), config.activity_max_bytes, log)
     sink.start()
     sink.event("started", version=__version__, port=config.port)
+    _current = sink
     try:
         yield sink
     finally:
+        _current = None
         # Normally already closed from the lifespan shutdown; this is the path
         # for anything that drives the writer without an ASGI server.
         sink.close()

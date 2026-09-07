@@ -50,9 +50,10 @@ reasons matter more than the choices when something needs revisiting.
       user can see what an agent did, answer for the calls that warrant it, and
       stop the thing. N12 is done; N11 remains. N10 grew into the phase's
       largest item — five commits and its own permissions document — and N13
-      and N14 came out of it. **N10 a, b and c are done**: the document
-      decides, a defective one stops the daemon, and every route can say which
-      rule decided it. d and e remain. See [Next steps](#next-steps).
+      and N14 came out of it. **N10 a–d are done**: the document decides, a
+      defective one stops the daemon, every route can say which rule decided
+      it, and *always* writes itself down. Only e — the delta — remains. See
+      [Next steps](#next-steps).
 
 Tests are not a phase. `policy.py` and the auth checks are tested in the phase
 that creates them — they are the security boundary, and tests retrofitted to a
@@ -970,7 +971,7 @@ Argument resolution was considered as a sixth and left out: it is true and
 distinctive, but it already has a worked example under *What an agent is allowed
 to run*, and six items read as a list rather than a claim.
 
-### N10 — Permissions, reviewed by diff — a, b and c done
+### N10 — Permissions, reviewed by diff — a–d done
 
 Depends on N4 for the question, on N6's panel for the surface a notification
 cannot provide, and on N7's holder, since permissions the daemon owns have to
@@ -1349,7 +1350,7 @@ unreviewable exactly where review matters most.
 | **a** ✅ | `permissions.py`: schema, matcher, rule pool, the ladder, void classification. Pure, unwired | unchanged |
 | **b** ✅ | Wire it. `[policy]` leaves `config.toml`. `guardedDefault: "ask"`. Startup refusal, exit `78`, `Service.qml` stops respawning. `permissionsOk` | **the behaviour change**, alone in its diff. Guarded routes ask through N4; approve-once works |
 | **c** ✅ | Explainer data: `rule`/`source` on annotated rows, `omarchy://permissions`, `--permissions` | you can see why every route is what it is |
-| **d** | Answer vocabulary: helper verbs, `asking` frame, panel Allow-once / Always / Deny, `permission` events | "always" exists |
+| **d** ✅ | Answer vocabulary: helper verbs, `asking` frame, panel Allow-once / Always / Deny, `permission` events | "always" exists |
 | **e** | The delta: `registry-seen.json`, forward-quarantine, `critical` notification, panel section, acknowledge | complete |
 
 Between **b** and **e** an `allow` wildcard is fully forward-looking — the
@@ -1387,6 +1388,32 @@ disagrees with it, and why.
 - **The suite could drive the machine it ran on.** Not a design change — a fault
   the behaviour change exposed, at the cost of a reboot. See **F29**; the fix is
   two autouse fixtures and a test file for them.
+
+And from **d**:
+
+- **`_comment` is an allowed key.** The daemon's own file wanted a line saying
+  what it is, JSON has no comment syntax, and `extra="forbid"` would have made
+  the file the daemon writes one the daemon then refuses to start on. Caught by
+  writing it and reading it back. Allowing it for the user's file too is a real
+  nicety: a note in a config with no comments, which cannot make the document
+  defective.
+- **`activity.note()` is a module-level emitter**, the same shape as
+  `frames.emit`. A grant is not a tool call and has no `Stats` to hang off, and
+  `stats.call(...)` stays the only way a *call* is recorded.
+- **`always` rides in the answer's `data`** rather than being a fourth
+  `consent.Outcome`. It is a rider on an accept, not another way of leaving the
+  question, and `_wants_always` reads it defensively: an eliciting client's
+  `data` is a model the user filled in, so anything that is not exactly this
+  daemon's own flag is a plain accept.
+- **`__main__.py` was reading the live Omarchy in tests.** `from .registry
+  import all_commands` binds the name at import, and `_pin_registry` patches the
+  module attribute -- so `--permissions` and `--check-permissions` computed their
+  output from the installed system while the assertions used the fixture. Found
+  because the JSON round-trip test compared the two and they differed. Fixed by
+  calling through the module, and pinned by
+  `test_nothing_binds_all_commands_at_import` so the class of mistake cannot
+  come back. Note this bypasses the F29 guards as well: `registry.py` spawns
+  through `subprocess` directly rather than `execute.run`.
 
 And from **c**:
 
