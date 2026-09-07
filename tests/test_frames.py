@@ -71,6 +71,13 @@ class TestConcurrency:
         assert all(body["state"] == "call" for body in parsed)
 
 
+class TestTheEditableFrame:
+    def test_it_carries_the_token_and_nothing_else(self, capsys):
+        frames.editable("tok")
+        body = json.loads(capsys.readouterr().out)
+        assert body == {"state": "editable", "token": "tok"}
+
+
 class TestWhatIsNotInIt:
     """The same boundary the activity log draws, for the same reason."""
 

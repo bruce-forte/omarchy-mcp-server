@@ -107,6 +107,19 @@ def prunable(token: str, rules: int) -> None:
     emit("prunable", token=token, rules=rules)
 
 
+def editable(token: str) -> None:
+    """The panel may remove grants, and this is the token it does it with.
+
+    Longer-lived than the others on purpose. Removing an `allow` rule narrows
+    what an agent may do -- the worst use of this capability is disarming
+    whoever holds it -- so it is minted per process rather than spent per press,
+    and removing four accumulated grants does not need four round trips through
+    a two-second poll. Held in `Service.qml`'s memory like the rest, and never
+    written to the state file.
+    """
+    emit("editable", token=token)
+
+
 def review(token: str, headline: str, arrivals: int, widened: int, dead: int) -> None:
     """Something changed under the rules and nobody has looked at it yet.
 

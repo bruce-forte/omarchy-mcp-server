@@ -492,3 +492,214 @@ def test_nothing_prunes_without_an_offer(tmp_path, commands, no_notifications):
     # No `offer_prune`, so no token exists and no filename can name it.
     (tmp_path / "consent" / "prune-anything").write_text("anything")
     assert reloader.poll() is None
+
+
+# -- removing a grant --------------------------------------------------------
+
+
+def _revoke_ready(tmp_path, rules):
+    """A reloader with a token published and a consent directory to watch."""
+    from omarchy_mcp import delta
+
+    local = permission_paths(tmp_path)[1]
+    local.write_text(doc(**rules))
+    reloader, _, _, _ = build(tmp_path, "")
+    reloader._local_path = local
+    reloader._consent_dir = tmp_path / "consent"
+    (tmp_path / "consent").mkdir()
+    token = delta.new_token()
+    reloader.offer_revoke(token)
+    return reloader, local, token
+
+
+def _press(tmp_path, token, effect, matcher, *, name=None, body=None):
+    """What `bin/omarchy-mcp-consent revoke` leaves behind."""
+    path = tmp_path / "consent" / (name or f"revoke-{token}.{matcher.replace(' ', '')}")
+    path.write_text(body if body is not None else f"{token} revoke {effect} {matcher}")
+    return path
+
+
+def test_removing_a_grant_needs_the_token_the_daemon_published(tmp_path, commands):
+    reloader, local, token = _revoke_ready(tmp_path, {"allow": ["omarchy install app"]})
+
+    _press(tmp_path, token, "allow", "omarchy install app", body="wrong revoke allow x")
+    assert reloader.poll() is None
+    assert permissions_module.load((local,)).rules, "a file that does not name the token is not a press"
+
+    _press(tmp_path, token, "allow", "omarchy install app")
+    result = reloader.poll()
+
+    assert result.revoked == 1
+    assert permissions_module.load((local,)).rules == ()
+
+
+def test_the_token_is_not_spent_by_a_press(tmp_path, commands):
+    """Four accumulated grants is four presses. Spending it per press would
+    make three of them do nothing."""
+    reloader, local, token = _revoke_ready(
+        tmp_path, {"allow": ["omarchy install app", "omarchy theme set"]}
+    )
+
+    _press(tmp_path, token, "allow", "omarchy install app")
+    reloader.poll()
+    assert reloader.revoke_token == token
+
+    _press(tmp_path, token, "allow", "omarchy theme set")
+    assert reloader.poll().revoked == 1
+    assert permissions_module.load((local,)).rules == ()
+
+
+def test_two_presses_in_one_poll_are_two_removals(tmp_path, commands):
+    """One file per press, which is why the helper uses mktemp: a shared name
+    would let the second overwrite the first and a rule the user removed would
+    quietly stay."""
+    reloader, local, token = _revoke_ready(
+        tmp_path, {"allow": ["omarchy install app", "omarchy theme set"]}
+    )
+
+    _press(tmp_path, token, "allow", "omarchy install app")
+    _press(tmp_path, token, "allow", "omarchy theme set")
+
+    assert reloader.poll().revoked == 2
+    assert permissions_module.load((local,)).rules == ()
+
+
+def test_a_press_is_spent_whether_or_not_it_was_current(tmp_path, commands):
+    reloader, local, token = _revoke_ready(tmp_path, {"allow": ["omarchy install app"]})
+    marker = _press(tmp_path, token, "allow", "omarchy install app")
+
+    reloader.poll()
+    assert not marker.exists()
+    assert list((tmp_path / "consent").iterdir()) == []
+
+
+def test_a_deny_is_not_removed_however_it_is_asked_for(tmp_path, commands):
+    """The refusal is in permissions.py, and it holds against a hand-written
+    marker as much as against a button."""
+    reloader, local, token = _revoke_ready(tmp_path, {"deny": ["omarchy dev *"]})
+    _press(tmp_path, token, "deny", "omarchy dev *")
+
+    assert reloader.poll() is None
+    assert [r.matcher for r in permissions_module.load((local,)).rules] == ["omarchy dev *"]
+
+
+def test_an_effect_this_daemon_has_not_heard_of_is_not_an_answer(tmp_path, commands):
+    reloader, local, token = _revoke_ready(tmp_path, {"allow": ["omarchy install app"]})
+    _press(tmp_path, token, "sudo", "omarchy install app")
+
+    assert reloader.poll() is None
+    assert permissions_module.load((local,)).rules
+
+
+def test_nothing_is_removed_without_an_offer(tmp_path, commands):
+    local = permission_paths(tmp_path)[1]
+    local.write_text(doc(allow=["omarchy install app"]))
+    reloader, _, _, _ = build(tmp_path, "")
+    reloader._local_path = local
+    reloader._consent_dir = tmp_path / "consent"
+    (tmp_path / "consent").mkdir()
+
+    (tmp_path / "consent" / "revoke-anything.aaaaaa").write_text("anything revoke allow x")
+    assert reloader.poll() is None
+
+
+def test_removing_records_what_went(tmp_path, commands, monkeypatch):
+    noted = []
+    monkeypatch.setattr(reload_module.activity, "note", lambda name, **f: noted.append((name, f)))
+
+    reloader, _, token = _revoke_ready(tmp_path, {"allow": ["omarchy install app"]})
+    _press(tmp_path, token, "allow", "omarchy install app")
+    reloader.poll()
+
+    assert noted == [
+        ("permission", {"verb": "revoke", "route": "omarchy install app", "via": "panel"})
+    ]
+
+
+# -- who the daemon announces a change to ------------------------------------
+
+
+def test_a_change_this_daemon_made_is_not_announced_back(tmp_path, commands, no_notifications):
+    """They pressed Remove two seconds ago. A toast saying the permissions
+    changed is their own press read back to them."""
+    reloader, local, token = _revoke_ready(tmp_path, {"allow": ["omarchy install app"]})
+    _press(tmp_path, token, "allow", "omarchy install app")
+
+    reloader.poll()
+    reloader.poll()  # the write lands on the following poll
+
+    assert permissions_module.load((local,)).rules == ()
+    assert no_notifications == []
+
+
+def test_a_hand_edit_in_the_same_window_still_notifies(tmp_path, commands, no_notifications):
+    """The test that matters: suppression is for the file this daemon wrote,
+    not for whatever moved at the same time."""
+    reloader, local, token = _revoke_ready(tmp_path, {"allow": ["omarchy install app"]})
+    _press(tmp_path, token, "allow", "omarchy install app")
+    reloader.poll()
+
+    permission_paths(tmp_path)[0].write_text(doc(deny=["omarchy dev *"]))
+    reloader.poll()
+
+    assert [a[0] for a, _ in no_notifications] == ["MCP server: permissions changed"]
+
+
+def test_a_hand_edit_alone_still_notifies(tmp_path, commands, no_notifications):
+    reloader, _, _, _ = build(tmp_path, "")
+    permission_paths(tmp_path)[0].write_text(doc(allow=["omarchy theme *"]))
+    reloader.poll()
+
+    assert [a[0] for a, _ in no_notifications] == ["MCP server: permissions changed"]
+
+
+def test_the_helper_writes_what_the_poller_reads(tmp_path, commands, no_notifications):
+    """The channel end to end: the real `bin/omarchy-mcp-consent`, the real
+    poller. Two halves that must agree on a filename and a first word, written
+    in two languages, only one of which has tests."""
+    import pathlib
+    import subprocess
+
+    helper = pathlib.Path(__file__).resolve().parents[1] / "bin" / "omarchy-mcp-consent"
+    runtime = tmp_path / "runtime"
+    reloader, local, token = _revoke_ready(tmp_path, {"allow": ["omarchy install app"]})
+    reloader._consent_dir = runtime / "io.github.bruce-forte.mcp-server" / "consent"
+
+    def press(*args):
+        return subprocess.run(
+            [str(helper), *args],
+            env={"XDG_RUNTIME_DIR": str(runtime), "PATH": "/usr/bin:/bin"},
+            capture_output=True,
+            text=True,
+        )
+
+    assert press("revoke", token, "deny", "omarchy install app").returncode == 0
+    assert press("revoke", token, "allow", "omarchy install app").returncode == 0
+
+    result = reloader.poll()
+
+    assert result.revoked == 1, "the deny was written and refused; the allow went"
+    assert permissions_module.load((local,)).rules == ()
+
+
+def test_the_helper_refuses_what_is_not_a_rule(tmp_path):
+    import pathlib
+    import subprocess
+
+    helper = pathlib.Path(__file__).resolve().parents[1] / "bin" / "omarchy-mcp-consent"
+    token = "a" * 32
+
+    def press(*args):
+        return subprocess.run(
+            [str(helper), *args],
+            env={"XDG_RUNTIME_DIR": str(tmp_path), "PATH": "/usr/bin:/bin"},
+            capture_output=True,
+            text=True,
+        )
+
+    assert press("revoke", token, "allow", "omarchy install app; rm -rf ~").returncode == 2
+    assert press("revoke", token, "allow", "../../etc/shadow").returncode == 2
+    assert press("revoke", token, "sudo", "omarchy install app").returncode == 2
+    assert press("revoke", "../escape", "allow", "omarchy install app").returncode == 2
+    assert press("revoke", token, "allow").returncode == 2
+    assert list(tmp_path.rglob("revoke-*")) == [], "nothing refused is written"

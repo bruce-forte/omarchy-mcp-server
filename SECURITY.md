@@ -318,6 +318,34 @@ Two limits on that:
 - **Three fixed names, no path argument.** The verb cannot be talked into
   opening or creating anything else.
 
+### Removing a grant from the panel takes grants only
+
+The panel lists every rule in force and offers **Remove** on the ones this
+daemon wrote itself. That button takes `allow` rules in `permissions.local.json`
+and nothing else — not `deny`, not `ask`, and never a rule from your own
+`permissions.json`.
+
+The property is worth stating plainly: **no button in this panel can widen what
+an agent may do.** *Allow once* and *always* widen, but each answers a question
+the daemon raised about one specific call that is waiting on it. A standing
+editor that could delete restrictions is a different thing to put on a bar
+popup, which is on screen during screen shares.
+
+A live `deny` you hand-added to either file is removed the way you added it: in
+an editor. The panel has a button that opens one.
+
+Removing travels the same helper-and-token channel as approving, acknowledging
+and pruning, so `bin/omarchy-mcp-consent` remains the only writer and a file
+that merely exists never counts as a press. That token is longer-lived than the
+others — minted per daemon process rather than spent per press — because
+removing a grant cannot widen anything: the worst use of it is disarming
+whoever holds it. Removal names a rule by effect and matcher rather than by
+position, is idempotent, and takes every identical copy.
+
+Removals are recorded in the activity log as `permission` events, beside the
+grants, which is what answers *when did I take this back* long after the file
+stopped showing it.
+
 ### You can ask what the rules actually do
 
 A rule is written once and read against a registry that moves. `omarchy-mcpd

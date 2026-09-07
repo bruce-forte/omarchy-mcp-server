@@ -516,6 +516,11 @@ def main(argv: list[str] | None = None) -> int:
         # watches for the answer and it is built in there.
         dead = _prunable(log)
         prune_token = delta_module.new_token() if dead else ""
+        # Unconditional, unlike the others: this one answers a question nobody
+        # has asked yet. The panel lists the grants in this daemon's own file
+        # whether or not anything is wrong with them, and Remove has to work on
+        # the first press rather than after something goes stale.
+        revoke_token = delta_module.new_token()
 
         app = build(
             settings,
@@ -525,6 +530,7 @@ def main(argv: list[str] | None = None) -> int:
             reload_from=CONFIG_FILE,
             review=review,
             prune_token=prune_token,
+            revoke_token=revoke_token,
         )
         if sink is not None:
             # The log is closed from the lifespan shutdown, because nothing
@@ -550,6 +556,9 @@ def main(argv: list[str] | None = None) -> int:
         # notified about: a rule that matches nothing grants nothing.
         if prune_token:
             frames.prunable(prune_token, len(dead))
+
+        # Published every start, and never spent: see `frames.editable`.
+        frames.editable(revoke_token)
 
         try:
             uvicorn.run(
