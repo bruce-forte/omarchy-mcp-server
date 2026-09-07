@@ -390,6 +390,14 @@ granting to an empty room.
 The agent is told which of those happened, because they mean different things:
 a refusal is worth respecting, and a silence is worth asking you about directly.
 
+**It stops asking before you stop reading.** A command you did not approve is
+not asked about again for a few minutes — longer each time — and twelve prompts
+in ten minutes stops the asking altogether, whatever you answered. A stream of
+critical notifications turns a click into a reflex, and a reflexive click is not
+consent. The agent is told plainly, and told to have you allow the command once
+instead. The panel shows what is being held back and for how long; it clears
+itself.
+
 Two things asking never reaches. Anything needing sudo stays refused — no answer
 makes it runnable, so no rule may grant it and writing one is an error the
 server tells you about rather than a line that quietly does nothing. And

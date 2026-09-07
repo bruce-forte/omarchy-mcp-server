@@ -46,12 +46,13 @@ reasons matter more than the choices when something needs revisiting.
       unlock what `run` structurally cannot do. Then Tier 2 (9).
 - [x] **4 — Resources.** Done. The 7 from decision 10, shaped by what Phase 0 found.
 - [x] **5 — Hardening.** Done. Generated `TOOLS.md`, CI, `SECURITY.md`.
-- [x] **6 — Consent and visibility.** Done, N1–N13. The user can see what an
+- [x] **6 — Consent and visibility.** Done, N1–N14. The user can see what an
       agent did, answer for the calls that warrant it, decide once and have it
       written down, be told what an update changed under those decisions, tidy
-      up after it, and stop the thing. N10 grew into the phase's largest item —
-      five commits and its own permissions document. N13 and N14 came out of it;
-      N14 is the one left. See [Next steps](#next-steps).
+      up after it, and stop the thing — and cannot be worn down into approving
+      by reflex. N10 grew into the phase's largest item: five commits and its
+      own permissions document, with N13 and N14 coming out of it.
+      See [Next steps](#next-steps).
 
 Tests are not a phase. `policy.py` and the auth checks are tested in the phase
 that creates them — they are the security boundary, and tests retrofitted to a
@@ -59,8 +60,8 @@ security boundary only assert whatever the code already does.
 
 ## Next steps
 
-Phase 6 in detail. N1–N13 are done; **N14 is the only item left**, and it is
-what came out of N10 without being part of it. The theme was that the person the
+Phase 6 in detail, and **it is finished**: N1–N14. N13 and N14 came out of N10
+without being part of it, and closed with it. The theme was that the person the
 daemon acts on behalf of could not see what it did, could not answer for a call
 in flight, and could not stop it without a terminal. Decision 12 covers *daemon*
 faults; none of this covered what an *agent* does, which is the part with
@@ -1673,17 +1674,58 @@ now covers it, and the rule it encodes is stated properly: what matters is that
 the daemon writes the path, not where the path lives. Third instance of the same
 class; see F29 and F30's neighbours.
 
-### N14 — Anti-habituation for the approval prompt
+### N14 — Anti-habituation for the approval prompt — done
 
 Came out of N10 flipping `guardedDefault` to `ask`. An agent can drive a stream
 of guarded calls; `gate._pending` caps one prompt per session, but two attached
 clients means two prompts, and enough `critical` notifications turn a click into
 a reflex. A reflexive click is not consent.
 
-What it needs: a per-route cooldown after a decline, and after N declines in a
-window, auto-refuse the route without a prompt until the panel is opened. Its
-own state and its own failure modes, which is why it is not bolted onto N10's
-security-boundary diff.
+The write-up asked for "a per-route cooldown after a decline, and after N
+declines in a window, auto-refuse". Building it, **those turned out to be two
+different problems wearing one coat**, and the sketch only addressed one of
+them:
+
+- **Nagging.** The user said no and the agent asked again. A per-route cooldown
+  is exactly right for it, and it is the concrete way an agent grinds somebody
+  down.
+- **Habituation.** Volume, regardless of the answer. **A decline-keyed rule
+  cannot see this at all**: fifty prompts and fifty clicks contains no declines
+  and is the worst case there is. The second mechanism therefore counts *prompts
+  raised*, not prompts refused.
+
+`cooldown.py` owns both, and `gate.authorize` consults it before a question is
+assembled — so a suppressed call costs no notification, no resolver subprocess,
+and none of the user's attention. The agent is told `not_asked_again`, which is
+distinct from a refusal the user gave.
+
+Details that fell out of building it:
+
+- **Every way of not accepting counts**, not just an explicit decline.
+  `consent.py` already treats dismissal, deadline and unsupported as no, and
+  re-asking an empty room is the purest form of nagging.
+- **Consecutive refusals double the wait**, capped at an hour. An agent still
+  asking after two noes will not be talked round by a third prompt.
+- **An accept forgets the route.** An engaged user is the opposite of a
+  habituated one, and a route they just approved is not one they are being
+  nagged about.
+- **The burst cap is generous** — twelve prompts in ten minutes. A limit that
+  fires during ordinary work teaches people to route around the mechanism, which
+  is worse than not having it. Both refusals name the way out: write an `allow`
+  rule rather than approving the same thing twelve times.
+
+#### Two things it deliberately is not
+
+**Not persisted.** A cooldown is a nag-guard, not a permission. Surviving a
+restart would make it a decision nobody took, and the state directory is for
+things the user chose. An agent cannot restart the daemon to clear it — N12.
+
+**Not clearable from anywhere.** Clearing *widens*: it lets the asking start
+again, so a control for it would need the same token dance as acknowledging and
+pruning, for a mechanism that expires on its own within minutes. The panel shows
+the state instead, off `/health`, because the real failure mode here is a
+guarded call refused with no prompt and no explanation. Silent suppression is a
+mystery; suppression with a line saying why is a feature.
 
 ## Deferred
 

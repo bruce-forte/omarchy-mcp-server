@@ -189,6 +189,7 @@ In dependency order, shallowest first:
 | `activity.py` | One JSON line per call on disk, written by a thread nothing waits for. See below |
 | `frames.py` | The one thing this process says on stdout: lifecycle and per-call frames the shell parses |
 | `policy.py` | The security boundary: what kind of command this is. Pure, takes the registry as an argument, tested against every route Omarchy ships |
+| `cooldown.py` | When the daemon declines to ask, having asked enough already. Per-route nag-guards and one burst cap, in memory |
 | `delta.py` | What changed under the rules since anybody looked. Owns `registry-seen.json` and the forward-quarantine |
 | `permissions.py` | The other half: which guarded commands actually run. Three rule lists read `deny` → `ask` → `allow`, from `permissions.json`. Also `explain()`, which expands the rules against the live registry |
 | `resolve.py` | Turns an identifier an agent supplied into the thing it names, or refuses. See below |

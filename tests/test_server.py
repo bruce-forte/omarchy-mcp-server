@@ -385,3 +385,20 @@ def test_health_records_the_route_that_was_run():
         body = client.get("/health").json()
 
     assert body["last_route"] == "omarchy channel current"
+
+
+def test_health_says_what_is_not_being_asked_about(client):
+    """A guarded call refused with no prompt and no explanation is the failure
+    mode this exists to avoid, so the bar can say why."""
+    body = client.get("/health").json()
+    asking = body["asking"]
+    assert asking["suppressed"] is False
+    assert asking["recentPrompts"] == 0
+    assert asking["promptLimit"] > 0
+    assert asking["cooling"] == []
+
+
+def test_health_still_carries_no_secret(client):
+    """It is reached without a token, so nothing on it may be one."""
+    body = client.get("/health").text
+    assert TOKEN not in body

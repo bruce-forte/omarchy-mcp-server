@@ -260,6 +260,34 @@ on the frame the shell reads, and never gives to the model. `omarchy-mcpd
 --review` shows the review to anyone; it carries no token, and cannot
 acknowledge.
 
+### The server stops asking before you stop reading
+
+Asking at the time is what makes the permissions document fill itself through
+use. It also hands an agent a way to put a critical notification on your desktop
+over and over, and **a reflexive click is not consent**.
+
+Two limits, because they answer different problems:
+
+- **A route that was not approved is not asked about again for a while.** Every
+  way of not saying yes counts — refused, dismissed, or nobody there — and
+  consecutive refusals double the wait, up to an hour. An accept forgets the
+  route entirely.
+- **Twelve prompts in ten minutes and the asking stops**, whatever the answers
+  were. This is the one that sees habituation: fifty prompts and fifty clicks
+  contains no refusals at all and is the worst case there is.
+
+The agent is told `not_asked_again`, which is distinct from a refusal you gave,
+and both refusals name the way out: write an `allow` rule rather than approving
+the same thing twelve times. Nothing is resolved and no notification is raised
+for a suppressed call.
+
+It is **not persisted** — a nag-guard is not a permission, and one surviving a
+restart would be a decision nobody took — and it is **not clearable from
+anywhere**, because clearing would widen. It expires on its own within minutes.
+The bar panel shows what is being held back and why, since a call refused with
+no prompt and no explanation is the failure this is supposed to prevent, not
+cause.
+
 ### Tidying up cannot grant anything, and still asks
 
 Rules that match no command Omarchy ships accumulate — a route gets renamed and
