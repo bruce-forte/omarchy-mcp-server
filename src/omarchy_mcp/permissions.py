@@ -86,6 +86,25 @@ SCHEMA_URL = (
     "permissions.schema.json"
 )
 
+#: What the daemon's own file says about itself. A person who finds it should be
+#: able to tell in one line what wrote it and whether they may touch it.
+LOCAL_COMMENT = (
+    "Written by the Omarchy MCP server when you answer 'always' at the desk. "
+    "Safe to edit or delete by hand; gitignore it. Your own rules go in "
+    "permissions.json beside it."
+)
+
+#: What a file created by `seed` says instead. It is the only documentation a
+#: person gets at the moment they open an empty rules file, so it states the
+#: ladder and both matcher forms rather than pointing somewhere else.
+SEED_COMMENT = (
+    "Rules are read deny, then ask, then allow; the first match decides, and a "
+    "narrower rule never reorders that. A matcher is an exact route "
+    '("omarchy install app") or a prefix with a trailing " *" '
+    '("omarchy install *"), which also covers the bare route. Run '
+    "`omarchy-mcpd --permissions` to see what each rule covers on this machine."
+)
+
 #: The wildcard suffix, space included. The space is part of the rule: a matcher
 #: is a sequence of whole route tokens, and `omarchy install*` is not a shorter
 #: spelling of anything -- it is rejected rather than guessed at.
@@ -461,8 +480,8 @@ def load(paths: Sequence[Path]) -> Permissions:
 class Finding:
     """A rule that does not do what it looks like it does.
 
-    Two levels, and the difference is whether the user can be told anything
-    useful:
+    Four levels. The first two are about a rule that cannot work; the last two
+    are about one that works and is never reached:
 
     ``error``
         The rule asserts a permission the system will never honour -- granting a
@@ -475,11 +494,29 @@ class Finding:
         from a matcher for a route that has not shipped yet: refusing it would
         turn an upstream rename into a daemon that will not start, punishing the
         user for somebody else's commit. It loads, and the explainer says so.
+
+    ``shadowed``
+        Every route it covers is already decided by an earlier rule with a
+        *different* effect, so it never decides anything. The one defect nothing
+        reported before N15: you believe you granted something and you did not.
+        It fails safe by construction -- ``deny`` is first in `PRECEDENCE`, so
+        only an ``ask`` or an ``allow`` can be shadowed -- which is why it is a
+        finding and never a notification.
+
+    ``redundant``
+        The same, but the earlier rule has the *same* effect. The verdict is
+        unchanged either way; what it means is that the rule can go, which is
+        what the panel offers to do with it.
     """
 
     rule: Rule
-    level: Literal["error", "void"]
+    level: Literal["error", "void", "shadowed", "redundant"]
     reason: str
+    #: The rule that got there first, for the two levels where there is one.
+    #: "Shadowed" without a culprit leaves a person diffing two files by eye,
+    #: and the two fixes -- delete this rule, or narrow the one above it --
+    #: cannot be chosen between without knowing which rule is above.
+    by: Rule | None = None
 
 
 def check(perms: Permissions, commands: dict[str, Command]) -> tuple[Finding, ...]:
@@ -533,7 +570,60 @@ def check(perms: Permissions, commands: dict[str, Command]) -> tuple[Finding, ..
                     f"allows everything, so it can be asked about and never granted.",
                 )
             )
+    findings.extend(_inert(perms, commands, {id(f.rule) for f in findings}))
     return tuple(findings)
+
+
+def _inert(
+    perms: Permissions, commands: dict[str, Command], flagged: set[int]
+) -> Iterable[Finding]:
+    """Rules that match commands and still never decide any of them.
+
+    `rules` is in precedence order and `matching` takes the first hit, so a rule
+    is inert exactly when every route it covers is claimed by one earlier in the
+    pool. **Partial** coverage is not a defect and must not be reported as one:
+    ``allow omarchy theme *`` under a ``deny omarchy theme set`` is a good pair,
+    and flagging it would make prefixes unwritable.
+
+    A rule that is already an error is left alone -- it stops the daemon, which
+    is a louder thing to be told, and two findings for one rule would be two
+    lines saying different things about the same broken sentence.
+    """
+    for position, rule in enumerate(perms.rules):
+        if id(rule) in flagged:
+            continue
+        covered = rule.covers(commands.values())
+        if not covered:
+            continue
+
+        earlier = perms.rules[:position]
+        deciders = []
+        for route in covered:
+            first = next((r for r in earlier if r.matches(route)), None)
+            if first is None:
+                break
+            deciders.append(first)
+        else:
+            differing = next((r for r in deciders if r.effect is not rule.effect), None)
+            by = differing if differing is not None else deciders[0]
+            if differing is not None:
+                yield Finding(
+                    rule,
+                    "shadowed",
+                    f"{rule.matcher!r} never decides anything: everything it covers is "
+                    f"already {by.effect.value!r} under {by.matcher!r} in {by.source}, "
+                    f"which is read first. Remove this rule, or narrow that one.",
+                    by=by,
+                )
+            else:
+                yield Finding(
+                    rule,
+                    "redundant",
+                    f"{rule.matcher!r} changes nothing: everything it covers is already "
+                    f"{by.effect.value!r} under {by.matcher!r} in {by.source}. Safe to "
+                    f"remove.",
+                    by=by,
+                )
 
 
 def errors(findings: Iterable[Finding]) -> tuple[Finding, ...]:
@@ -728,6 +818,12 @@ def explain(perms: Permissions, commands: dict[str, Command]) -> dict[str, objec
         finding = findings.get(id(rule))
         if finding is not None:
             row[finding.level] = finding.reason
+            # The rule that got there first, so a surface can name it without
+            # re-deriving precedence -- and so the panel can point at the file
+            # the fix belongs in rather than at this one.
+            if finding.by is not None:
+                row["by"] = finding.by.matcher
+                row["bySource"] = finding.by.source
         rows.append(row)
 
     interesting = []
@@ -884,6 +980,82 @@ def prune(path: Path, commands: dict[str, Command]) -> tuple[Rule, ...]:
     return tuple(dead)
 
 
+class RevokeRefused(RuntimeError):
+    """A removal that must not happen, refused where the file is written."""
+
+
+def revoke(path: Path, effect: Effect, matcher: str) -> tuple[Rule, ...]:
+    """Remove the daemon's own ``allow`` rules for ``matcher``. Returns what went.
+
+    **`allow` only, and only `permissions.local.json`.** The property that buys
+    is worth stating as a sentence rather than as three checks: *no button on the
+    panel can widen what an agent may do.* A `deny` or an `ask` somebody
+    hand-added to this file is a live restriction, and removing one from a bar
+    popup -- which is on screen during screen shares -- is a different act from
+    withdrawing a grant. It is done in an editor, which the panel has a button
+    for.
+
+    **By identity, never by position.** `grant` appends whenever a parked call is
+    answered, so an index minted before that answer names a different rule after
+    it. That is the one failure mode this must not have.
+
+    **Idempotent, and it takes every copy.** Nothing dedupes rules, identical
+    entries are indistinguishable in the display, and removing one of a pair
+    would be a button that visibly does nothing. Naming a rule that is not there
+    is not an error: somebody already removed it, which is the outcome that was
+    wanted.
+
+    Unlike `grant`, this cannot be refused for safety at the moment of writing --
+    it only ever narrows. The one failure is a file that will not parse, which is
+    not a file to edit blind.
+    """
+    if effect is not Effect.ALLOW:
+        raise RevokeRefused(
+            f"only 'allow' rules can be removed here, not {effect.value!r}: a "
+            f"restriction is a decision, and it is removed in an editor."
+        )
+
+    existing, options = _read_local(path)
+    gone = [r for r in existing if r.effect is Effect.ALLOW and r.matcher == matcher]
+    if not gone:
+        return ()
+
+    kept = [r for r in existing if r not in gone]
+    _write_local(path, kept, options)
+    return tuple(gone)
+
+
+def seed(path: Path) -> bool:
+    """Write a starting document at ``path`` if there is none. Never overwrites.
+
+    Opened with ``x``, so "never overwrites" is a property of the syscall rather
+    than of a check that could race an editor.
+
+    This is the one thing that may create `permissions.json`, and the exception
+    is narrow on purpose: a file that does not exist yet, created on a press,
+    with the person's editor opening on it a moment later. What the invariant
+    forbids is the daemon *rewriting* the file somebody checks into git. The
+    template exists because an editor opening an empty buffer has no ``$schema``
+    line, and that line is what validates a matcher before this module ever sees
+    it.
+    """
+    body = {effect.value: [] for effect in PRECEDENCE}
+    document = {
+        "$schema": SCHEMA_URL,
+        "_comment": SEED_COMMENT,
+        "permissions": body,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with open(path, "x") as handle:
+            json.dump(document, handle, indent=2)
+            handle.write("\n")
+    except FileExistsError:
+        return False
+    os.chmod(path, 0o600)
+    return True
+
+
 def _read_local(path: Path) -> tuple[list[Rule], Options]:
     """The daemon's own file as it stands. Missing reads as empty."""
     try:
@@ -912,11 +1084,7 @@ def _write_local(path: Path, rules: Sequence[Rule], options: Options) -> None:
 
     document = {
         "$schema": SCHEMA_URL,
-        "_comment": (
-            "Written by the Omarchy MCP server when you answer 'always' at the desk. "
-            "Safe to edit or delete by hand; gitignore it. Your own rules go in "
-            "permissions.json beside it."
-        ),
+        "_comment": LOCAL_COMMENT,
         "permissions": body,
     }
 
