@@ -1737,6 +1737,227 @@ the state instead, off `/health`, because the real failure mode here is a
 guarded call refused with no prompt and no explanation. Silent suppression is a
 mystery; suppression with a line saying why is a feature.
 
+### N15 — Edit permissions from the panel — planned
+
+N10 built the surface that *answers* a question about one call, and N13 built
+the one that removes rules that have died. Neither is the surface a person opens
+to ask **"what do my rules actually say, and which of them are not doing what I
+think?"** Today the panel can show that a route was refused and that a rule went
+dead; it cannot show a rule that loads, matches commands, and still decides
+nothing. `--permissions` can, and a bar panel is not a terminal.
+
+Scope, decided against three larger versions of itself: **a viewer with one
+button.** Every rule, grouped by the file it came from, flagged when it is not
+doing what it looks like it does — plus **Remove** on the rules this daemon
+wrote itself, and **Edit** on each file, which opens it in the user's editor.
+
+Adding rules from the panel was rejected. A route picker over 426 routes in a
+bar popup is the scroll trap N10 named, and the moment to grant something is
+the moment the question is on screen, which *always* already covers. Editing
+`permissions.json` in place was rejected on the standing invariant: the daemon
+does not write the file you check into git.
+
+#### Two jobs, and they want the same rows
+
+**Problems.** `check()` classifies two things today: `error` (a rule asserting a
+permission the system will never honour — stops the daemon) and `void` (a
+matcher covering nothing right now). It gains two more, from one computation:
+a rule is inert when every route it covers is claimed by an earlier rule.
+
+| The earlier rule's effect | Label | What it means |
+|---|---|---|
+| different | **shadowed** | You believe you granted this. You did not, and nothing has ever said so |
+| the same | **redundant** | Same verdict either way. Safe to remove, and nothing has ever said that either |
+
+Only *fully* inert rules are flagged: `allow omarchy theme *` under a
+`deny omarchy theme set` is a good pair, not a defect. A **shadowed `deny`
+cannot exist** — `deny` is first in `PRECEDENCE` — so this only ever fires on
+`ask` and `allow`, which is why it never notifies: shadowing fails safe by
+construction, and a toast for *"you are permitted less than you thought"* would
+train people to dismiss the class of notification that also carries the delta's
+widening warning. That is the N14 failure mode.
+
+`Finding` gains the rule that defeated it. *"Shadowed"* without a culprit leaves
+a person diffing two files by eye, and the two fixes — delete this rule, or
+narrow the one above it — cannot be chosen between without knowing which rule is
+above. Same argument N10 made for `rule`/`source` on annotated rows, one level
+up: from routes to rules.
+
+**The pile.** `permissions.local.json` fills itself through *always* clicks and
+nothing has ever emptied it. Prune only catches rules that went *dead*; a grant
+you simply no longer want is invisible to every signal that exists. So the local
+file's rules are shown whether or not they are flagged, and `permissions.json`'s
+sit behind an expander — it is read-only here and has two other homes.
+
+Rows carry `effect`, `matcher`, the flag, and `covers` as a **count**. Not the
+routes: a row that expands into twelve is the same trap in miniature.
+
+#### Remove is `allow`-only, and that is the load-bearing decision
+
+`permissions.local.json` is the daemon's file, but a person may hand-edit it —
+its own `_comment` says so, and `_write_local` preserves whatever effects it
+finds. So a Remove that took any rule could delete a hand-added `deny`: a live
+protection, gone from a bar popup.
+
+**Remove takes `allow` rules only.** The property this buys is worth more than
+the convenience it costs, and it can be stated in one line: *no button in this
+panel can widen what an agent may do.* Allow-once and Always widen, but they are
+answers to a question the daemon raised about one call in flight. A standing
+editor is a different thing to have on a surface that is on screen during screen
+shares. It is also the exact inverse of `grant`, which is `allow`-only for its
+own reasons, so the write surface and the append surface are one property.
+
+The asymmetry this creates is real and belongs on the screen rather than in a
+commit message: **Prune can remove a dead `deny`; Remove cannot remove a live
+one.** Coherent — a dead rule protects nothing today and is shown in full before
+it goes — but it reads as inconsistent unless the panel says why. A live `deny`
+is a decision, and decisions get a text editor. There is now a button for that.
+
+#### Why it still needs a token
+
+Removing an `allow` narrows; an agent that did it would only disarm itself. The
+token is not there to stop an escalation:
+
+- it keeps **every panel write on one channel**, so `bin/omarchy-mcp-consent`
+  stays the only writer and the vocabulary stays defined in one place;
+- it stops a file that merely exists from counting as a press, which is the
+  rule that channel was built on.
+
+But because the capability cannot widen anything, the token can be **long-lived**
+— minted per daemon process, republished unchanged on an `editable` frame — where
+the ack, prune and pending-call tokens are all spent once. That is not a
+weakening of those; it is the reason this one is different, and it has to be
+written down next to them or it will read as an oversight.
+
+Spend-once was tried on paper and fails the actual workflow: removing four
+accumulated grants is four presses inside one ~2s poll, so presses 2–4 would land
+on a dead token and do nothing visible. For the same reason the marker file
+cannot be `revoke-<token>`: two presses in one interval collapse, the second
+`printf` overwriting the first, and a rule the user removed silently stays. The
+helper writes `mktemp revoke-<token>.XXXXXX` per press, the daemon drains them
+all in order, and every file still carries the token as its first word.
+
+**Identity, not position.** The payload is `<effect> <matcher>`. An index would
+shift under an append, and `grant` appends whenever a parked call is answered —
+so a token minted before that answer would name a different rule after it. That
+is the one failure mode this must not have. Removal is **idempotent** and takes
+**every** copy: nothing dedupes rules today, identical entries are
+indistinguishable in the display, and removing one of a pair would be a button
+that visibly does nothing. A revoke naming a rule that is not there is a no-op
+with a logged reason, not an error — the honest reading is that somebody already
+removed it, which is the outcome that was wanted.
+
+Revoke is a narrowing write, so unlike `grant` it has **no `GrantRefused`
+equivalent**. The only failure is a file that will not parse, which `prunable`
+already refuses to work on for the same reason.
+
+#### The rows come from the CLI, and the token cannot
+
+The panel spawns `bin/omarchy-mcpd --permissions --json` and reads `explain()`,
+exactly as `reviewProc` already does with `--review --json`. Decisive reason:
+**it works with the daemon down**, which is not an edge case — a defective
+`permissions.json` exits `78`, and that is precisely the moment a person wants to
+see which rule is wrong and press Edit. A read verb on the running daemon is
+dead in that state. It also means the panel and the terminal cannot disagree:
+one derivation, two readers.
+
+The consequence is that the token cannot ride on the payload — a subprocess
+cannot mint one the daemon will honour. Hence the `editable` frame, held in
+`Service.qml` memory like the others, and the identity travelling as the
+helper's argument instead. A token *per rule*, published on a daemon frame,
+was rejected: it makes a second source for rows the CLI already provides, joined
+on `(effect, matcher)`, which nothing guarantees is unique.
+
+The snapshot refreshes on panel open, after a revoke, and on every `reloaded`
+frame. That last one is what pays for the Edit button: press Edit, save, and the
+rows and flags update in place within two seconds — the question
+`checkPermissions` exists to answer, answered without pressing anything.
+
+The spawn lives on `Service.qml`, not in the panel. A bar widget exists once per
+screen; three monitors must not mean three registry reads.
+
+#### Edit opens the file, and seeds it when there is none
+
+`omarchy launch editor <path>` is Omarchy's own opener and finds whatever editor
+the user actually has — the case N8 refused to break by rewriting `PATH`. The
+panel does not spawn it directly. `omarchy-mcpd --edit permissions|local|config`
+does, because **seeding is business, not chrome**: a missing file opened as an
+empty buffer loses the `$schema` line, which is what makes an editor validate a
+matcher before the daemon ever sees it. The template belongs beside `SCHEMA_URL`
+and `_write_local`, not in QML — the same rule that keeps the consent vocabulary
+in the helper. It also gives the terminal the fix to go with `--check-permissions`,
+which is where somebody with a daemon that will not start already is.
+
+**Seed only when absent, never overwrite** — what `bin/omarchy-mcpd` already does
+for `config.toml`. Creating `permissions.json` on a press, with the editor
+opening on it immediately, is not the thing the never-write-it invariant
+protects against, but it is close enough that `SECURITY.md` states the carve-out
+rather than leaving it to be discovered. Three fixed names, no path argument, so
+the verb cannot be talked into opening something else.
+
+No new capability: `omarchy launch editor` is already reachable through
+`omarchy_run`.
+
+#### What the daemon announces, and what it does not
+
+`reload.py` toasts *"permissions changed"* on any effective change — which means
+Prune already toasts at the person who just pressed Prune, and the same was
+noted about Always at the end of N10. Revoke would be the third instance.
+
+The rule, stated once: **the daemon announces changes the person did not make.**
+A hand edit, a grant written while a call was parked, an upstream rename — news.
+A button pressed on this panel two seconds ago — not. The reloader marks the
+cycle it caused and skips that one toast.
+
+This is state in the boundary, so the test that matters is not that the press is
+quiet: it is that a **hand edit landing in the same poll window still notifies**.
+
+#### Read-only, in the terminal and over IPC
+
+`permissions` joins `status`, `recent`, `pending` and `review` as a read verb —
+a headline and a pointer, shaped like `review()`. The `qs ipc show` listing is
+how a script finds out this plugin has anything to say, so a capability without a
+verb is one nobody finds.
+
+There is **no `--revoke` CLI**, and that is a security decision rather than a
+missing feature. A binary that removes rules with no token makes the whole
+channel decorative — worse than never having built it, because the file would
+still look protected. *"An agent cannot spawn a binary"* is exactly the
+assumption `bin/omarchy-mcp-consent` refuses to make. The terminal path to
+removing a rule is `--edit local`, which puts a human in an editor.
+
+So: the CLI can show everything and fix nothing except by opening an editor.
+That is the design.
+
+#### Five commits
+
+| | Contents | After it |
+|---|---|---|
+| **0** | This write-up | the design is on record before the code |
+| **a** | `permissions.py`: `Finding.by`, shadowed and redundant, `revoke`, the seed template, the new fields in `explain` | nothing changes at runtime |
+| **b** | `--edit permissions\|local\|config`; the new flags in `--permissions` output; `SECURITY.md` on creating a file that is absent | the terminal path works, daemon or not |
+| **c** | The channel: helper `revoke` verb with `mktemp` markers, `editable` frame, `reload.py` poll, `permission` event, self-inflicted toast suppression; `SECURITY.md` on what Remove may take | revoke works, alone in its diff |
+| **d** | QML: rules cache, `revoke`, `editFile`, the `permissions` IPC verb, the panel section | the surface exists |
+
+Three properties the suite asserts, because the design rests on them: no panel
+button widens (`revoke` refuses every effect but `allow`); nothing writes
+`permissions.json`, including `--edit`, which may only create it when absent;
+`bin/omarchy-mcp-consent` is still the only writer of the consent directory.
+
+Neither generated file moves: no tool schema changes, so `TOOLS.md` is untouched,
+and `Finding` is a dataclass rather than a pydantic model, so
+`permissions.schema.json` is untouched.
+
+#### Watch for
+
+- **The delta's `dead` and the viewer's `void` are the same rules seen twice**,
+  with different lifetimes — N13 already had to say this about `prunable`. Three
+  surfaces naming the same rule three ways is a legible design only if each says
+  which question it is answering.
+- **A `permissions.local.json` full of exact grants will be mostly `redundant`
+  the moment somebody writes one wildcard in `permissions.json`.** That is the
+  feature working, but the first time it fires it will look like a bug report.
+
 ## Deferred
 
 Wanted, but not phase 6.
