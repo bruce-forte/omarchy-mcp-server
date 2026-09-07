@@ -92,6 +92,29 @@ Panel {
   readonly property bool   canPrune: service ? service.canPrune : false
   readonly property int    prunableRules: service ? service.prunableRules : 0
 
+  // The rules themselves. No file fallback: this is read by spawning the CLI,
+  // which is the service's job -- a bar surface exists once per screen, and
+  // three monitors reading the registry three times is the thing the service
+  // object exists to prevent.
+  readonly property var  rules: service ? service.rules : ({})
+  readonly property bool rulesLoading: service ? service.rulesLoading : false
+  readonly property bool rulesRead: service ? service.rulesRead : false
+  readonly property bool canRemove: service ? service.canRemove : false
+
+  //: The rows of the two files, split, because each file is its own group with
+  //: its own Edit button -- and only one of them has rules this panel may take
+  //: away.
+  readonly property var localRules: (rules.rules || []).filter(function (r) {
+    return r.source === "permissions.local.json"
+  })
+  readonly property var ownRules: (rules.rules || []).filter(function (r) {
+    return r.source !== "permissions.local.json"
+  })
+  readonly property int flaggedRules: (rules.rules || []).filter(function (r) {
+    return r.error !== undefined || r.void !== undefined
+        || r.shadowed !== undefined || r.redundant !== undefined
+  }).length
+
   readonly property var recent: service ? service.recent : []
   readonly property bool recentLoading: service ? service.recentLoading : false
   readonly property bool activityLogged: service ? service.activityLogged : true
@@ -182,7 +205,23 @@ Panel {
       // Only when there is one. The counts arrived on a frame; this reads the
       // rows, so a panel opened with nothing to review spawns nothing.
       service.refreshReview()
+      // Every open: the files move under this panel -- a hand edit, an Always
+      // click on another screen -- and the rows are cheap to recompute and
+      // wrong to cache across an open.
+      service.refreshRules()
     }
+  }
+
+  // Which finding a row carries, worst first. A rule has at most one: an error
+  // stops the daemon, and saying it is also redundant would be two lines about
+  // one broken sentence.
+  function flagOf(row) {
+    const levels = ["error", "void", "shadowed", "redundant"]
+    for (let i = 0; i < levels.length; i++) {
+      if (row[levels[i]] !== undefined)
+        return [levels[i], row[levels[i]]]
+    }
+    return ["", ""]
   }
 
   function apply(raw) {
@@ -457,6 +496,16 @@ Panel {
           font.pixelSize: Style.font.bodySmall
         }
 
+        // Beside the tools line rather than in the rules section below: this
+        // file is not a permissions document, and grouping it there would say
+        // it was.
+        Button {
+          text: "Edit config.toml"
+          bordered: true
+          enabled: root.service !== null
+          onClicked: root.service.editFile("config")
+        }
+
         // The daemon keeps serving when config.toml stops parsing, on purpose:
         // a stray keystroke must not switch every disabled tool back on. Which
         // makes this the only place the person finds out.
@@ -719,6 +768,208 @@ Panel {
             color: Qt.darker(Color.foreground, 1.6)
             font.family: Style.font.family
             font.pixelSize: Style.font.bodySmall
+          }
+        }
+
+        // Every rule in force, grouped by the file it came from. Always
+        // visible, unlike the warning blocks above: those appear when there is
+        // something wrong, and this is a surface -- the Edit buttons need a
+        // home before anything is wrong, and a section that only exists when
+        // it is broken is one nobody knows about.
+        //
+        // Rows carry a count of what a rule covers and not the routes. A row
+        // that expands into twelve is the scroll trap in miniature; the whole
+        // listing is `omarchy-mcpd --permissions`, which the footer names.
+        Column {
+          id: rulesSection
+          width: parent.width
+          spacing: Style.spacing.sm
+
+          //: The user's own file first: it is the one with authority over the
+          //: other, and it is read first.
+          readonly property var groups: [
+            {
+              "file": "permissions.json",
+              "which": "permissions",
+              "rows": root.ownRules,
+              "removable": false
+            },
+            {
+              "file": "permissions.local.json",
+              "which": "local",
+              "rows": root.localRules,
+              "removable": true
+            }
+          ]
+
+          PanelSeparator { width: parent.width }
+
+          Row {
+            width: parent.width
+            spacing: Style.spacing.controlGap
+
+            PanelSectionHeader { text: "RULES" }
+
+            Text {
+              text: {
+                if (!root.rulesRead)
+                  return root.rulesLoading ? "reading…" : ""
+                if (!root.permissionsOk)
+                  return "the document does not load"
+                if (root.flaggedRules === 0)
+                  return "nothing needs attention"
+                return root.flaggedRules + " need attention"
+              }
+              color: root.flaggedRules > 0 || !root.permissionsOk
+                ? Color.urgent : Qt.darker(Color.foreground, 1.4)
+              font.family: Style.font.family
+              font.pixelSize: Style.font.bodySmall
+            }
+          }
+
+          Repeater {
+            model: rulesSection.groups
+
+            Column {
+              id: group
+              width: rulesSection.width
+              spacing: 2
+
+              required property var modelData
+
+              //: `permissions.json` is reference material here and its rules
+              //: are read-only, so only the ones that need attention are shown
+              //: until somebody asks for the rest. The daemon's own file is
+              //: shown whole: it is the pile that Remove exists to thin, and a
+              //: grant you no longer want is not flagged as anything.
+              property bool expanded: modelData.removable
+              readonly property var flagged: modelData.rows.filter(function (r) {
+                return root.flagOf(r)[0] !== ""
+              })
+              readonly property var shown: {
+                const rows = group.expanded ? modelData.rows : group.flagged
+                return rows.slice(0, 15)
+              }
+              readonly property int hidden: (group.expanded ? modelData.rows.length
+                                                            : group.flagged.length) - group.shown.length
+
+              Row {
+                width: parent.width
+                spacing: Style.spacing.controlGap
+
+                Text {
+                  text: group.modelData.file
+                  color: Color.foreground
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.bodySmall
+                }
+
+                Text {
+                  text: group.modelData.rows.length
+                      + (group.modelData.rows.length === 1 ? " rule" : " rules")
+                  color: Qt.darker(Color.foreground, 1.4)
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.bodySmall
+                }
+
+                Button {
+                  text: "Edit"
+                  bordered: true
+                  enabled: root.service !== null
+                  // Creates the file if it is not there yet, with the $schema
+                  // line, so the editor validates the first rule as it is
+                  // typed.
+                  onClicked: root.service.editFile(group.modelData.which)
+                }
+              }
+
+              Repeater {
+                model: group.shown
+
+                Column {
+                  id: ruleRow
+                  width: group.width
+                  spacing: 0
+
+                  required property var modelData
+
+                  readonly property var flag: root.flagOf(ruleRow.modelData)
+
+                  Row {
+                    width: parent.width
+                    spacing: Style.spacing.controlGap
+
+                    Text {
+                      text: "· " + modelData.effect + " '" + modelData.matcher + "'"
+                      color: Color.foreground
+                      font.family: Style.font.family
+                      font.pixelSize: Style.font.bodySmall
+                    }
+
+                    Text {
+                      text: modelData.covers + (modelData.covers === 1 ? " command" : " commands")
+                      color: Qt.darker(Color.foreground, 1.4)
+                      font.family: Style.font.family
+                      font.pixelSize: Style.font.bodySmall
+                    }
+
+                    // Grants only, and only in the daemon's own file. A live
+                    // deny is a decision; it is taken back in an editor, which
+                    // the button above opens.
+                    Button {
+                      text: "Remove"
+                      bordered: true
+                      visible: group.modelData.removable && modelData.effect === "allow"
+                               && root.canRemove
+                      enabled: root.service !== null
+                      onClicked: root.service.revoke(modelData.effect, modelData.matcher)
+                    }
+                  }
+
+                  Text {
+                    width: parent.width
+                    wrapMode: Text.WordWrap
+                    visible: ruleRow.flag[0] !== ""
+                    text: "  " + ruleRow.flag[0] + ": " + ruleRow.flag[1]
+                    color: ruleRow.flag[0] === "redundant" ? Qt.darker(Color.foreground, 1.4)
+                                                           : Color.urgent
+                    font.family: Style.font.family
+                    font.pixelSize: Style.font.bodySmall
+                  }
+                }
+              }
+
+              Text {
+                width: parent.width
+                wrapMode: Text.WordWrap
+                visible: group.hidden > 0
+                text: "  … and " + group.hidden + " more — run omarchy-mcpd --permissions"
+                color: Qt.darker(Color.foreground, 1.6)
+                font.family: Style.font.family
+                font.pixelSize: Style.font.bodySmall
+              }
+
+              Button {
+                text: group.expanded ? "Hide the rest" : "Show all "
+                                       + group.modelData.rows.length + " rules"
+                bordered: true
+                visible: !group.modelData.removable
+                         && group.modelData.rows.length > group.flagged.length
+                onClicked: group.expanded = !group.expanded
+              }
+
+              Text {
+                width: parent.width
+                wrapMode: Text.WordWrap
+                visible: group.modelData.rows.length === 0 && root.rulesRead
+                text: group.modelData.removable
+                  ? "  nothing granted here yet; answering \u201calways\u201d writes to it"
+                  : "  no rules; guarded commands take the default"
+                color: Qt.darker(Color.foreground, 1.6)
+                font.family: Style.font.family
+                font.pixelSize: Style.font.bodySmall
+              }
+            }
           }
         }
 

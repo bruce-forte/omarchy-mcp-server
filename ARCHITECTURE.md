@@ -407,6 +407,17 @@ the panel, where Allow once, Always and Deny are labelled buttons. A click is
 navigation, so a reflexive press cannot grant anything, and silence is *no* —
 the mechanism and the rule agree by construction.
 
+The panel is also where a rule is read and taken back. Its rows come from
+`omarchy-mcpd --permissions --json`, spawned by the *service* rather than by
+each widget -- a bar surface exists once per screen -- and read from the files
+rather than asked of the daemon, so they still answer when a defective document
+has stopped it from starting. **Remove** takes `allow` rules out of
+`permissions.local.json` and nothing else, so no button on that panel can widen
+what an agent may do, and it travels the same helper-and-token channel as every
+other answer. The token behind it is minted per daemon rather than spent per
+press, because removing a grant only ever narrows: the worst use of that
+capability is disarming whoever holds it.
+
 Every tool is `async` for this reason, and every blocking call therefore has to
 be handed to a worker thread explicitly: `func_metadata` only threads a tool it
 finds to be *sync*, so an `async` body doing subprocess work would stall every
