@@ -96,6 +96,17 @@ def answered(marker: str, outcome: str) -> None:
     emit("answered", marker=marker, outcome=outcome)
 
 
+def prunable(token: str, rules: int) -> None:
+    """Dead rules the daemon could tidy out of its own file, if asked.
+
+    Its own frame rather than a field on `review`: the two are different sets
+    and have different lifetimes. A rule can be prunable without ever having
+    appeared in a review, because it was already dead when the snapshot was
+    taken. The token is how the panel asks, published only here.
+    """
+    emit("prunable", token=token, rules=rules)
+
+
 def review(token: str, headline: str, arrivals: int, widened: int, dead: int) -> None:
     """Something changed under the rules and nobody has looked at it yet.
 

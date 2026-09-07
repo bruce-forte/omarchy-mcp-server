@@ -25,7 +25,13 @@ from . import (
     registry,
     token as token_module,
 )
-from .paths import CONFIG_FILE, PERMISSIONS_FILE, PERMISSIONS_FILES, REGISTRY_SEEN_FILE
+from .paths import (
+    CONFIG_FILE,
+    PERMISSIONS_FILE,
+    PERMISSIONS_FILES,
+    PERMISSIONS_LOCAL_FILE,
+    REGISTRY_SEEN_FILE,
+)
 from .server import build, client_config_json, client_config_line
 from .settings import Settings
 from .stats import Stats
@@ -131,6 +137,15 @@ def _review(perms, log):
     return found
 
 
+def _prunable(log):
+    """Dead rules in the daemon's own file, if the registry can be read."""
+    try:
+        commands = registry.all_commands()
+    except registry.RegistryError:
+        return ()
+    return permissions_module.prunable(PERMISSIONS_LOCAL_FILE, commands)
+
+
 def _print_review(log, *, as_json: bool = False) -> int:
     """What changed under the rules, computed fresh from the same inputs.
 
@@ -154,15 +169,31 @@ def _print_review(log, *, as_json: bool = False) -> int:
     found = delta_module.compute(
         delta_module.load_seen(REGISTRY_SEEN_FILE), commands, loaded
     )
+    body = delta_module.as_dict(found)
+    dead_local = permissions_module.prunable(PERMISSIONS_LOCAL_FILE, commands)
+    body["prunable"] = [
+        {"effect": r.effect.value, "matcher": r.matcher, "source": r.source}
+        for r in dead_local
+    ]
     if as_json:
-        print(json.dumps(delta_module.as_dict(found), indent=2))
+        print(json.dumps(body, indent=2))
         return 0
+
+    def _say_prunable():
+        if not dead_local:
+            return
+        print(f"\n{len(dead_local)} rule(s) in permissions.local.json match nothing:")
+        for rule in dead_local:
+            print(f"  {rule.effect.value} {rule.matcher!r}")
+        print("Prune them from the bar panel; they are shown before anything goes.")
 
     if found.first_run:
         print("No snapshot yet. The next start records one; nothing to review.")
+        _say_prunable()
         return 0
     if not found:
         print("Nothing has changed under your rules since you last acknowledged.")
+        _say_prunable()
         return 0
 
     print(f"{found.headline}\n")
@@ -184,6 +215,7 @@ def _print_review(log, *, as_json: bool = False) -> int:
             print(f"  {arrival.route:<44} {arrival.effect}{flag}")
     if found.gone:
         print(f"\nGone: {', '.join(found.gone)}")
+    _say_prunable()
     print("\nAcknowledge in the bar panel to stop being told and advance the snapshot.")
     return 0
 
@@ -398,8 +430,19 @@ def main(argv: list[str] | None = None) -> int:
         # The holder the reloader swaps. Everything downstream reads it.
         settings = Settings(cfg, permissions)
         settings.swap_unreviewed(review.quarantined)
+        # Minted before the server is built, because the reloader is what
+        # watches for the answer and it is built in there.
+        dead = _prunable(log)
+        prune_token = delta_module.new_token() if dead else ""
+
         app = build(
-            settings, tok, log, stats=stats, reload_from=CONFIG_FILE, review=review
+            settings,
+            tok,
+            log,
+            stats=stats,
+            reload_from=CONFIG_FILE,
+            review=review,
+            prune_token=prune_token,
         )
         if sink is not None:
             # The log is closed from the lifespan shutdown, because nothing
@@ -420,6 +463,11 @@ def main(argv: list[str] | None = None) -> int:
                 len(review.widened),
                 len(review.dead),
             )
+
+        # Housekeeping rather than a warning, so it is offered and never
+        # notified about: a rule that matches nothing grants nothing.
+        if prune_token:
+            frames.prunable(prune_token, len(dead))
 
         try:
             uvicorn.run(

@@ -141,7 +141,13 @@ def test_every_written_path_is_pinned():
     src = pathlib.Path(__file__).resolve().parents[1] / "src" / "omarchy_mcp"
     # `ACTIVITY_FILE` is deliberately absent: it is a bare filename, joined onto
     # the state directory by its caller, so pinning it would pin nothing.
-    written = ("STATE_DIR", "REGISTRY_SEEN_FILE", "CONSENT_DIR", "TOKEN_FILE")
+    written = (
+        "STATE_DIR",
+        "REGISTRY_SEEN_FILE",
+        "CONSENT_DIR",
+        "TOKEN_FILE",
+        "PERMISSIONS_LOCAL_FILE",
+    )
 
     missing = []
     for path in sorted(src.rglob("*.py")):

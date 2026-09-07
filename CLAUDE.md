@@ -288,9 +288,9 @@ N10 did exactly this: the pending question and the delta review both live on the
 service object, and the panel reads them from there. **Read-only IPC verbs
 only** — an agent can reach this plugin's own target, so a verb that granted a
 permission or acknowledged a review would let it permit itself. `status`,
-`recent`, `pending` and `review` report; answering and acknowledging go through
-`bin/omarchy-mcp-consent`, with a token the daemon publishes only on the frame
-the shell reads. Keep new verbs on that side of the line.
+`recent`, `pending` and `review` report; answering, acknowledging and pruning go
+through `bin/omarchy-mcp-consent`, each with a token the daemon publishes only on
+the frame the shell reads. Keep new verbs on that side of the line.
 
 ### Reload rules
 

@@ -260,6 +260,18 @@ on the frame the shell reads, and never gives to the model. `omarchy-mcpd
 --review` shows the review to anyone; it carries no token, and cannot
 acknowledge.
 
+### Tidying up cannot grant anything, and still asks
+
+Rules that match no command Omarchy ships accumulate — a route gets renamed and
+the rule outlives it. The panel offers to remove them from
+`permissions.local.json`, showing each one before anything goes, and the user's
+own `permissions.json` is never touched.
+
+Pruning cannot widen what an agent may do: a rule that matches nothing grants
+nothing. It travels the same token-gated channel as acknowledging anyway,
+because it can *erase evidence* — a `deny` that has stopped matching is a
+protection that quietly failed, and tidying it away unseen is the wrong order.
+
 ### You can ask what the rules actually do
 
 A rule is written once and read against a registry that moves. `omarchy-mcpd

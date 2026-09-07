@@ -430,3 +430,65 @@ def test_a_rule_change_recomputes_what_is_held(tmp_path, commands, no_notificati
 
     assert settings.unreviewed == frozenset(), "denied outright, not held"
     assert delta.load_seen(seen_path) != frozenset(commands), "and still not acknowledged"
+
+
+def test_pruning_needs_the_token_the_daemon_published(tmp_path, commands, no_notifications):
+    from omarchy_mcp import delta, permissions as perms
+
+    local = permission_paths(tmp_path)[1]
+    local.write_text(doc(allow=["omarchy install app", "omarchy gone away"]))
+    reloader, _, _, _ = build(tmp_path, "")
+    reloader._local_path = local
+    reloader._consent_dir = tmp_path / "consent"
+    (tmp_path / "consent").mkdir()
+
+    token = delta.new_token()
+    reloader.offer_prune(token)
+
+    # A file naming the wrong token is not a press.
+    (tmp_path / "consent" / f"prune-{token}").write_text(delta.new_token())
+    assert reloader.poll() is None
+    assert len(perms.prunable(local, commands)) == 1
+
+    (tmp_path / "consent" / f"prune-{token}").write_text(token)
+    result = reloader.poll()
+
+    assert result.pruned == 1
+    assert perms.prunable(local, commands) == ()
+    assert reloader.prune_token == "", "an offer is taken once"
+
+
+def test_pruning_records_what_it_removed(tmp_path, commands, no_notifications, monkeypatch):
+    from omarchy_mcp import delta
+
+    noted = []
+    monkeypatch.setattr(reload_module.activity, "note", lambda name, **f: noted.append((name, f)))
+
+    local = permission_paths(tmp_path)[1]
+    local.write_text(doc(allow=["omarchy gone away"]))
+    reloader, _, _, _ = build(tmp_path, "")
+    reloader._local_path = local
+    reloader._consent_dir = tmp_path / "consent"
+    (tmp_path / "consent").mkdir()
+    token = delta.new_token()
+    reloader.offer_prune(token)
+    (tmp_path / "consent" / f"prune-{token}").write_text(token)
+
+    reloader.poll()
+
+    assert noted == [
+        ("permission", {"verb": "prune", "route": "omarchy gone away", "via": "panel"})
+    ]
+
+
+def test_nothing_prunes_without_an_offer(tmp_path, commands, no_notifications):
+    local = permission_paths(tmp_path)[1]
+    local.write_text(doc(allow=["omarchy gone away"]))
+    reloader, _, _, _ = build(tmp_path, "")
+    reloader._local_path = local
+    reloader._consent_dir = tmp_path / "consent"
+    (tmp_path / "consent").mkdir()
+
+    # No `offer_prune`, so no token exists and no filename can name it.
+    (tmp_path / "consent" / "prune-anything").write_text("anything")
+    assert reloader.poll() is None

@@ -48,7 +48,8 @@ def _pin_registry(monkeypatch, commands):
 
 
 #: Every module-level binding of a path the daemon writes to, and the module it
-#: is bound in. Bindings rather than one constant, because
+#: is bound in. State directory or config directory: what matters is that the
+#: daemon writes it, not where it lives. Bindings rather than one constant, because
 #: `from .paths import X` copies the value at import: patching `paths.X` after
 #: that reaches nobody. `test_conftest_guards.py` fails if a new one appears.
 WRITTEN_PATHS = (
@@ -61,6 +62,12 @@ WRITTEN_PATHS = (
     # unpinned, the suite would rotate the token the user's clients are using.
     ("omarchy_mcp.token", "STATE_DIR", "token-dir"),
     ("omarchy_mcp.token", "TOKEN_FILE", "token-dir/token"),
+    # Written by the daemon when somebody answers "always", and rewritten when
+    # dead rules are pruned. In the *config* directory rather than the state
+    # one, which does not make it any less something a test must not touch.
+    ("omarchy_mcp.gate", "PERMISSIONS_LOCAL_FILE", "permissions.local.json"),
+    ("omarchy_mcp.reload", "PERMISSIONS_LOCAL_FILE", "permissions.local.json"),
+    ("omarchy_mcp.__main__", "PERMISSIONS_LOCAL_FILE", "permissions.local.json"),
 )
 
 
