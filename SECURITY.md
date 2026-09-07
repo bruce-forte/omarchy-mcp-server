@@ -300,6 +300,24 @@ nothing. It travels the same token-gated channel as acknowledging anyway,
 because it can *erase evidence* — a `deny` that has stopped matching is a
 protection that quietly failed, and tidying it away unseen is the wrong order.
 
+### Opening a permissions file may create it, and may not change it
+
+`omarchy-mcpd --edit permissions|local|config` opens a file in your editor
+through Omarchy's own `omarchy launch editor`. If a permissions file does not
+exist yet, it is created from a template first — the `$schema` line, an empty
+rule block, and a comment — so your editor validates what you type before the
+daemon ever sees it.
+
+Two limits on that:
+
+- **It only ever creates.** An existing file is opened untouched; the write is
+  an exclusive create, so that is a property of the syscall rather than of a
+  check that could race an editor. Seeding when absent is what the bootstrap
+  already does for `config.toml`. Rewriting a file you check into git is what
+  the daemon does not do.
+- **Three fixed names, no path argument.** The verb cannot be talked into
+  opening or creating anything else.
+
 ### You can ask what the rules actually do
 
 A rule is written once and read against a registry that moves. `omarchy-mcpd
