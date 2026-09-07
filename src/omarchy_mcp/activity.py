@@ -423,6 +423,39 @@ def path_for(config) -> Path:
 # -- reading it back ---------------------------------------------------------
 
 
+#: Events that open or close a session, in the order they should alternate.
+_LIFECYCLE = ("started", "stopped")
+
+
+def mark_unclosed(records: list[dict]) -> list[dict]:
+    """Flag every session that has no recorded end.
+
+    The daemon cannot always write its own `stopped`. On `omarchy restart shell`
+    the whole shell is torn down and Quickshell reaps its children within
+    milliseconds -- measured, and not something `Service.qml` can lengthen; see
+    `ROADMAP.md` F30. So the log legitimately contains a `started` with another
+    `started` after it and nothing in between.
+
+    This is **derived at read time, never written**. What is on disk is what
+    happened; inventing a `stopped` row with a guessed timestamp would put a
+    guess in an audit trail, which is the one place it must not go. The record
+    is only marked when a *later* `started` is visible in the same window --
+    the last `started` is the session that is probably still running, and
+    calling that one unclosed would be a lie in the other direction.
+    """
+    later = False
+    for body in reversed(records):
+        if body.get("event") not in _LIFECYCLE:
+            continue
+        if body["event"] == "started":
+            if later:
+                body["unclosed"] = True
+            later = True
+        else:
+            later = False
+    return records
+
+
 def tail(n: int = 20, path: Path | None = None) -> list[dict]:
     """The last ``n`` records, oldest first, reading across a rotation."""
     path = STATE_DIR / ACTIVITY_FILE if path is None else path
@@ -441,15 +474,20 @@ def tail(n: int = 20, path: Path | None = None) -> list[dict]:
             continue
         if isinstance(body, dict):
             out.append(body)
-    return out
+    return mark_unclosed(out)
 
 
 def render(body: dict) -> str:
     """One record as a line a person reads, for ``omarchy-mcpd --tail``."""
     when = str(body.get("ts", ""))[11:19]
     if "event" in body:
-        extra = " ".join(f"{k}={v}" for k, v in body.items() if k not in ("ts", "event"))
-        return f"{when}  -- {body['event']} {extra}".rstrip()
+        extra = " ".join(
+            f"{k}={v}" for k, v in body.items() if k not in ("ts", "event", "unclosed")
+        )
+        line = f"{when}  -- {body['event']} {extra}".rstrip()
+        if body.get("unclosed"):
+            line += "  (no recorded end; the shell was restarted or it crashed)"
+        return line
 
     parts = [when, str(body.get("tool", "")), str(body.get("route", ""))]
     if body.get("args"):

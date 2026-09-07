@@ -46,12 +46,12 @@ reasons matter more than the choices when something needs revisiting.
       unlock what `run` structurally cannot do. Then Tier 2 (9).
 - [x] **4 — Resources.** Done. The 7 from decision 10, shaped by what Phase 0 found.
 - [x] **5 — Hardening.** Done. Generated `TOOLS.md`, CI, `SECURITY.md`.
-- [ ] **6 — Consent and visibility.** In progress: N1–N9 done. The
-      user can see what an agent did, answer for the calls that warrant it, and
-      stop the thing. N12 is done; N11 remains. N10 grew into the phase's
-      largest item — five commits and its own permissions document — and N13
-      and N14 came out of it. **N10 is done.** N11 is the last item in the
-      phase. See [Next steps](#next-steps).
+- [x] **6 — Consent and visibility.** Done, N1–N12. The user can see what an
+      agent did, answer for the calls that warrant it, decide once and have it
+      written down, be told what an update changed under those decisions, and
+      stop the thing. N10 grew into the phase's largest item — five commits and
+      its own permissions document. N13 and N14 came out of it and are
+      deliberately not part of it. See [Next steps](#next-steps).
 
 Tests are not a phase. `policy.py` and the auth checks are tested in the phase
 that creates them — they are the security boundary, and tests retrofitted to a
@@ -59,12 +59,14 @@ security boundary only assert whatever the code already does.
 
 ## Next steps
 
-Phase 6 in detail. The theme is that the person the daemon acts on behalf of
-currently cannot see what it did, cannot answer for a call in flight, and cannot
-stop it without a terminal. Decision 12 covers *daemon* faults; none of this
-covers what an *agent* does, which is the part with consequences.
+Phase 6 in detail, and **it is finished**: N1–N12 are done, and N13 and N14 are
+what came out of N10 without being part of it. The theme was that the person the
+daemon acts on behalf of could not see what it did, could not answer for a call
+in flight, and could not stop it without a terminal. Decision 12 covers *daemon*
+faults; none of this covered what an *agent* does, which is the part with
+consequences.
 
-Ordered by what unblocks what. N1–N3 stand alone and are cheap. N4 depends on
+Ordered by what unblocked what. N1–N3 stand alone and are cheap. N4 depends on
 N2 and N3. N6 depended on N5's log. N11 came out of N6, N12 out of N7.
 
 N10 depends on all of them and on N12, which is **done**. It needs N4 for the
@@ -1501,17 +1503,10 @@ acknowledge and un-acknowledged deltas survive a restart; the daemon writes only
 exact-route matchers; a click whose invariant fails refuses the call; an unknown
 helper verb reads as no answer; `permissions.json` is never written.
 
-### N11 — Close the log when the shell goes down
+### N11 — Close the log when the shell goes down — done, by not writing it
 
-Found while verifying N6, and visible in its panel.
-
-The activity log writes `stopped` from the ASGI lifespan shutdown, which F28
-put there precisely because nothing after `uvicorn.run()` gets a turn. That
-covers a SIGTERM: `omarchy-shell <id> stop` and `restart` both produce the
-marker. It does not cover `omarchy restart shell`, where the shell is killed and
-the daemon dies with it before uvicorn hands control to the lifespan at all.
-
-The log then carries `started` with nothing closing the session before it:
+Found while verifying N6, and visible in its panel. The activity log carries
+`started` with nothing closing the session before it:
 
 ```
 15:09:48  -- stopped
@@ -1520,20 +1515,54 @@ The log then carries `started` with nothing closing the session before it:
 15:50:19  -- started version=0.1.0 port=8765     <- omarchy restart shell
 ```
 
-Not fixable from inside the daemon — it is not given a chance to run — so this
-is supervisor-side. `Service.qml` should SIGTERM its child when the service
-object is destroyed, and give it the same bounded wait `halt()` already sets up,
-so the ordinary path stays the daemon's own clean exit.
+The write-up proposed a supervisor-side fix: `Service.qml` should SIGTERM its
+child from `Component.onDestruction` and give it the same bounded wait `halt()`
+sets up. It carried a precondition -- *check that Quickshell runs
+`Component.onDestruction` on a shell teardown before building on it* -- and an
+escape hatch: if the shell is killed too hard, document the gap rather than
+write a marker on the *next* startup about the previous run, which would be a
+guess presented as a record.
 
-**Check that Quickshell runs `Component.onDestruction` on a shell teardown
-before building on it.** If the shell is killed hard enough that QML destructors
-do not run either, this cannot be fixed here and the honest move is to leave the
-gap documented rather than to add a marker the daemon writes on startup about
-the *previous* run, which would be a guess presented as a record.
+**Measured before building. The precondition holds and the fix still does not
+work**, which is a more precise answer than the one anticipated. See **F30** for
+the measurements; the short version:
 
-Low priority: nothing is lost but the closing bracket of a session, and every
-call in it is already on disk. It matters because N6 puts these lines in front
-of a person, where a run of `daemon started` rows reads as a bug.
+| | SIGTERM delivered | cleanup completes |
+|---|---|---|
+| `running = false` while the shell lives (`stop`, `restart`) | yes | **yes** -- a 1.5s handler ran to completion |
+| `quickshell kill` teardown (`omarchy restart shell`) | yes, if asked for | **no** -- reaped inside 20ms |
+
+So the destructor *does* run, and signalling from it *does* deliver SIGTERM.
+The child is then killed before a handler can finish -- at every delay tried,
+down to 20 milliseconds. The daemon needs uvicorn's graceful shutdown and a log
+flush, which is three orders of magnitude more. Nothing `Service.qml` can do
+lengthens that window, and this is why `omarchy-shell <id> stop` and `restart`
+have always produced a clean `stopped` while `omarchy restart shell` never has.
+
+#### What shipped instead
+
+Not the marker the write-up rejected, and not a guessed timestamp. The log
+already contains the truth: a `started` with another `started` after it and no
+`stopped` between them **is** an unclosed session, and the reader was the thing
+that could not see it.
+
+`activity.mark_unclosed` derives the flag when the log is read, and nothing is
+written. `--tail` renders *"(no recorded end; the shell was restarted or it
+crashed)"*, and the panel row reads *"daemon started · previous session not
+closed"*. Two things it is careful about:
+
+- **The last `started` in the window is never marked.** It is the session
+  probably still running, and calling that unclosed would be a lie in the other
+  direction.
+- **It says only what is known.** Not *when* the session ended -- nobody
+  recorded that -- only that nothing recorded its end. Inventing a `stopped`
+  row with a plausible timestamp would put a guess in an audit trail, which is
+  the one place it must not go.
+
+This is the whole reason the item mattered. The roadmap's own justification was
+that N6 puts these lines in front of a person, *"where a run of `daemon started`
+rows reads as a bug"*. It no longer does, and nothing untrue was written to make
+that true.
 
 ### N12 — An agent should not be able to switch off its own supervisor — done
 
@@ -1717,3 +1746,4 @@ tool from the client itself. The patch was reverted; nothing here was committed.
 | F28 | **Nothing after `uvicorn.run()` runs.** Uvicorn restores the default signal handler and re-raises the signal that stopped it, so the process dies *by signal* — verified, exit status 143 on SIGTERM. A `finally`, an `atexit`, a non-daemon thread: none of them get a turn | The activity log's `stopped` marker was never written and its queue was never flushed, on every ordinary shutdown. Not catchable by unit tests, which fake `uvicorn.run` as a normal return; found by SIGTERMing the real daemon. Shutdown work now hangs off the **ASGI lifespan**, which completes before the re-raise (`activity.Closing`) |
 | F27 | `omarchy-shell <id> restart` left the daemon in `Waiting for connections to close` **indefinitely**, port unbound and process alive, because an attached client still held its stream open. It took `kill -9` | The reload rule `CLAUDE.md` documents hung whenever a client was attached, which is whenever it matters. **Fixed.** Three faults in one bug: uvicorn's `timeout_graceful_shutdown` defaults to waiting forever and an attached client never closes its stream; nothing escalated past `SIGTERM`; and `restart()` guessed 250ms, so `start()` returned early on a process that was still shutting down and left `wantRunning` false — which is why every hang also needed a manual `start`. The daemon now bounds its own shutdown, `Service.qml` puts a deadline on `SIGTERM`, and a restart waits for the actual exit. Verified with a client attached: 600ms, unattended |
 | F29 | **The test suite rebooted the developer's machine.** Three tests used `omarchy system reboot` as their example of a guarded route, on the sound assumption that a guarded route is refused and nothing happens. N10's commit b flipped the guarded default from *refuse* to *ask*, so the gate resolved the call and raised a real `-u critical` notification instead — `tests/test_server.py` and `tests/test_activity.py` mock neither `prompt.send` nor `execute.run`. It was clicked, in good faith, and the reboot ran. The journal shows two `systemctl reboot --no-wall` two seconds apart: two of the three tests got that far before the machine went down | The lesson is not "pick a gentler route". A suite must not be **one behaviour change away from executing whatever it names**, and pinning the registry, the state directory and the resolver sources was never the same thing as pinning execution. Two autouse fixtures now stand in the way: `_no_real_omarchy` fails any spawn of `omarchy`, `omarchy-shell`, `hyprctl`, `qs` or `wl-copy` against the live system, and `_no_desktop_prompts` keeps `prompt.send` off the desktop entirely. Both are tested in `tests/test_conftest_guards.py`, because a guard nobody exercises stops working silently. The opt-ins are narrow and already existed: redirect `execute.SEARCH` at a fixture directory, or mark the test `needs_omarchy` |
+| F30 | **`omarchy restart shell` gives the daemon no chance to shut down, and nothing in QML can change that.** Measured with a throwaway Quickshell instance rather than the live shell. `Component.onDestruction` *does* run on `quickshell kill`, and `child.signal(15)` from it *does* deliver SIGTERM -- so the precondition N11 was written against holds. But Quickshell reaps the child before a handler can finish: a child whose SIGTERM handler slept 3s, 1.5s, 0.5s, 0.25s, 0.1s, 0.05s and 0.02s never reached its next line in any of them. `running = false` behaves identically during teardown. The same `running = false` while the shell stays up lets a 1.5s handler run to completion, which is why `omarchy-shell <id> stop` and `restart` have always written a clean `stopped` | N11 is not fixable supervisor-side, and the honest response was the one its own escape hatch named: document the gap rather than write a guess. The log's missing `stopped` stays missing; `activity.mark_unclosed` derives *"this session has no recorded end"* at read time from what is already on disk -- a `started` followed by another `started` -- and the panel and `--tail` say so. Nothing is written, no timestamp is invented, and the last `started` in a window is never marked because it is the session still running |

@@ -468,3 +468,64 @@ async def _lifespan(app):
         pass
 
     await app({"type": "lifespan"}, None, send)
+
+
+class TestUnclosedSessions:
+    """The daemon cannot always write its own `stopped`.
+
+    On `omarchy restart shell` the whole shell is torn down and Quickshell reaps
+    its children within milliseconds -- measured, and not something `Service.qml`
+    can lengthen (ROADMAP F30). So the log legitimately holds a `started` with
+    another `started` after it and nothing between, and the reader is what has to
+    make sense of that.
+    """
+
+    def _marked(self, *events):
+        records = [{"ts": f"2026-09-03T10:00:0{i}+02:00", "event": e} for i, e in enumerate(events)]
+        return [bool(r.get("unclosed")) for r in activity.mark_unclosed(records)]
+
+    def test_a_session_with_no_end_is_marked(self):
+        assert self._marked("started", "started") == [True, False]
+
+    def test_a_clean_session_is_not(self):
+        assert self._marked("started", "stopped", "started") == [False, False, False]
+
+    def test_the_last_session_is_never_marked(self):
+        """It is the one that is probably still running. Calling it unclosed
+        would be a lie in the other direction."""
+        assert self._marked("started", "stopped", "started")[-1] is False
+        assert self._marked("started")[0] is False
+
+    def test_several_in_a_row(self):
+        assert self._marked("started", "started", "started") == [True, True, False]
+
+    def test_calls_between_them_do_not_confuse_it(self):
+        records = [
+            {"ts": "2026-09-03T10:00:00+02:00", "event": "started"},
+            {"ts": "2026-09-03T10:00:01+02:00", "tool": "omarchy_theme", "outcome": "ok"},
+            {"ts": "2026-09-03T10:00:02+02:00", "event": "started"},
+        ]
+        marked = activity.mark_unclosed(records)
+        assert marked[0]["unclosed"] is True
+        assert "unclosed" not in marked[1]
+        assert "unclosed" not in marked[2]
+
+    def test_nothing_is_written_to_disk(self, tmp_path):
+        """Inventing a `stopped` row with a guessed timestamp would put a guess
+        in an audit trail, which is the one place it must not go."""
+        path = tmp_path / "activity.jsonl"
+        path.write_text(
+            '{"ts": "2026-09-03T10:00:00+02:00", "event": "started"}\n'
+            '{"ts": "2026-09-03T10:00:05+02:00", "event": "started"}\n'
+        )
+        before = path.read_text()
+
+        records = activity.tail(10, path)
+        assert records[0]["unclosed"] is True
+        assert path.read_text() == before, "the log is what happened, not what we inferred"
+
+    def test_the_rendered_line_says_what_is_known_and_no_more(self):
+        record = {"ts": "2026-09-03T10:00:00+02:00", "event": "started", "unclosed": True}
+        line = activity.render(record)
+        assert "no recorded end" in line
+        assert "unclosed=True" not in line, "the derived flag is not a field to print"
