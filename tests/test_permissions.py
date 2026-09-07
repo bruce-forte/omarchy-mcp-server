@@ -9,6 +9,10 @@ The rules that must never regress, in the order they matter:
 - any defect at all refuses the document; there is no partial load
 - a matcher that covers nothing loads and reads void, because a typo and an
   upstream rename are indistinguishable and only one of them is the user's fault
+- a rule that never decides anything says so, and names the rule that got there
+  first, because "you did not grant what you think you granted" is silent
+  otherwise
+- the panel's removal takes grants and nothing else, so no button on it widens
 """
 
 from __future__ import annotations
@@ -37,6 +41,9 @@ from omarchy_mcp.permissions import (
     prunable,
     prune,
     parse,
+    revoke,
+    RevokeRefused,
+    seed,
 )
 from omarchy_mcp.permissions import NEVER_STORE
 from omarchy_mcp.policy import Tier, base_tier
@@ -728,3 +735,205 @@ class TestPruning:
         before = local.read_text()
         assert prune(local, commands) == ()
         assert local.read_text() == before
+
+
+class TestInertRules:
+    """A rule can load, match commands, and still decide nothing. N15: the one
+    defect nothing reported, and the reason it is a finding rather than a
+    notification is that it can only ever fail safe."""
+
+    def test_an_allow_under_a_broader_ask_is_shadowed(self, commands):
+        found = check(
+            pooled(ask=["omarchy install *"], allow=["omarchy install app"]), commands
+        )
+        assert [f.level for f in found] == ["shadowed"]
+        assert errors(found) == (), "it decides nothing; it does not stop the daemon"
+
+    def test_shadowed_names_the_rule_that_got_there_first(self, commands):
+        """The two fixes are 'delete this' and 'narrow that', and neither can be
+        chosen without knowing which rule is above."""
+        found = check(
+            pooled(deny=["omarchy install *"], allow=["omarchy install app"]), commands
+        )
+        assert found[0].by is not None
+        assert found[0].by.matcher == "omarchy install *"
+        assert found[0].by.effect is Effect.DENY
+        assert "omarchy install *" in found[0].reason
+
+    def test_the_same_effect_twice_is_redundant_rather_than_shadowed(self, commands):
+        found = check(
+            pooled(allow=["omarchy install *", "omarchy install app"]), commands
+        )
+        assert [f.level for f in found] == ["redundant"]
+        assert found[0].by.matcher == "omarchy install *"
+
+    def test_partial_coverage_is_not_a_defect(self, commands):
+        """`allow omarchy theme *` under a `deny omarchy theme set` is a good
+        pair. Flagging it would make prefixes unwritable."""
+        assert check(
+            pooled(deny=["omarchy theme set"], allow=["omarchy theme *"]), commands
+        ) == ()
+
+    def test_a_deny_can_never_be_shadowed(self, commands):
+        """`deny` is first in PRECEDENCE, so this only ever fires on ask and
+        allow -- which is why it fails safe and never notifies."""
+        found = check(
+            pooled(deny=["omarchy install app"], ask=["omarchy install *"]), commands
+        )
+        assert all(f.rule.effect is not Effect.DENY for f in found)
+
+    def test_precedence_is_what_counts_not_file_order(self, commands):
+        """The allow is written first in the document and still shadowed: the
+        pool is ordered deny, ask, allow before anything is compared."""
+        found = check(
+            pooled(allow=["omarchy install app"], deny=["omarchy install *"]), commands
+        )
+        assert [f.level for f in found] == ["shadowed"]
+
+    def test_a_dead_rule_is_void_rather_than_inert(self, commands):
+        """One finding per rule. Two lines about one broken sentence, saying
+        different things, is worse than either alone."""
+        found = check(
+            pooled(allow=["omarchy install *", "omarchy gone away"]), commands
+        )
+        assert [f.level for f in found] == ["void"]
+
+    def test_an_error_is_not_also_reported_inert(self, commands):
+        sudo = next(c for c in commands.values() if c.requires_sudo)
+        found = check(pooled(allow=["omarchy *", sudo.route]), commands)
+        assert [f.level for f in found] == ["error"]
+
+    def test_the_explainer_carries_the_rule_that_decided(self, commands):
+        report = explain(
+            pooled(ask=["omarchy install *"], allow=["omarchy install app"]), commands
+        )
+        row = next(r for r in report["rules"] if r["matcher"] == "omarchy install app")
+        assert "shadowed" in row
+        assert row["by"] == "omarchy install *"
+        assert row["bySource"] == "permissions.json"
+
+
+class TestRevoking:
+    """Removing a grant from the panel. The property under test is one sentence:
+    no button on that panel can widen what an agent may do."""
+
+    @pytest.fixture
+    def local(self, tmp_path):
+        return tmp_path / "permissions.local.json"
+
+    def test_it_removes_a_grant(self, local, commands):
+        local.write_text(doc(allow=["omarchy install app", "omarchy theme set"]))
+        gone = revoke(local, Effect.ALLOW, "omarchy install app")
+
+        assert [r.matcher for r in gone] == ["omarchy install app"]
+        left = load((local.with_name("permissions.json"), local))
+        assert [r.matcher for r in left.rules] == ["omarchy theme set"]
+
+    def test_a_deny_is_never_removed_here(self, local):
+        """A restriction is a decision, and it is taken back in an editor."""
+        local.write_text(doc(deny=["omarchy install app"]))
+        before = local.read_text()
+        with pytest.raises(RevokeRefused):
+            revoke(local, Effect.DENY, "omarchy install app")
+        assert local.read_text() == before
+
+    def test_an_ask_is_never_removed_here(self, local):
+        local.write_text(doc(ask=["omarchy install app"]))
+        with pytest.raises(RevokeRefused):
+            revoke(local, Effect.ASK, "omarchy install app")
+
+    def test_a_deny_with_the_same_matcher_survives_the_grant_going(self, local):
+        """The matcher names a rule together with its effect, never on its own."""
+        local.write_text(doc(allow=["omarchy install app"], deny=["omarchy install app"]))
+        revoke(local, Effect.ALLOW, "omarchy install app")
+        left = load((local.with_name("permissions.json"), local))
+        assert [(r.effect, r.matcher) for r in left.rules] == [
+            (Effect.DENY, "omarchy install app")
+        ]
+
+    def test_it_takes_every_copy(self, local):
+        """Nothing dedupes rules, and identical entries are indistinguishable in
+        the display. Removing one of a pair is a button that visibly does
+        nothing."""
+        local.write_text(doc(allow=["omarchy install app", "omarchy install app"]))
+        assert len(revoke(local, Effect.ALLOW, "omarchy install app")) == 2
+        assert load((local.with_name("permissions.json"), local)).rules == ()
+
+    def test_naming_a_rule_that_is_gone_is_not_an_error(self, local):
+        """Somebody already removed it, which is the outcome that was wanted."""
+        local.write_text(doc(allow=["omarchy theme set"]))
+        before = local.read_text()
+        assert revoke(local, Effect.ALLOW, "omarchy install app") == ()
+        assert local.read_text() == before, "nothing is rewritten for a no-op"
+
+    def test_it_is_idempotent(self, local):
+        local.write_text(doc(allow=["omarchy install app"]))
+        assert revoke(local, Effect.ALLOW, "omarchy install app")
+        assert revoke(local, Effect.ALLOW, "omarchy install app") == ()
+
+    def test_a_missing_file_revokes_nothing(self, local):
+        assert revoke(local, Effect.ALLOW, "omarchy install app") == ()
+        assert not local.exists()
+
+    def test_a_file_that_will_not_parse_is_not_edited_blind(self, local):
+        local.write_text("{")
+        with pytest.raises(PermissionsError):
+            revoke(local, Effect.ALLOW, "omarchy install app")
+
+    def test_it_keeps_settings_and_rules_it_did_not_write(self, local):
+        local.write_text(
+            json.dumps(
+                {
+                    "permissions": {
+                        "askTimeoutSeconds": 120,
+                        "deny": [{"kind": "route", "matcher": "omarchy dev *"}],
+                        "allow": [{"kind": "route", "matcher": "omarchy install app"}],
+                    }
+                }
+            )
+        )
+        revoke(local, Effect.ALLOW, "omarchy install app")
+        left = load((local.with_name("permissions.json"), local))
+        assert left.ask_timeout_s == 120
+        assert [r.matcher for r in left.rules] == ["omarchy dev *"]
+
+    def test_what_it_leaves_still_loads(self, local, commands):
+        local.write_text(doc(allow=["omarchy install app", "omarchy theme set"]))
+        revoke(local, Effect.ALLOW, "omarchy install app")
+        reloaded = load((local.with_name("permissions.json"), local))
+        assert check(reloaded, commands) == ()
+
+
+class TestSeeding:
+    """The Edit button may create a file that is not there. It may not change
+    one that is."""
+
+    def test_it_creates_a_document_that_loads(self, tmp_path):
+        path = tmp_path / "permissions.json"
+        assert seed(path) is True
+        assert load([path]).rules == ()
+
+    def test_it_carries_the_schema_so_an_editor_validates_the_first_rule(self, tmp_path):
+        path = tmp_path / "permissions.json"
+        seed(path)
+        body = json.loads(path.read_text())
+        assert body["$schema"] == perms.SCHEMA_URL
+        assert sorted(body["permissions"]) == ["allow", "ask", "deny"]
+
+    def test_it_never_overwrites(self, tmp_path):
+        """Property of the syscall, not of a check that could race an editor."""
+        path = tmp_path / "permissions.json"
+        path.write_text(doc(allow=["omarchy theme set"]))
+        before = path.read_text()
+        assert seed(path) is False
+        assert path.read_text() == before
+
+    def test_it_is_readable_only_by_its_owner(self, tmp_path):
+        path = tmp_path / "permissions.json"
+        seed(path)
+        assert path.stat().st_mode & 0o777 == 0o600
+
+    def test_it_creates_the_directory_when_there_is_none(self, tmp_path):
+        path = tmp_path / "fresh" / "permissions.json"
+        assert seed(path)
+        assert path.exists()
