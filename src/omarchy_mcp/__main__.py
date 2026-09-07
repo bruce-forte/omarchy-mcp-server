@@ -20,11 +20,12 @@ from . import (
     config as config_module,
     frames,
     notify,
+    delta as delta_module,
     permissions as permissions_module,
     registry,
     token as token_module,
 )
-from .paths import CONFIG_FILE, PERMISSIONS_FILE, PERMISSIONS_FILES
+from .paths import CONFIG_FILE, PERMISSIONS_FILE, PERMISSIONS_FILES, REGISTRY_SEEN_FILE
 from .server import build, client_config_json, client_config_line
 from .settings import Settings
 from .stats import Stats
@@ -93,6 +94,98 @@ def _load_permissions(log):
         detail = "\n".join(f"  {f.rule.matcher!r}: {f.reason}" for f in findings)
         return _refuse_to_start(log, f"{PERMISSIONS_FILE}:\n{detail}")
     return loaded
+
+
+def _review(perms, log):
+    """What has changed under the rules since anybody last looked.
+
+    Computed once at startup and held; `reload.py` recomputes it when the
+    registry or the document moves. A fresh install has no snapshot, so it is
+    baselined here and silently: every route is "new" on day one, and reviewing
+    four hundred of them is the catalogue this feature exists to avoid.
+    """
+    try:
+        commands = registry.all_commands()
+    except registry.RegistryError as exc:
+        log.warning("no registry, so nothing can be compared against it: %s", exc)
+        return delta_module.Review()
+
+    seen = delta_module.load_seen(REGISTRY_SEEN_FILE)
+    found = delta_module.compute(seen, commands, perms)
+
+    if found.first_run:
+        delta_module.save_seen(REGISTRY_SEEN_FILE, commands)
+        log.info("registry baselined: %d commands", len(commands))
+        return found
+
+    if not found:
+        return found
+
+    log.info("permissions review pending: %s", found.headline)
+    notify.send(
+        f"MCP server: {found.headline}",
+        delta_module.message(found),
+        urgency="critical" if found.urgent else "normal",
+        log=log,
+    )
+    return found
+
+
+def _print_review(log, *, as_json: bool = False) -> int:
+    """What changed under the rules, computed fresh from the same inputs.
+
+    Read-only, and it carries no token: acknowledging is a separate action on a
+    surface a person is at. Recomputed rather than asked of the running daemon so
+    it answers whether or not one is running -- which is the case the bar panel
+    opens in most often.
+    """
+    try:
+        loaded = permissions_module.load(PERMISSIONS_FILES)
+    except permissions_module.PermissionsError as exc:
+        print(f"{exc}\n\nThe rules cannot be read, so nothing can be compared to them.")
+        return EX_CONFIG
+
+    try:
+        commands = registry.all_commands()
+    except registry.RegistryError as exc:
+        print(f"The registry is unavailable: {exc}")
+        return 1
+
+    found = delta_module.compute(
+        delta_module.load_seen(REGISTRY_SEEN_FILE), commands, loaded
+    )
+    if as_json:
+        print(json.dumps(delta_module.as_dict(found), indent=2))
+        return 0
+
+    if found.first_run:
+        print("No snapshot yet. The next start records one; nothing to review.")
+        return 0
+    if not found:
+        print("Nothing has changed under your rules since you last acknowledged.")
+        return 0
+
+    print(f"{found.headline}\n")
+    print(delta_module.message(found))
+    for rule in found.widened:
+        print(f"\n{rule.effect} {rule.matcher!r} ({rule.source}) now also covers:")
+        for route in rule.routes:
+            print(f"  {route}")
+    held = [a for a in found.arrivals if a.quarantined]
+    if held:
+        print("\nHeld at ask until acknowledged:")
+        for arrival in held:
+            print(f"  {arrival.route}  (under {arrival.rule!r})")
+    fresh = [a for a in found.arrivals if not a.quarantined]
+    if fresh:
+        print("\nNew:")
+        for arrival in fresh:
+            flag = "  [group never classified]" if arrival.unclassified else ""
+            print(f"  {arrival.route:<44} {arrival.effect}{flag}")
+    if found.gone:
+        print(f"\nGone: {', '.join(found.gone)}")
+    print("\nAcknowledge in the bar panel to stop being told and advance the snapshot.")
+    return 0
 
 
 def _print_permissions(log, *, as_json: bool = False) -> int:
@@ -235,6 +328,11 @@ def main(argv: list[str] | None = None) -> int:
         help="print the last N activity records and exit",
     )
     parser.add_argument(
+        "--review",
+        action="store_true",
+        help="print what has changed under your rules since you last acknowledged",
+    )
+    parser.add_argument(
         "--permissions",
         action="store_true",
         help="print the rules in force and what they cover, and exit",
@@ -271,6 +369,9 @@ def main(argv: list[str] | None = None) -> int:
                 print(activity.render(body))
         return 0
 
+    if args.review:
+        return _print_review(log, as_json=args.json)
+
     if args.permissions:
         return _print_permissions(log, as_json=args.json)
 
@@ -287,6 +388,8 @@ def main(argv: list[str] | None = None) -> int:
         print(client_config_json(cfg.port, tok) if args.json else client_config_line(cfg.port, tok))
         return 0
 
+    review = _review(permissions, log)
+
     with activity.writer(cfg, log) as sink:
         # The frame is not the audit trail: it goes out whether or not the log
         # is on, because a user who turned the log off did not ask the bar to
@@ -294,7 +397,10 @@ def main(argv: list[str] | None = None) -> int:
         stats = Stats(sink=sink, on_call=lambda rec: frames.call(rec.tool, rec.result))
         # The holder the reloader swaps. Everything downstream reads it.
         settings = Settings(cfg, permissions)
-        app = build(settings, tok, log, stats=stats, reload_from=CONFIG_FILE)
+        settings.swap_unreviewed(review.quarantined)
+        app = build(
+            settings, tok, log, stats=stats, reload_from=CONFIG_FILE, review=review
+        )
         if sink is not None:
             # The log is closed from the lifespan shutdown, because nothing
             # after uvicorn.run() runs -- it dies by signal (F28).
@@ -304,6 +410,16 @@ def main(argv: list[str] | None = None) -> int:
 
         log.info("serving on http://127.0.0.1:%d/mcp", cfg.port)
         frames.emit("listening", port=cfg.port, version=__version__)
+        if review:
+            # After `listening`, so the bar has somewhere to put it. The
+            # notification is separate and has already gone.
+            frames.review(
+                review.token,
+                review.headline,
+                len(review.arrivals),
+                len(review.widened),
+                len(review.dead),
+            )
 
         try:
             uvicorn.run(

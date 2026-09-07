@@ -166,8 +166,9 @@ def register(mcp, settings: Settings, log) -> None:
         commands an agent can actually run; that is the interesting half.
         """
         perms = settings.permissions
+        unreviewed = settings.unreviewed
         rows = [
-            registry.as_dict(cmd) | describe(cmd, perms)
+            registry.as_dict(cmd) | describe(cmd, perms, unreviewed=unreviewed)
             for cmd in sorted(commands, key=lambda c: c.route)
         ]
         return {"count": len(rows), "commands": rows}

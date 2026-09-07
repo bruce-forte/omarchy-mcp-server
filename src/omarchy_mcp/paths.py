@@ -44,6 +44,12 @@ RUNTIME_DIR = Path(os.environ.get("XDG_RUNTIME_DIR") or "/tmp")
 
 TOKEN_FILE = STATE_DIR / "token"
 
+#: The routes last shown to a person, so an `omarchy update` that adds commands
+#: under an existing rule can be noticed. State rather than config: it is an
+#: observation of the machine, and it would churn a tracked diff on every
+#: Omarchy upgrade. See `delta.py`.
+REGISTRY_SEEN_FILE = STATE_DIR / "registry-seen.json"
+
 #: The activity log, and the one generation kept beside it. A filename rather
 #: than a path everywhere it is configurable: a log inside the plugin directory
 #: would make Omarchy reload the shell once per tool call.

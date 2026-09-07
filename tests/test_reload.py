@@ -20,7 +20,7 @@ from omarchy_mcp import (
     reload as reload_module,
 )
 from omarchy_mcp.config import Config
-from omarchy_mcp.permissions import Effect
+from omarchy_mcp.permissions import Effect, Permissions
 from omarchy_mcp.reload import Reloader
 from omarchy_mcp.settings import Settings
 from omarchy_mcp.stats import Stats
@@ -37,6 +37,14 @@ def no_notifications(monkeypatch):
     monkeypatch.setattr(notify, "send", lambda *a, **kw: sent.append((a, kw)))
     monkeypatch.setattr(reload_module.notify, "send", lambda *a, **kw: sent.append((a, kw)))
     return sent
+
+
+def doc(**lists) -> str:
+    block = {
+        effect: [{"kind": "route", "matcher": m} for m in matchers]
+        for effect, matchers in lists.items()
+    }
+    return json.dumps({"permissions": block})
 
 
 def permission_paths(tmp_path):
@@ -321,3 +329,104 @@ def test_the_second_file_is_pooled_with_the_first(tmp_path):
     assert result.permissions_changed
     matched = settings.permissions.matching("omarchy install app")
     assert matched is not None and matched.source == "permissions.local.json"
+
+
+# -- acknowledging a review --------------------------------------------------
+
+
+def _review_for(tmp_path, commands, *, missing="omarchy install app"):
+    """A snapshot from before `missing` existed, and the review that produces."""
+    from omarchy_mcp import delta
+
+    seen_path = tmp_path / "registry-seen.json"
+    seen_path.write_text(json.dumps({"routes": sorted(set(commands) - {missing})}))
+    return seen_path, delta.compute(delta.load_seen(seen_path), commands, Permissions())
+
+
+def test_acknowledging_advances_the_snapshot(tmp_path, commands, no_notifications):
+    from omarchy_mcp import delta
+
+    seen_path, review = _review_for(tmp_path, commands)
+    reloader, settings, _, _ = build(tmp_path, "")
+    reloader._seen_path = seen_path
+    reloader._consent_dir = tmp_path / "consent"
+    reloader._review = review
+    (tmp_path / "consent").mkdir()
+
+    (tmp_path / "consent" / f"ack-{review.token}").write_text(review.token)
+    result = reloader.poll()
+
+    assert result.acknowledged
+    assert delta.load_seen(seen_path) == frozenset(commands)
+    assert settings.unreviewed == frozenset()
+    assert not reloader.review
+
+
+def test_a_wrong_token_acknowledges_nothing(tmp_path, commands, no_notifications):
+    from omarchy_mcp import delta
+
+    seen_path, review = _review_for(tmp_path, commands)
+    reloader, _, _, _ = build(tmp_path, "")
+    reloader._seen_path = seen_path
+    reloader._consent_dir = tmp_path / "consent"
+    reloader._review = review
+    (tmp_path / "consent").mkdir()
+
+    (tmp_path / "consent" / f"ack-{review.token}").write_text(delta.new_token())
+    assert reloader.poll() is None
+    assert delta.load_seen(seen_path) != frozenset(commands)
+
+
+def test_a_marker_is_spent_once(tmp_path, commands, no_notifications):
+    """A leftover must never acknowledge a later review."""
+    seen_path, review = _review_for(tmp_path, commands)
+    reloader, _, _, _ = build(tmp_path, "")
+    reloader._seen_path = seen_path
+    reloader._consent_dir = tmp_path / "consent"
+    reloader._review = review
+    (tmp_path / "consent").mkdir()
+    marker = tmp_path / "consent" / f"ack-{review.token}"
+    marker.write_text(review.token)
+
+    reloader.poll()
+    assert not marker.exists()
+
+
+def test_an_ordinary_poll_does_not_advance_the_snapshot(tmp_path, commands, no_notifications):
+    """Only acknowledgement moves it. A reload that quietly consumed the warning
+    would be the bug this whole feature is built to avoid."""
+    from omarchy_mcp import delta
+
+    seen_path, review = _review_for(tmp_path, commands)
+    reloader, _, _, path = build(tmp_path, "")
+    reloader._seen_path = seen_path
+    reloader._review = review
+
+    path.write_text('[tools]\ndisabled = ["omarchy_theme"]\n')
+    reloader.poll()
+
+    assert delta.load_seen(seen_path) != frozenset(commands)
+    assert reloader.review
+
+
+def test_a_rule_change_recomputes_what_is_held(tmp_path, commands, no_notifications):
+    """A new deny can release a route from quarantine by denying it outright,
+    which is a different answer rather than the same one delayed."""
+    from omarchy_mcp import delta
+
+    seen_path = tmp_path / "registry-seen.json"
+    seen_path.write_text(json.dumps({"routes": sorted(set(commands) - {"omarchy install app"})}))
+    reloader, settings, _, _ = build(
+        tmp_path, "", doc(allow=["omarchy install *"])
+    )
+    reloader._seen_path = seen_path
+    reloader.recompute_review()
+    assert settings.unreviewed == frozenset({"omarchy install app"})
+
+    permission_paths(tmp_path)[0].write_text(
+        doc(allow=["omarchy install *"], deny=["omarchy install app"])
+    )
+    reloader.poll()
+
+    assert settings.unreviewed == frozenset(), "denied outright, not held"
+    assert delta.load_seen(seen_path) != frozenset(commands), "and still not acknowledged"

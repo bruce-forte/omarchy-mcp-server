@@ -82,6 +82,12 @@ Panel {
   readonly property var    askArgs: service ? service.pendingArgs : []
   readonly property string askTarget: service ? service.pendingTarget : ""
 
+  // The delta. Same reasoning as the pending question: no file fallback,
+  // because acknowledging needs a token that lives only on the service object.
+  readonly property bool   needsReview: service ? service.needsReview : false
+  readonly property string reviewHeadline: service ? service.reviewHeadline : ""
+  readonly property var    review: service ? service.review : ({})
+
   readonly property var recent: service ? service.recent : []
   readonly property bool recentLoading: service ? service.recentLoading : false
   readonly property bool activityLogged: service ? service.activityLogged : true
@@ -153,6 +159,10 @@ Panel {
   property string permissionsCheck: ""
   property bool   permissionsCheckOk: true
 
+  readonly property bool reviewLoadingOrEmpty: service
+    ? (service.reviewLoading || !(service.review && service.review.arrivals))
+    : false
+
   Timer {
     id: copiedFor
     interval: 1600
@@ -162,7 +172,14 @@ Panel {
 
   // The log is read when the panel opens, not continuously: it is a file that
   // grows to a megabyte, and FileView has no seek.
-  onOpenedChanged: if (opened && service) service.refreshRecent()
+  onOpenedChanged: {
+    if (opened && service) {
+      service.refreshRecent()
+      // Only when there is one. The counts arrived on a frame; this reads the
+      // rows, so a panel opened with nothing to review spawns nothing.
+      service.refreshReview()
+    }
+  }
 
   function apply(raw) {
     if (!raw || raw.length === 0) {
@@ -463,6 +480,138 @@ Panel {
           color: root.permissionsCheckOk ? Qt.darker(Color.foreground, 1.4) : Color.urgent
           font.family: Style.font.family
           font.pixelSize: Style.font.bodySmall
+        }
+
+        // The delta: what an `omarchy update` changed under rules that did not
+        // change. Above RECENT, because it is the one thing here that is
+        // waiting on a person.
+        Column {
+          width: parent.width
+          spacing: Style.spacing.sm
+          visible: root.needsReview
+
+          PanelSeparator { width: parent.width }
+
+          Row {
+            width: parent.width
+            spacing: Style.spacing.controlGap
+
+            PanelSectionHeader { text: "PERMISSIONS" }
+
+            Text {
+              text: root.reviewHeadline
+              color: Color.urgent
+              font.family: Style.font.family
+              font.pixelSize: Style.font.bodySmall
+            }
+          }
+
+          // A rule that covers more than it did, without anybody editing it.
+          // The most valuable row here and the one that reads as a warning.
+          Repeater {
+            model: root.review.widened || []
+
+            Column {
+              width: column.width
+              spacing: 2
+
+              Text {
+                width: parent.width
+                wrapMode: Text.WordWrap
+                text: "Your " + modelData.effect + " rule '" + modelData.matcher
+                    + "' now also covers " + modelData.routes.length + " command"
+                    + (modelData.routes.length === 1 ? "" : "s")
+                    + " you have not seen."
+                color: Color.urgent
+                font.family: Style.font.family
+                font.pixelSize: Style.font.bodySmall
+              }
+
+              Text {
+                width: parent.width
+                wrapMode: Text.WordWrap
+                text: modelData.routes.join(", ")
+                color: Qt.darker(Color.foreground, 1.4)
+                font.family: Style.font.family
+                font.pixelSize: Style.font.bodySmall
+              }
+            }
+          }
+
+          // A rule that has stopped matching. Silent loss of protection when it
+          // is a deny: upstream renamed a route out from under it.
+          Repeater {
+            model: root.review.dead || []
+
+            Text {
+              width: column.width
+              wrapMode: Text.WordWrap
+              text: "Your " + modelData.effect + " rule '" + modelData.matcher
+                  + "' no longer matches anything."
+              color: Color.urgent
+              font.family: Style.font.family
+              font.pixelSize: Style.font.bodySmall
+            }
+          }
+
+          Repeater {
+            model: root.review.arrivals || []
+
+            Row {
+              width: column.width
+              spacing: Style.spacing.controlGap
+              visible: modelData.quarantined || modelData.unclassified
+
+              Text {
+                width: parent.width - arrivalNote.width - parent.spacing
+                elide: Text.ElideRight
+                text: modelData.route
+                color: Color.foreground
+                font.family: Style.font.family
+                font.pixelSize: Style.font.bodySmall
+              }
+
+              Text {
+                id: arrivalNote
+                text: modelData.unclassified ? "new group · runs" : "held · asks once"
+                color: modelData.unclassified ? Color.urgent
+                                              : Qt.darker(Color.foreground, 1.4)
+                font.family: Style.font.family
+                font.pixelSize: Style.font.bodySmall
+              }
+            }
+          }
+
+          Text {
+            width: parent.width
+            wrapMode: Text.WordWrap
+            visible: root.reviewLoadingOrEmpty
+            text: "Reading the review…"
+            color: Qt.darker(Color.foreground, 1.4)
+            font.family: Style.font.family
+            font.pixelSize: Style.font.bodySmall
+          }
+
+          Row {
+            spacing: Style.spacing.controlGap
+
+            Button {
+              text: "Acknowledge"
+              bordered: true
+              enabled: root.service !== null
+              onClicked: root.service.acknowledge()
+            }
+          }
+
+          Text {
+            width: parent.width
+            wrapMode: Text.WordWrap
+            text: "Acknowledging records what Omarchy ships now, so you are only "
+                + "told about the next change. Held commands stop being asked about."
+            color: Qt.darker(Color.foreground, 1.6)
+            font.family: Style.font.family
+            font.pixelSize: Style.font.bodySmall
+          }
         }
 
         PanelSeparator { width: parent.width }

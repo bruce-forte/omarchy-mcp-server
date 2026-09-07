@@ -47,6 +47,23 @@ def _pin_registry(monkeypatch, commands):
     monkeypatch.setattr(reg, "all_commands", lambda: commands)
 
 
+#: Every module-level binding of a path the daemon writes to, and the module it
+#: is bound in. Bindings rather than one constant, because
+#: `from .paths import X` copies the value at import: patching `paths.X` after
+#: that reaches nobody. `test_conftest_guards.py` fails if a new one appears.
+WRITTEN_PATHS = (
+    ("omarchy_mcp.activity", "STATE_DIR", "state"),
+    ("omarchy_mcp.__main__", "REGISTRY_SEEN_FILE", "registry-seen.json"),
+    ("omarchy_mcp.reload", "REGISTRY_SEEN_FILE", "registry-seen.json"),
+    ("omarchy_mcp.prompt", "CONSENT_DIR", "consent"),
+    ("omarchy_mcp.reload", "CONSENT_DIR", "consent"),
+    # The bearer token. `main()` writes it, and `test_shutdown` calls `main()`:
+    # unpinned, the suite would rotate the token the user's clients are using.
+    ("omarchy_mcp.token", "STATE_DIR", "token-dir"),
+    ("omarchy_mcp.token", "TOKEN_FILE", "token-dir/token"),
+)
+
+
 @pytest.fixture(autouse=True)
 def _pin_state_dir(monkeypatch, tmp_path_factory):
     """No test writes into the real state directory.
@@ -55,10 +72,20 @@ def _pin_state_dir(monkeypatch, tmp_path_factory):
     daemon end to end -- `test_shutdown` calls `main()` -- would otherwise
     append to the user's own activity log, on their own machine, every time the
     suite ran. Caught only because the file appeared there.
-    """
-    import omarchy_mcp.activity as activity
 
-    monkeypatch.setattr(activity, "STATE_DIR", tmp_path_factory.mktemp("state"))
+    It happened again with `registry-seen.json`, which is why this now pins
+    every such path rather than the one that had already gone wrong. Pinning is
+    per *binding*: `from .paths import REGISTRY_SEEN_FILE` copies the value at
+    import time, so patching `paths` would have reached nobody.
+    """
+    import importlib
+
+    root = tmp_path_factory.mktemp("state")
+    for module_name, attribute, leaf in WRITTEN_PATHS:
+        module = importlib.import_module(module_name)
+        if not hasattr(module, attribute):
+            continue
+        monkeypatch.setattr(module, attribute, root / leaf)
 
 
 #: What `execute.SEARCH` is when nobody has redirected it: the real Omarchy.

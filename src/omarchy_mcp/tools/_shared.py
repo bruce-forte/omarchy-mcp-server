@@ -63,6 +63,7 @@ async def run_route(
     *,
     config: Config,
     perms: Permissions,
+    unreviewed: frozenset[str] = frozenset(),
     stats: Stats,
     log,
     tool: str,
@@ -87,7 +88,7 @@ async def run_route(
             )
 
         decision = await gate.authorize(
-            cmd, args, perms=perms, ctx=ctx, log=log, offload=offload
+            cmd, args, perms=perms, unreviewed=unreviewed, ctx=ctx, log=log, offload=offload
         )
         if isinstance(decision, gate.Refused):
             rec.outcome = "refused"

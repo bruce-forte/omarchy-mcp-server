@@ -321,12 +321,40 @@ group: every route's group *is* its second word, so `omarchy install *` is the
 Set `"guardedDefault": "deny"` to have guarded commands refused outright rather
 than asked about.
 
+#### An update can widen a rule you wrote
+
+`omarchy install *` means *the install prefix*, not the fifteen routes that
+existed the day you typed it. So an `omarchy update` can put three more commands
+inside a sentence you already agreed to, and nothing in your file changed to say
+so. The server watches for exactly that:
+
+- a **rule that now covers more** than it did — the one worth being told about
+- a **rule that has stopped matching** — a `deny` that upstream renamed out from
+  under you looks exactly like one that is working
+- **commands in a group this plugin has never classified**, which derive as safe
+  and run
+
+New commands that fall under an existing `allow` are **held at ask** until you
+review them: restrictions extend forward, grants do not. A `deny` or `ask` rule
+covers a new command the moment it arrives.
+
+The bar panel shows all of it, and **Acknowledge** records what Omarchy ships now
+so you are only told about the next change. From a terminal:
+
+```bash
+omarchy-mcpd --review
+```
+
+A fresh install has nothing to compare against, so the first run records a
+baseline and tells you nothing.
+
 Copy [`permissions.example.json`](permissions.example.json) to start, and check
 your edits before restarting anything:
 
 ```bash
 omarchy-mcpd --check-permissions   # would the daemon start?
 omarchy-mcpd --permissions         # what is in force, and what each rule covers
+omarchy-mcpd --review              # what changed under it since you last looked
 ```
 
 `--permissions` answers the question you actually have — *why can it do that?* —
@@ -473,7 +501,7 @@ anywhere inside a plugin folder and a virtualenv is largely symlinks.
 
 ```bash
 omarchy plugin remove io.github.bruce-forte.mcp-server
-rm -rf ~/.local/state/io.github.bruce-forte.mcp-server   # venv, token, activity log, autostart marker
+rm -rf ~/.local/state/io.github.bruce-forte.mcp-server   # venv, token, activity log, autostart marker, registry snapshot
 rm -rf ~/.config/omarchy/mcp                             # config.toml and your permissions
 rm -rf "$XDG_RUNTIME_DIR/io.github.bruce-forte.mcp-server"   # pending approvals
 claude mcp remove omarchy                                # if you added it there

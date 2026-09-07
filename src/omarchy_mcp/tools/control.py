@@ -58,6 +58,7 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats) -> None:
             args,
             config=settings.current,
             perms=settings.permissions,
+            unreviewed=settings.unreviewed,
             stats=stats,
             log=log,
             tool=tool,

@@ -50,10 +50,8 @@ reasons matter more than the choices when something needs revisiting.
       user can see what an agent did, answer for the calls that warrant it, and
       stop the thing. N12 is done; N11 remains. N10 grew into the phase's
       largest item — five commits and its own permissions document — and N13
-      and N14 came out of it. **N10 a–d are done**: the document decides, a
-      defective one stops the daemon, every route can say which rule decided
-      it, and *always* writes itself down. Only e — the delta — remains. See
-      [Next steps](#next-steps).
+      and N14 came out of it. **N10 is done.** N11 is the last item in the
+      phase. See [Next steps](#next-steps).
 
 Tests are not a phase. `policy.py` and the auth checks are tested in the phase
 that creates them — they are the security boundary, and tests retrofitted to a
@@ -971,7 +969,7 @@ Argument resolution was considered as a sixth and left out: it is true and
 distinctive, but it already has a worked example under *What an agent is allowed
 to run*, and six items read as a list rather than a claim.
 
-### N10 — Permissions, reviewed by diff — a–d done
+### N10 — Permissions, reviewed by diff — done
 
 Depends on N4 for the question, on N6's panel for the surface a notification
 cannot provide, and on N7's holder, since permissions the daemon owns have to
@@ -1351,7 +1349,7 @@ unreviewable exactly where review matters most.
 | **b** ✅ | Wire it. `[policy]` leaves `config.toml`. `guardedDefault: "ask"`. Startup refusal, exit `78`, `Service.qml` stops respawning. `permissionsOk` | **the behaviour change**, alone in its diff. Guarded routes ask through N4; approve-once works |
 | **c** ✅ | Explainer data: `rule`/`source` on annotated rows, `omarchy://permissions`, `--permissions` | you can see why every route is what it is |
 | **d** ✅ | Answer vocabulary: helper verbs, `asking` frame, panel Allow-once / Always / Deny, `permission` events | "always" exists |
-| **e** | The delta: `registry-seen.json`, forward-quarantine, `critical` notification, panel section, acknowledge | complete |
+| **e** ✅ | The delta: `registry-seen.json`, forward-quarantine, `critical` notification, panel section, acknowledge | complete |
 
 Between **b** and **e** an `allow` wildcard is fully forward-looking — the
 weaker semantics this item rejects. Named rather than discovered: the window is
@@ -1388,6 +1386,38 @@ disagrees with it, and why.
 - **The suite could drive the machine it ran on.** Not a design change — a fault
   the behaviour change exposed, at the cost of a reboot. See **F29**; the fix is
   two autouse fixtures and a test file for them.
+
+And from **e**:
+
+- **"A group this plugin has never classified" needed a snapshot to mean
+  anything.** The first implementation tested `group not in GUARDED_GROUPS`,
+  which is true of *every* safe route — that is why they are safe — so it
+  flagged the entire safe half of the registry. The real test is whether the
+  group is **new**: one that was here last time and was left alone is a
+  decision, however implicit. Groups are the second token of a route, so the
+  snapshot already carries them.
+- **First run baselines silently, and it is the only thing besides
+  acknowledgement that writes the snapshot.** Every route is new on a fresh
+  install; reporting four hundred of them is the catalogue this item exists to
+  avoid. Stated as a rule and tested both ways, because it is the one exception
+  to "only acknowledgement advances it".
+- **Acknowledging travels the consent channel.** It is not an answer to a
+  prompt, but it has the same problem: it is silent by design, so an agent able
+  to do it could clear its own review with nothing on screen. The daemon mints a
+  token, publishes it only on the frame the shell reads, and picks the answer up
+  on the reload poll. `bin/omarchy-mcp-consent acknowledge` writes it, like every
+  other person-at-the-desk answer.
+- **A rule that matched nothing and now matches something is not "widened".** It
+  started working, and its routes are already in `arrivals`; reporting them
+  twice would read as two problems.
+- **The suite was writing into the real state directory again.** `_pin_state_dir`
+  pinned `activity.STATE_DIR` and nothing else, so `registry-seen.json` landed in
+  `~/.local/state/` — the same class of fault the fixture was written for, and
+  found the same way, by the file appearing. It now pins every *binding* of every
+  written path, and `test_every_written_path_is_pinned` fails when a new one
+  appears. That guard immediately found two more: `token.STATE_DIR` and
+  `token.TOKEN_FILE`, which means the suite could have rotated the bearer token
+  the user's own clients were connected with.
 
 And from **d**:
 

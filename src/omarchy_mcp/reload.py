@@ -58,10 +58,17 @@ from pathlib import Path
 import anyio
 import anyio.to_thread
 
-from . import config as config_module, notify, permissions as permissions_module
+from . import (
+    config as config_module,
+    delta as delta_module,
+    notify,
+    permissions as permissions_module,
+    registry,
+)
 from .config import Config
-from .paths import CONFIG_FILE, PERMISSIONS_FILES
+from .paths import CONFIG_FILE, PERMISSIONS_FILES, REGISTRY_SEEN_FILE
 from .permissions import Permissions, PermissionsError
+from .prompt import CONSENT_DIR
 from .settings import Settings
 from .tools.catalogue import Catalogue, Change
 
@@ -98,9 +105,17 @@ class Reloaded:
     permissions_changed: bool = False
     #: It was re-read and would not load. The previous one still stands.
     permissions_rejected: bool = False
+    #: Somebody pressed Acknowledge, so the snapshot advanced and the quarantine
+    #: cleared. The one thing that moves `registry-seen.json`.
+    acknowledged: bool = False
 
     def __bool__(self) -> bool:
-        return bool(self.tools) or self.policy_changed or self.permissions_changed
+        return (
+            bool(self.tools)
+            or self.policy_changed
+            or self.permissions_changed
+            or self.acknowledged
+        )
 
 
 class Reloader:
@@ -115,6 +130,9 @@ class Reloader:
         *,
         path: Path = CONFIG_FILE,
         permission_paths: tuple[Path, ...] = PERMISSIONS_FILES,
+        seen_path: Path = REGISTRY_SEEN_FILE,
+        consent_dir: Path = CONSENT_DIR,
+        review: object | None = None,
         on_change: Callable[[Reloaded], None] | None = None,
         announce: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
@@ -136,6 +154,10 @@ class Reloader:
         self._permission_paths = tuple(permission_paths)
         self._permissions_seen = self._read_permissions()
         self._permissions_rejected = False
+
+        self._seen_path = seen_path
+        self._consent_dir = consent_dir
+        self._review = review if review is not None else delta_module.Review()
 
     # -- reading -------------------------------------------------------------
 
@@ -175,10 +197,74 @@ class Reloader:
 
     # -- the decision --------------------------------------------------------
 
+    @property
+    def review(self):
+        """What is waiting to be reviewed, as of the last poll."""
+        return self._review
+
+    def _poll_acknowledgement(self) -> bool:
+        """Whether somebody pressed Acknowledge since the last look.
+
+        The token is minted by the daemon and published only on the frame the
+        shell reads, so a file naming it is a person at the desk. Spent once, and
+        removed whether or not it was current -- a leftover must never
+        acknowledge a later review.
+        """
+        if not self._review or not self._review.token:
+            return False
+        marker = self._consent_dir / f"ack-{self._review.token}"
+        try:
+            body = marker.read_text().strip()
+        except OSError:
+            return False
+        try:
+            marker.unlink()
+        except OSError:
+            pass
+        if body != self._review.token:
+            return False
+
+        try:
+            commands = registry.all_commands()
+        except registry.RegistryError as exc:
+            self._log.warning("cannot acknowledge without a registry: %s", exc)
+            return False
+
+        delta_module.save_seen(self._seen_path, commands)
+        self._review = delta_module.Review()
+        self._settings.swap_unreviewed(frozenset())
+        self._log.info("permissions review acknowledged; snapshot advanced")
+        return True
+
+    def recompute_review(self) -> None:
+        """Read the delta again, because the rules or the registry moved.
+
+        Deliberately does **not** advance the snapshot. Only acknowledgement
+        does that; recomputing on a reload would let an edit quietly consume a
+        warning nobody saw.
+        """
+        try:
+            commands = registry.all_commands()
+        except registry.RegistryError:
+            return
+        seen = delta_module.load_seen(self._seen_path)
+        if seen is None:
+            # Baselined at startup. A snapshot that vanished mid-run is not an
+            # invitation to re-review everything.
+            return
+        self._review = delta_module.compute(seen, commands, self._settings.permissions)
+        self._settings.swap_unreviewed(self._review.quarantined)
+
     def poll(self) -> Reloaded | None:
         """Look once. Returns None when there was nothing to do."""
         result = self._poll_config()
         permissions = self._poll_permissions()
+        acknowledged = self._poll_acknowledgement()
+
+        if permissions is not None and permissions[0]:
+            # A new rule can quarantine or release routes, so the delta is read
+            # through whichever document is in force now.
+            self.recompute_review()
 
         if permissions is not None:
             changed, rejected = permissions
@@ -186,6 +272,10 @@ class Reloader:
             result = replace(
                 base, permissions_changed=changed, permissions_rejected=rejected
             )
+
+        if acknowledged:
+            base = result if result is not None else Reloaded(config=self._settings.current)
+            result = replace(base, acknowledged=True)
 
         if result is not None and self._on_change is not None:
             self._on_change(result)

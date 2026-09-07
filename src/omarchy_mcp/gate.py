@@ -105,6 +105,7 @@ async def authorize(
     args: list[str],
     *,
     perms: Permissions,
+    unreviewed: frozenset[str] = frozenset(),
     ctx,
     log,
     offload,
@@ -119,7 +120,7 @@ async def authorize(
         log.info("self-call refused route=%r", cmd.route)
         return Refused(refusal, Tier.BLOCKED.value)
 
-    outcome = decide(cmd, perms)
+    outcome = decide(cmd, perms, unreviewed=unreviewed)
 
     if outcome.effect is Effect.ALLOW:
         try:

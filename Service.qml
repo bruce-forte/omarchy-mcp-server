@@ -98,6 +98,48 @@ Item {
   property string pendingMarker: ""
   readonly property bool asking: pendingToken !== ""
 
+  // What has changed under the rules since anybody last acknowledged. The
+  // counts and the token arrive on a frame; the rows are read on demand, so a
+  // panel nobody opens costs nothing.
+  //
+  // `reviewToken` is held here and never written to the state file, for the same
+  // reason a consent token is not: acknowledging is silent by design -- it
+  // consumes a warning and raises nothing -- so the ability to do it must not
+  // sit in a file an agent might reach.
+  property string reviewToken: ""
+  property string reviewHeadline: ""
+  property int    reviewArrivals: 0
+  property int    reviewWidened: 0
+  property int    reviewDead: 0
+  property var    review: ({})
+  property bool   reviewLoading: false
+  readonly property bool needsReview: reviewToken !== ""
+
+  function refreshReview() {
+    if (reviewProc.running || !root.needsReview)
+      return
+    reviewLoading = true
+    reviewProc.running = true
+  }
+
+  function acknowledge() {
+    if (reviewToken === "")
+      return false
+    ackProc.token = reviewToken
+    clearReview()
+    ackProc.running = true
+    return true
+  }
+
+  function clearReview() {
+    reviewToken = ""
+    reviewHeadline = ""
+    reviewArrivals = 0
+    reviewWidened = 0
+    reviewDead = 0
+    review = ({})
+  }
+
   // Answering goes through the same helper the notification's --exec runs, not
   // through a FileView here. That helper validates the token before using it as
   // a filename and is the one place the vocabulary is defined; a second writer
@@ -316,6 +358,16 @@ Item {
           if (frame.state === "answered") {
             if (frame.marker === root.pendingMarker || root.pendingMarker === "")
               root.clearPending()
+            return
+          }
+
+          // Something changed under the rules and nobody has looked at it.
+          if (frame.state === "review") {
+            root.reviewToken = frame.token || ""
+            root.reviewHeadline = frame.headline || ""
+            root.reviewArrivals = Number(frame.arrivals || 0)
+            root.reviewWidened = Number(frame.widened || 0)
+            root.reviewDead = Number(frame.dead || 0)
             return
           }
 
@@ -545,6 +597,17 @@ Item {
            + "  " + root.pluginDir + "bin/omarchy-mcpd --check-permissions"
     }
 
+    function review(): string {
+      // Read-only. Acknowledging is the panel's and the helper's: an agent can
+      // reach this target (N12), and acknowledging is silent, so a verb that
+      // did it here would let an agent clear its own review with nothing on
+      // screen.
+      if (!root.needsReview)
+        return "nothing to review"
+      return root.reviewHeadline + "\nSee the bar panel, or run:\n"
+           + "  " + root.pluginDir + "bin/omarchy-mcpd --review"
+    }
+
     function pending(): string {
       // Read-only on purpose. An agent can reach this plugin's own target
       // (N12), so a verb that *answered* a question would let it approve its
@@ -602,6 +665,43 @@ Item {
       if (exitCode !== 0)
         console.warn("omarchy-mcp: could not record the answer; helper exited", exitCode)
       answerProc.token = ""
+    }
+  }
+
+  // The review's rows, read when a panel asks. Computed by the CLI from the
+  // same inputs the daemon used, so it answers whether or not one is running.
+  Process {
+    id: reviewProc
+    command: [root.pluginDir + "bin/omarchy-mcpd", "--review", "--json"]
+
+    stdout: StdioCollector {
+      id: reviewOut
+      waitForEnd: true
+    }
+
+    onExited: function (exitCode) {
+      root.reviewLoading = false
+      if (exitCode !== 0) {
+        console.warn("omarchy-mcp: could not read the review; exited", exitCode)
+        return
+      }
+      try {
+        root.review = JSON.parse(reviewOut.text)
+      } catch (e) {
+        console.warn("omarchy-mcp: could not parse the review:", e)
+      }
+    }
+  }
+
+  Process {
+    id: ackProc
+    property string token: ""
+    command: [root.pluginDir + "bin/omarchy-mcp-consent", "acknowledge", ackProc.token]
+
+    onExited: function (exitCode) {
+      if (exitCode !== 0)
+        console.warn("omarchy-mcp: could not acknowledge; helper exited", exitCode)
+      ackProc.token = ""
     }
   }
 

@@ -260,3 +260,123 @@ class TestPrintPermissions:
         permission_files[0].write_text("{")
         entry._print_permissions(LOG)
         assert notifications == []
+
+
+class TestTheReviewAtStartup:
+    @pytest.fixture
+    def seen(self, tmp_path, monkeypatch):
+        path = tmp_path / "registry-seen.json"
+        monkeypatch.setattr(entry, "REGISTRY_SEEN_FILE", path)
+        return path
+
+    def test_a_first_run_baselines_silently(self, seen, notifications, commands):
+        """Every route is new on a fresh install, and telling somebody about 400
+        of them is the catalogue this feature exists to avoid."""
+        from omarchy_mcp import delta
+
+        review = entry._review(permissions_module.Permissions(), LOG)
+
+        assert review.first_run
+        assert notifications == []
+        assert delta.load_seen(seen) == frozenset(commands)
+
+    def test_nothing_changed_says_nothing(self, seen, notifications, commands):
+        from omarchy_mcp import delta
+
+        delta.save_seen(seen, commands)
+        assert not entry._review(permissions_module.Permissions(), LOG)
+        assert notifications == []
+
+    def test_a_change_notifies_and_does_not_advance_the_snapshot(
+        self, seen, notifications, commands
+    ):
+        """Otherwise the next boot overwrites the snapshot and the evidence is
+        gone before anybody clicked."""
+        from omarchy_mcp import delta
+
+        before = frozenset(commands) - {"omarchy install app"}
+        seen.write_text(json.dumps({"routes": sorted(before)}))
+
+        review = entry._review(permissions_module.Permissions(), LOG)
+
+        assert review
+        assert len(notifications) == 1
+        assert delta.load_seen(seen) == before, "startup must never advance it"
+
+    def test_a_widened_rule_is_critical(self, seen, notifications, commands):
+        from omarchy_mcp.permissions import Effect, Permissions, Rule
+
+        before = frozenset(commands) - {"omarchy install app"}
+        seen.write_text(json.dumps({"routes": sorted(before)}))
+        perms = Permissions(
+            rules=(
+                Rule(
+                    effect=Effect.ALLOW,
+                    matcher="omarchy install *",
+                    source="permissions.json",
+                    index=0,
+                ),
+            )
+        )
+
+        entry._review(perms, LOG)
+        assert notifications[0][1]["urgency"] == "critical"
+
+    def test_new_guarded_routes_alone_are_not_critical(self, seen, notifications, commands):
+        """They ask anyway."""
+        before = frozenset(commands) - {"omarchy install app"}
+        seen.write_text(json.dumps({"routes": sorted(before)}))
+        entry._review(permissions_module.Permissions(), LOG)
+        assert notifications[0][1]["urgency"] == "normal"
+
+    def test_no_registry_is_not_a_reason_to_report_anything(self, seen, monkeypatch):
+        monkeypatch.setattr(
+            entry.registry,
+            "all_commands",
+            lambda: (_ for _ in ()).throw(entry.registry.RegistryError("no omarchy")),
+        )
+        assert not entry._review(permissions_module.Permissions(), LOG)
+        assert not seen.exists()
+
+
+class TestPrintReview:
+    @pytest.fixture
+    def seen(self, tmp_path, monkeypatch):
+        path = tmp_path / "registry-seen.json"
+        monkeypatch.setattr(entry, "REGISTRY_SEEN_FILE", path)
+        return path
+
+    def test_a_first_run_says_so(self, seen, permission_files, capsys):
+        assert entry._print_review(LOG) == 0
+        assert "No snapshot yet" in capsys.readouterr().out
+
+    def test_nothing_changed_says_so(self, seen, permission_files, commands, capsys):
+        from omarchy_mcp import delta
+
+        delta.save_seen(seen, commands)
+        assert entry._print_review(LOG) == 0
+        assert "Nothing has changed" in capsys.readouterr().out
+
+    def test_it_names_what_is_held_and_why(self, seen, permission_files, commands, capsys):
+        seen.write_text(json.dumps({"routes": sorted(set(commands) - {"omarchy install app"})}))
+        permission_files[0].write_text(doc(allow=["omarchy install *"]))
+
+        assert entry._print_review(LOG) == 0
+        out = capsys.readouterr().out
+        assert "Held at ask until acknowledged" in out
+        assert "omarchy install app" in out
+        assert "omarchy install *" in out
+
+    def test_json_carries_no_token(self, seen, permission_files, commands, capsys):
+        """It is read-only. Acknowledging is a separate action on a surface a
+        person is at."""
+        seen.write_text(json.dumps({"routes": sorted(set(commands) - {"omarchy install app"})}))
+        assert entry._print_review(LOG, as_json=True) == 0
+        body = json.loads(capsys.readouterr().out)
+        assert "token" not in body
+        assert body["arrivals"][0]["route"] == "omarchy install app"
+
+    def test_it_reads_nothing_it_cannot_read(self, seen, permission_files, capsys):
+        permission_files[0].write_text("{")
+        assert entry._print_review(LOG) == entry.EX_CONFIG
+        assert "cannot be read" in capsys.readouterr().out

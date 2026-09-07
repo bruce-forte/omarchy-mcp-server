@@ -96,6 +96,24 @@ def answered(marker: str, outcome: str) -> None:
     emit("answered", marker=marker, outcome=outcome)
 
 
+def review(token: str, headline: str, arrivals: int, widened: int, dead: int) -> None:
+    """Something changed under the rules and nobody has looked at it yet.
+
+    Counts and a headline; the panel asks the daemon for the rest. The token is
+    how the panel acknowledges, and it is published only here -- acknowledging is
+    silent by design, so an agent able to do it could clear its own review with
+    nothing on screen. `Service.qml` holds it in memory like a consent token.
+    """
+    emit(
+        "review",
+        token=token,
+        headline=headline,
+        arrivals=arrivals,
+        widened=widened,
+        dead=dead,
+    )
+
+
 def reloaded(tools: int, declared: int, config_ok: bool, permissions_ok: bool = True) -> None:
     """The config file was re-read.
 
