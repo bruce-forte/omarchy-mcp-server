@@ -12,9 +12,30 @@ the person, in every protocol era and for every client, and it puts the question
 on the desktop this project exists to drive rather than in a terminal the user
 may not be looking at.
 
-It has exactly one action (F25). So a click is *yes* and silence is *no*, which
-is the rule `consent.py` already fails closed on -- the surface and the rule
-agree by construction rather than by care.
+It has exactly one action (F25), and **that action is no longer the answer**.
+
+It used to be: a click ran the consent helper and meant *yes*. That was elegant
+-- click is yes, silence is no, the mechanism and the rule agreeing by
+construction -- and it was wrong in a way only a real desktop showed (F31).
+There is no button to look for, because `omarchy-notification-send` sends an
+empty actions array; a person told to "click to approve", seeing nothing that
+looks clickable, reasonably concludes there is nothing to click.
+
+So a click now **opens the panel**, and the answer is given there. Three things
+that buys, in the order they matter:
+
+- **A click is navigation, not consent.** Approving takes a deliberate press of
+  a labelled button. A reflexive click on a toast can no longer grant anything,
+  which is the same worry N14 exists for, closed at the source.
+- **All three answers are in one place.** The notification could only ever say
+  *yes*; *Always* and *Deny* live in the panel, and a user who never found the
+  panel had no way to stop being asked the same thing every time.
+- **The token never rides on a notification.** It reaches the shell on the
+  `asking` frame and comes back from the panel, so the one-time secret has one
+  path instead of two.
+
+Silence still refuses, unchanged. And if the panel cannot be summoned for any
+reason, the bar icon opens the same panel by hand -- the notification says so.
 
 The panel is the second surface, and it has room for the two answers a
 notification cannot carry: *yes, always* and *no*. It writes through the same
@@ -35,7 +56,7 @@ from pathlib import Path
 import anyio
 
 from . import execute
-from .paths import CONSENT_DIR, CONSENT_HELPER
+from .paths import CONSENT_DIR, PLUGIN_ID
 
 #: How often the parked call looks for a clicked token. Short enough that a
 #: click feels immediate, long enough that a minute of waiting is 240 stats
@@ -58,10 +79,19 @@ TOKEN_BYTES = 16
 #: else; **Always** and **Deny** live in the bar, and a user who never learns
 #: that has no way to stop being asked the same question every time.
 DESKTOP_HINT = (
-    "Click anywhere on this notification to approve it once.\n"
-    "The MCP server panel in the bar also has Always and Deny.\n"
+    "Click this notification to open the panel, where you can Allow once, "
+    "Always, or Deny.\n"
+    "The MCP server icon in the bar opens the same panel.\n"
     "Ignoring this refuses it."
 )
+
+#: What a click runs. `summon` rather than `toggle`: a second click on a
+#: notification that is still up must not close the panel the first one opened.
+#:
+#: It targets the *shell*, passing this plugin's id as an argument, so it is not
+#: an IPC call on this plugin's own target and `policy.self_refusal` has nothing
+#: to say about it. Opening a panel mutates nothing.
+SUMMON = ("omarchy-shell", "shell", "summon", PLUGIN_ID, "{}")
 
 #: A control character in an argument could add a line to the message a person
 #: reads before clicking. Arguments are model-supplied and may have been copied
@@ -180,10 +210,18 @@ def _clear(token: str) -> None:
 
 
 def send(headline: str, body: str, *, token: str | None = None) -> None:
-    """Raise the notification. `token` makes it clickable and therefore an ask."""
+    """Raise the notification.
+
+    A `token` means there is a question to put to somebody, so the toast is made
+    clickable -- and clicking it opens the panel rather than answering. The
+    token itself is **not** in this argv: it reaches the shell on the `asking`
+    frame and comes back through the helper when a button is pressed. A
+    one-time secret with one path is easier to reason about than one with two,
+    and `/proc/<pid>/cmdline` is world-readable.
+    """
     argv = ["omarchy", "notification", "send", "-u", "critical", headline, body]
     if token is not None:
-        argv += ["--exec", str(CONSENT_HELPER), "approve", token]
+        argv += ["--exec", *SUMMON]
     execute.run(argv, timeout_ms=5_000, max_output_b=4096)
 
 

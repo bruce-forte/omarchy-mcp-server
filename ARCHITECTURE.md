@@ -402,7 +402,9 @@ The question itself goes wherever it can reach a person. If the client declares
 elicitation *and* the transport can carry a server-initiated request, it goes
 there. Otherwise it becomes a critical notification whose `--exec` runs a helper
 when clicked, which writes a one-time token the parked call is watching for.
-That surface has exactly one action, so a click is *yes* and silence is *no* —
+That surface has exactly one action, and it is not the answer: clicking opens
+the panel, where Allow once, Always and Deny are labelled buttons. A click is
+navigation, so a reflexive press cannot grant anything, and silence is *no* —
 the mechanism and the rule agree by construction.
 
 Every tool is `async` for this reason, and every blocking call therefore has to

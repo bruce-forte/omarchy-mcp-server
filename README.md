@@ -67,12 +67,13 @@ without running anything, by you as much as by the agent.
 one policy, one configuration, and one place where approvals are decided,
 because there is one process holding all of it rather than one per client.
 
-**It can ask you, where you actually are.** A guarded command can raise a
-notification on your desktop naming what it would do and what it resolved to —
-the theme, the monitor, the file — and clicking it approves that one call.
-Ignoring it refuses. The question reaches you at the desktop rather than in
-whichever terminal the agent happens to be running in, because that is where you
-are. Off unless you turn it on.
+**It asks you, where you actually are.** A guarded command raises a notification
+on your desktop naming what it would do and what it resolved to — the theme, the
+monitor, the file. Clicking it opens a panel with **Allow once**, **Always** and
+**Deny**; ignoring it refuses. The question reaches you at the desktop rather
+than in whichever terminal the agent happens to be running in, because that is
+where you are. *Always* writes the decision down, so you are asked once rather
+than every time.
 
 ## What it does
 
@@ -374,20 +375,25 @@ naming the problem, the bar panel says so, and the panel's **Check permissions**
 button tells you when the fix is good. (An edit made while the server is running
 is gentler: a broken save leaves the rules it already had in force.)
 
-**Three answers, two surfaces.** The notification has no button — clicking
-anywhere on it approves the call once, and that is the only answer it can carry.
-The bar panel shows the same pending question with **Allow once**, **Always**
-and **Deny**. *Always* writes an `allow` rule for that
-exact command into `permissions.local.json` — never a wildcard, however many
-times you press it, because a click consents to what was on the screen. The
-notification is the other surface and carries a single action, so clicking it
-means *allow once*.
+A guarded route raises a critical notification naming the command and what it
+resolved to — the theme, the monitor, the path. **Clicking it opens the panel.**
+It does not approve anything: the notification has no buttons, and a click on a
+toast should not be able to grant a command.
 
-A guarded route raises a critical notification naming the command and what
-it resolved to — the theme, the monitor, the path — and **clicking it approves
-that one call**. Nothing else does. Dismissing it, ignoring it, and letting the
-deadline pass all refuse, because a prompt that granted on expiry would be
-granting to an empty room.
+**Three answers, one place.** The panel shows the pending question with:
+
+| | |
+|---|---|
+| **Allow once** | runs this call and changes nothing |
+| **Always** | runs it *and* writes an `allow` rule for that exact command to `permissions.local.json` — never a wildcard, however many times you press it, because you consented to what was on the screen |
+| **Deny** | refuses, unambiguously |
+
+The bar icon opens the same panel, so a notification that fails to summon it is
+not a dead end.
+
+Nothing else approves. Dismissing it, ignoring it, and letting the deadline pass
+all refuse, because a prompt that granted on expiry would be granting to an
+empty room.
 
 The agent is told which of those happened, because they mean different things:
 a refusal is worth respecting, and a silence is worth asking you about directly.

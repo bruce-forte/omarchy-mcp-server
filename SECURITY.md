@@ -88,7 +88,7 @@ confused agent cannot reboot your machine while trying to change your wallpaper.
 ### Approving a guarded command at the time
 
 A guarded route raises a critical desktop notification
-naming the command and the resolved target, and clicking it approves **that one
+naming the command and the resolved target. **Clicking it opens the panel**, where Allow once approves **that one
 call**. Two properties matter more than the convenience:
 
 **Every way of not answering refuses.** Declining, dismissing, the deadline

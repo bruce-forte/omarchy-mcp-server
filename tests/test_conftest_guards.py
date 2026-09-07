@@ -161,3 +161,16 @@ def test_every_written_path_is_pinned():
         "add these to conftest.WRITTEN_PATHS so the suite cannot write to the real "
         f"state directory: {missing}"
     )
+
+
+def test_the_notification_runs_a_summon_and_not_the_helper():
+    """A click opens the panel; only a button answers. If these two ever agree
+    again, a reflexive click on a toast grants something (F31)."""
+    from omarchy_mcp import prompt
+    from omarchy_mcp.paths import CONSENT_HELPER
+
+    assert str(CONSENT_HELPER) not in " ".join(prompt.SUMMON)
+    assert prompt.SUMMON[0] == "omarchy-shell"
+    # `summon`, not `toggle`: a second click must not close the panel the first
+    # one opened.
+    assert "toggle" not in prompt.SUMMON
