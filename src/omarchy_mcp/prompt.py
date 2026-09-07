@@ -45,6 +45,24 @@ POLL_INTERVAL_S = 0.25
 #: Enough to be unguessable, short enough to fit a filename and an argv.
 TOKEN_BYTES = 16
 
+#: What to do about the question, on the surface that carries it.
+#:
+#: "Click to approve" was the first wording and it was not enough. There is no
+#: button to look for: `omarchy notification send` passes an **empty actions
+#: array** and rides the click command in an `omarchy-exec-argv` hint, so the
+#: whole toast is the target (F25). A person told to click, seeing nothing that
+#: looks clickable, reasonably concludes there is nothing to click -- which is
+#: what happened the first time this was used on a real desktop (F31).
+#:
+#: It also has to name the panel. The notification can express *yes* and nothing
+#: else; **Always** and **Deny** live in the bar, and a user who never learns
+#: that has no way to stop being asked the same question every time.
+DESKTOP_HINT = (
+    "Click anywhere on this notification to approve it once.\n"
+    "The MCP server panel in the bar also has Always and Deny.\n"
+    "Ignoring this refuses it."
+)
+
 #: A control character in an argument could add a line to the message a person
 #: reads before clicking. Arguments are model-supplied and may have been copied
 #: off a hostile page, so they are flattened before they are shown.
@@ -189,7 +207,7 @@ async def pending(label: str, body: str, *, token: str | None, log, offload):
     """
     marker = f"(#{next(_counter)})"
     headline = f"Approval needed: {label} {marker}"
-    hint = "Click to approve. Ignoring this refuses it." if token else "Answer in your MCP client."
+    hint = DESKTOP_HINT if token else "Answer in your MCP client."
     if token is not None:
         await offload(_prepare_dir)
     await offload(send, headline, f"{body}\n\n{hint}" if body else hint, token=token)

@@ -950,3 +950,59 @@ class TestItStopsAskingEventually:
         )
         assert isinstance(decision, gate.Allowed)
         assert decision.consent is None
+
+
+class TestWhatTheNotificationTellsThePerson:
+    """There is no button to look for. `omarchy notification send` passes an
+    empty actions array and rides the click command in a hint, so the whole
+    toast is the target (F25) -- and a person told to "click", seeing nothing
+    that looks clickable, reasonably concludes there is nothing to click. That
+    happened the first time this was used on a real desktop (F31)."""
+
+    @pytest.mark.anyio
+    async def test_it_says_what_to_click(self, commands, quiet_notifications):
+        sent, _ = quiet_notifications
+        await gate.authorize(
+            guarded(commands), [], perms=asking(), ctx=Ctx(), log=LOG, offload=offload
+        )
+        body = sent[0]["body"]
+        assert "anywhere on this notification" in body, "'click' alone names no target"
+
+    @pytest.mark.anyio
+    async def test_it_names_the_surface_that_has_the_other_answers(
+        self, commands, quiet_notifications
+    ):
+        """The notification can express yes and nothing else. A user who never
+        learns where Always lives has no way to stop being asked every time."""
+        sent, _ = quiet_notifications
+        await gate.authorize(
+            guarded(commands), [], perms=asking(), ctx=Ctx(), log=LOG, offload=offload
+        )
+        body = sent[0]["body"]
+        assert "panel" in body
+        assert "Always" in body and "Deny" in body
+
+    @pytest.mark.anyio
+    async def test_it_still_says_that_silence_refuses(self, commands, quiet_notifications):
+        sent, _ = quiet_notifications
+        await gate.authorize(
+            guarded(commands), [], perms=asking(), ctx=Ctx(), log=LOG, offload=offload
+        )
+        assert "refuses it" in sent[0]["body"]
+
+    @pytest.mark.anyio
+    async def test_an_eliciting_client_is_not_told_to_click_a_desktop(
+        self, commands, quiet_notifications
+    ):
+        """It answers in its own UI; there is no token and nothing to click."""
+        sent, _ = quiet_notifications
+        ctx = Ctx(
+            can_send_request=True,
+            caps=Caps(Elicitation(form=object())),
+            reply=Reply("accept"),
+        )
+        await gate.authorize(
+            guarded(commands), [], perms=asking(), ctx=ctx, log=LOG, offload=offload
+        )
+        assert "notification" not in sent[0]["body"]
+        assert "MCP client" in sent[0]["body"]
