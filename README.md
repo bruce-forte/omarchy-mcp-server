@@ -287,8 +287,9 @@ rot when Omarchy adds commands:
 `omarchy_search_commands` reports the tier of every result, so an agent can see
 what it may do before trying.
 
-**An agent cannot switch this server off.** Its own IPC target answers `status`
-and `recent`; every other verb is refused, as is any command that would disable,
+**An agent cannot switch this server off.** Its own IPC target answers `status`,
+`recent`, `review`, `pending` and `permissions` — all read-only; every other verb
+is refused, as is any command that would disable,
 remove or replace this plugin. The refusal points at the bar panel, which is
 where you press Stop, Restart or Reload config. See [`SECURITY.md`](SECURITY.md).
 
@@ -353,6 +354,32 @@ Rules that stop matching anything — a route was renamed out from under one —
 accumulate rather than being tidied away behind your back. The panel lists them
 and offers **Prune**, which removes them from `permissions.local.json` only.
 `--review` prints the same list.
+
+### Seeing the rules, and taking one back
+
+The panel's **RULES** section lists every rule in force, grouped by the file it
+came from, with what each one covers and whether it is doing anything at all.
+Four things get flagged:
+
+| Flag | What it means |
+|------|---------------|
+| `error` | The rule asserts something that can never be honoured — granting a sudo route, say. The daemon refuses to start on one |
+| `void` | The matcher covers nothing on this Omarchy: a typo, or a route that was renamed |
+| `shadowed` | It never decides anything, because an earlier rule with a different effect already covers everything it matches. **You believe you granted this and you did not** |
+| `redundant` | The same, but the earlier rule agrees with it. Safe to remove |
+
+A shadowed or redundant rule names the rule that got there first, and which file
+that one is in, because the two fixes are *delete this* and *narrow that*.
+
+Grants written by answering **always** get a **Remove** button. It takes `allow`
+rules out of `permissions.local.json` and nothing else — never a `deny`, never
+an `ask`, and never anything from your own `permissions.json`. A restriction is
+a decision, and it is taken back the way it was written: in an editor, which
+each file's **Edit** button opens.
+
+From a terminal, `omarchy-mcpd --permissions` prints the same thing, and
+`omarchy-shell io.github.bruce-forte.mcp-server permissions` says how many rules
+need attention.
 
 Copy [`permissions.example.json`](permissions.example.json) to start, and check
 your edits before restarting anything:

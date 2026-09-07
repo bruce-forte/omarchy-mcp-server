@@ -123,6 +123,24 @@ Item {
   property bool   reviewLoading: false
   readonly property bool needsReview: reviewToken !== ""
 
+  // Every rule in force, with what each one covers and whether it is doing
+  // anything at all. Read from the CLI rather than from the daemon, so the
+  // panel can still show it -- and still open an editor on it -- when a
+  // defective document has stopped the daemon from starting at all.
+  //
+  // On the service rather than in the panel: a bar widget exists once per
+  // screen, and three monitors must not mean three registry reads.
+  property var    rules: ({})
+  property bool   rulesLoading: false
+  property bool   rulesRead: false
+
+  // What the panel removes a grant with. Held in memory like the others, and
+  // unlike the others it is not spent by a press: removing an `allow` rule
+  // narrows what an agent may do, so the capability cannot be used to widen
+  // anything, and four accumulated grants is four presses.
+  property string revokeToken: ""
+  readonly property bool canRemove: revokeToken !== ""
+
   // Dead rules the daemon could tidy out of its own file. Offered, never
   // notified about: a rule that matches nothing grants nothing, so this is
   // housekeeping rather than a warning. The token is held here for the same
@@ -138,6 +156,39 @@ Item {
     pruneToken = ""
     prunableRules = 0
     pruneProc.running = true
+    return true
+  }
+
+  function refreshRules() {
+    if (rulesProc.running)
+      return
+    rulesLoading = true
+    rulesProc.running = true
+  }
+
+  // Removing a grant. The effect travels with the matcher because a matcher
+  // alone does not name a rule: the same string can be in two lists, and only
+  // one of them is removable here.
+  function revoke(effect, matcher) {
+    if (revokeToken === "" || effect !== "allow" || !matcher)
+      return false
+    revokeProc.effect = effect
+    revokeProc.matcher = matcher
+    revokeProc.token = revokeToken
+    revokeProc.running = true
+    return true
+  }
+
+  // Opens one of the three files in the user's editor, through the daemon's
+  // own `--edit`, which seeds a permissions file that is not there yet. The
+  // template belongs beside the writer rather than here: business rules do not
+  // move into the UI layer, and a file written from QML would have no $schema
+  // line for an editor to validate against.
+  function editFile(which) {
+    if (["config", "local", "permissions"].indexOf(which) < 0)
+      return false
+    editProc.which = which
+    editProc.running = true
     return true
   }
 
@@ -387,6 +438,14 @@ Item {
             return
           }
 
+          // The token the panel removes grants with, republished unchanged on
+          // every start. Never written to the state file: that file is under
+          // $XDG_RUNTIME_DIR and the panel is in screenshots.
+          if (frame.state === "editable") {
+            root.revokeToken = frame.token || ""
+            return
+          }
+
           if (frame.state === "prunable") {
             root.pruneToken = frame.token || ""
             root.prunableRules = Number(frame.rules || 0)
@@ -410,6 +469,12 @@ Item {
             root.toolsDeclared = Number(frame.declared || 0)
             root.configOk = frame.config_ok !== false
             root.permissionsOk = frame.permissions_ok !== false
+            // Somebody saved a file. This is what makes pressing Edit, saving,
+            // and watching the flags update work without touching anything
+            // else: the question `checkPermissions` answers, answered by the
+            // rows themselves.
+            if (root.rulesRead)
+              root.refreshRules()
             return
           }
 
@@ -645,6 +710,34 @@ Item {
            + "  " + root.pluginDir + "bin/omarchy-mcpd --review"
     }
 
+    function permissions(): string {
+      // Read-only, like `review` and for the same reason: an agent can reach
+      // this target (N12), so a verb that removed a rule -- or added one --
+      // would let it edit its own permissions. Removing is the panel's and the
+      // helper's.
+      if (!root.rulesRead)
+        return "not read yet; open the bar panel, or run:\n"
+             + "  " + root.pluginDir + "bin/omarchy-mcpd --permissions"
+
+      const rows = (root.rules && root.rules.rules) || []
+      const levels = ["error", "void", "shadowed", "redundant"]
+      let flagged = []
+      for (let i = 0; i < rows.length; i++) {
+        for (let j = 0; j < levels.length; j++) {
+          if (rows[i][levels[j]] !== undefined) {
+            flagged.push(rows[i].effect + " '" + rows[i].matcher + "' — " + levels[j])
+            break
+          }
+        }
+      }
+      const head = rows.length + " rule" + (rows.length === 1 ? "" : "s") + " in force"
+      if (flagged.length === 0)
+        return head + "; none of them need attention"
+      return head + "; " + flagged.length + " need attention:\n  "
+           + flagged.join("\n  ") + "\nSee the bar panel, or run:\n"
+           + "  " + root.pluginDir + "bin/omarchy-mcpd --permissions"
+    }
+
     function pending(): string {
       // Read-only on purpose. An agent can reach this plugin's own target
       // (N12), so a verb that *answered* a question would let it approve its
@@ -727,6 +820,80 @@ Item {
       } catch (e) {
         console.warn("omarchy-mcp: could not parse the review:", e)
       }
+    }
+  }
+
+  // Every rule, and what each one covers. `--permissions --json` is the same
+  // derivation the resource and the terminal read, so the panel cannot drift
+  // from either -- and it is computed from the files rather than asked of the
+  // daemon, so it still answers when the daemon is refusing to start.
+  Process {
+    id: rulesProc
+    command: [root.pluginDir + "bin/omarchy-mcpd", "--permissions", "--json"]
+
+    stdout: StdioCollector {
+      id: rulesOut
+      waitForEnd: true
+    }
+
+    onExited: function (exitCode) {
+      root.rulesLoading = false
+      root.rulesRead = true
+      if (exitCode !== 0) {
+        // Exit 78 is a document that will not load, which the panel is already
+        // saying loudly a few lines up. There are no rows to show in that
+        // case, and the Edit buttons are the point.
+        root.rules = ({})
+        return
+      }
+      try {
+        root.rules = JSON.parse(rulesOut.text)
+      } catch (e) {
+        console.warn("omarchy-mcp: could not parse the rules:", e)
+        root.rules = ({})
+      }
+    }
+  }
+
+  // Removing a grant goes through the same helper as every other answer, so
+  // there is one writer of the consent directory and one place the vocabulary
+  // is defined.
+  Process {
+    id: revokeProc
+    property string token: ""
+    property string effect: ""
+    property string matcher: ""
+    command: [root.pluginDir + "bin/omarchy-mcp-consent", "revoke",
+      revokeProc.token, revokeProc.effect, revokeProc.matcher]
+
+    onExited: function (exitCode) {
+      if (exitCode !== 0)
+        console.warn("omarchy-mcp: could not remove the rule; helper exited", exitCode)
+      revokeProc.token = ""
+      revokeProc.effect = ""
+      revokeProc.matcher = ""
+      // `root.revokeToken` is deliberately untouched: it is minted per daemon
+      // rather than per press, so the next Remove works immediately.
+      //
+      // The daemon rewrites the file on its next poll and the `reloaded` frame
+      // brings these rows back then; this is the impatient path.
+      root.refreshRules()
+    }
+  }
+
+  // Opens a file in whatever editor this user has, and creates a permissions
+  // file that is not there yet. The daemon detaches the editor, so it outlives
+  // this process.
+  Process {
+    id: editProc
+    property string which: ""
+    command: [root.pluginDir + "bin/omarchy-mcpd", "--edit", editProc.which]
+
+    onExited: function (exitCode) {
+      if (exitCode !== 0)
+        console.warn("omarchy-mcp: could not open an editor; exited", exitCode)
+      editProc.which = ""
+      root.refreshRules()
     }
   }
 
