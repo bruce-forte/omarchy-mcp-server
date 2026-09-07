@@ -85,6 +85,19 @@ def quiet_notifications(monkeypatch):
     return sent, dismissed
 
 
+@pytest.fixture(autouse=True)
+def _fresh_cooldowns(monkeypatch):
+    """Each test gets a daemon that has not asked anybody anything yet.
+
+    `gate._cooldowns` is module-level, like `_pending`, because it is a property
+    of this daemon and this desktop rather than of a session. That makes it
+    shared between tests, and most of this file asks about one route repeatedly.
+    """
+    from omarchy_mcp import cooldown
+
+    monkeypatch.setattr(gate, "_cooldowns", cooldown.Cooldowns())
+
+
 @pytest.fixture
 def consent_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(prompt, "CONSENT_DIR", tmp_path / "consent")
@@ -798,3 +811,142 @@ class TestThePanelIsToldWhatIsAsked:
             guarded(commands), [], perms=asking(), ctx=ctx, log=LOG, offload=offload
         )
         assert emitted == []
+
+
+class TestItStopsAskingEventually:
+    """A reflexive click is not consent, so a question that has been put enough
+    times is not put again."""
+
+    def _ctx(self, action):
+        return Ctx(
+            can_send_request=True,
+            caps=Caps(Elicitation(form=object())),
+            reply=Reply(action) if action else None,
+        )
+
+    @pytest.mark.anyio
+    async def test_a_refused_route_is_not_asked_about_twice(
+        self, commands, quiet_notifications
+    ):
+        sent, _ = quiet_notifications
+        cmd = guarded(commands)
+
+        first = await gate.authorize(
+            cmd, [], perms=asking(), ctx=self._ctx("decline"), log=LOG, offload=offload
+        )
+        assert isinstance(first, gate.Refused)
+        assert first.outcome == "declined"
+        raised = len(sent)
+
+        second = await gate.authorize(
+            cmd, [], perms=asking(), ctx=self._ctx("accept"), log=LOG, offload=offload
+        )
+        assert isinstance(second, gate.Refused)
+        assert second.outcome == "not_asked_again"
+        assert len(sent) == raised, "no second notification reached the desktop"
+
+    @pytest.mark.anyio
+    async def test_nothing_is_resolved_or_spawned_for_a_suppressed_call(
+        self, commands, quiet_notifications, monkeypatch
+    ):
+        """It costs no subprocess and none of the user's attention."""
+        cmd = commands["omarchy theme remove"]
+        await gate.authorize(
+            cmd, ["Tokyo Night"], perms=asking(), ctx=self._ctx("decline"),
+            log=LOG, offload=offload,
+        )
+
+        monkeypatch.setattr(
+            gate.resolve, "resolve_call", lambda *a: pytest.fail("resolved a suppressed call")
+        )
+        decision = await gate.authorize(
+            cmd, ["Tokyo Night"], perms=asking(), ctx=self._ctx("accept"),
+            log=LOG, offload=offload,
+        )
+        assert isinstance(decision, gate.Refused)
+
+    @pytest.mark.anyio
+    async def test_an_accepted_route_may_be_asked_about_again(
+        self, commands, quiet_notifications
+    ):
+        """Otherwise saying yes once would cost the next legitimate question."""
+        cmd = guarded(commands)
+        first = await gate.authorize(
+            cmd, [], perms=asking(), ctx=self._ctx("accept"), log=LOG, offload=offload
+        )
+        assert isinstance(first, gate.Allowed)
+
+        second = await gate.authorize(
+            cmd, [], perms=asking(), ctx=self._ctx("accept"), log=LOG, offload=offload
+        )
+        assert isinstance(second, gate.Allowed)
+
+    @pytest.mark.anyio
+    async def test_another_route_is_unaffected(self, commands, quiet_notifications):
+        await gate.authorize(
+            guarded(commands), [], perms=asking(), ctx=self._ctx("decline"),
+            log=LOG, offload=offload,
+        )
+        decision = await gate.authorize(
+            commands["omarchy system reboot"], [], perms=asking(),
+            ctx=self._ctx("accept"), log=LOG, offload=offload,
+        )
+        assert isinstance(decision, gate.Allowed)
+
+    @pytest.mark.anyio
+    async def test_a_timeout_counts_as_a_no(self, commands, quiet_notifications):
+        """Re-asking an empty room is the purest form of nagging."""
+        cmd = guarded(commands)
+        first = await gate.authorize(
+            cmd, [], perms=asking(), ctx=Ctx(), log=LOG, offload=offload
+        )
+        assert first.outcome == "timed_out"
+
+        second = await gate.authorize(
+            cmd, [], perms=asking(), ctx=self._ctx("accept"), log=LOG, offload=offload
+        )
+        assert second.outcome == "not_asked_again"
+
+    @pytest.mark.anyio
+    async def test_a_stream_of_yeses_still_stops(self, commands, quiet_notifications):
+        """The case a decline-keyed rule cannot see: every prompt approved, and
+        the user habituated exactly as thoroughly."""
+        from omarchy_mcp.cooldown import BURST_LIMIT
+
+        routes = [
+            c.route
+            for c in commands.values()
+            if base_tier(c) is Tier.GUARDED and c.route not in ("omarchy update lock",)
+        ][: BURST_LIMIT + 1]
+        assert len(routes) > BURST_LIMIT, "the fixture must hold enough guarded routes"
+
+        outcomes = []
+        for route in routes:
+            decision = await gate.authorize(
+                commands[route], [], perms=asking(), ctx=self._ctx("accept"),
+                log=LOG, offload=offload,
+            )
+            outcomes.append(
+                decision.outcome if isinstance(decision, gate.Refused) else "allowed"
+            )
+
+        assert outcomes[:BURST_LIMIT] == ["allowed"] * BURST_LIMIT
+        assert outcomes[BURST_LIMIT] == "not_asked_again"
+
+    @pytest.mark.anyio
+    async def test_an_allowed_route_never_meets_any_of_this(
+        self, commands, quiet_notifications
+    ):
+        """The guard is on *asking*. A rule that already says yes asks nobody,
+        so it cannot be suppressed by how much asking has gone on."""
+        from omarchy_mcp.cooldown import BURST_LIMIT
+
+        for i in range(BURST_LIMIT + 2):
+            gate._cooldowns.asked(f"omarchy filler {i}")
+
+        cmd = guarded(commands)
+        decision = await gate.authorize(
+            cmd, [], perms=allowing(cmd.route), ctx=self._ctx(None), log=LOG, offload=offload
+        )
+        assert isinstance(decision, gate.Allowed)
+        assert decision.consent is None

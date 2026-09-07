@@ -60,6 +60,14 @@ Item {
   // the daemon keeps the document it had and only this goes false.
   property bool   permissionsOk: true
 
+  // How much asking the daemon is currently declining to do, from /health.
+  // A guarded call refused with no prompt and no explanation is the failure
+  // mode N14 exists to avoid, so the panel says why.
+  property bool   askingSuppressed: false
+  property int    recentPrompts: 0
+  property int    promptLimit: 0
+  property var    coolingRoutes: []
+
   property bool   wantRunning: true
   property int    failures: 0
 
@@ -524,6 +532,11 @@ Item {
         root.lastTool = String(body.last_tool || "")
         root.tools = Number(body.tools || 0)
         root.toolsDeclared = Number(body.tools_declared || 0)
+        var asking = body.asking || {}
+        root.askingSuppressed = asking.suppressed === true
+        root.recentPrompts = Number(asking.recentPrompts || 0)
+        root.promptLimit = Number(asking.promptLimit || 0)
+        root.coolingRoutes = asking.cooling || []
         if (root.serving)
           root.failures = 0
       } catch (e) {

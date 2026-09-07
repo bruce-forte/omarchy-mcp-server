@@ -22,6 +22,9 @@ Three rules this must never lose:
 - **Only an accept runs anything.** Every other way of leaving the question --
   decline, dismissal, deadline, a client that cannot ask, a client that went
   away -- refuses.
+- **A question that has been put enough times is not put again.** A reflexive
+  click is not consent, so `cooldown.py` refuses before a prompt is assembled --
+  see the `not_asked_again` outcome.
 """
 
 from __future__ import annotations
@@ -30,7 +33,7 @@ from dataclasses import dataclass
 
 from pydantic import BaseModel
 
-from . import activity, consent, frames, permissions, prompt, registry, resolve
+from . import activity, consent, cooldown, frames, permissions, prompt, registry, resolve
 from .paths import PERMISSIONS_LOCAL_FILE
 from .permissions import Effect, Outcome, Permissions, decide
 from .policy import Tier, self_refusal
@@ -87,6 +90,13 @@ def can_elicit(ctx) -> bool:
     return consent.supports_asking(getattr(ctx, "client_capabilities", None))
 
 
+#: How much asking the user will put up with. Module-level for the same reason
+#: `_pending` is: it is a property of this daemon and this desktop, not of a
+#: session -- two attached clients nagging about the same route are one person
+#: being nagged. See `cooldown.py`.
+_cooldowns = cooldown.Cooldowns()
+
+
 #: One question at a time per client session: ``id(session) -> session``.
 #:
 #: An agent issues tool calls in parallel, so a batch of five guarded calls
@@ -98,6 +108,17 @@ def can_elicit(ctx) -> bool:
 #: The session object is the value, not just the key, so it cannot be collected
 #: and have its `id` handed to something else while a question is still open.
 _pending: dict[int, object] = {}
+
+
+def cooldown_state() -> dict:
+    """What the daemon is currently declining to ask about, for `/health`.
+
+    Read-only and deliberately not clearable from anywhere: clearing would
+    *widen* -- it lets the asking start again -- and a control that widens needs
+    the same token dance as everything else here, for a mechanism that expires
+    on its own within minutes. Showing it is the part that matters.
+    """
+    return _cooldowns.state()
 
 
 async def authorize(
@@ -133,6 +154,15 @@ async def authorize(
         # Every blocked route, every route a `deny` rule covers, and every
         # guarded one under `guardedDefault: "deny"`.
         return Refused(outcome.reason, outcome.tier.value)
+
+    # Before the resolver and before the notification: a suppressed call must
+    # cost neither a subprocess nor any of the user's attention. `askable` is
+    # not the question here -- this route *would* be asked about, and the point
+    # is that it has been asked about enough already.
+    quiet = _cooldowns.refusal(cmd.route)
+    if quiet is not None:
+        log.info("not asking again route=%r", cmd.route)
+        return Refused(quiet, outcome.tier.value, outcome="not_asked_again")
 
     # Resolution comes *before* the question, and only on this path. A prompt
     # reading "set theme Tokyo Night" is consent; one reading "run omarchy theme
@@ -231,6 +261,7 @@ async def _ask(cmd, call, *, perms, ctx, log, offload) -> consent.Answer:
                 if elicits
                 else (lambda: prompt.desktop_ask(token))
             )
+            _cooldowns.asked(cmd.route)
             answer = await consent.ask(
                 asker,
                 what=label,
@@ -238,6 +269,10 @@ async def _ask(cmd, call, *, perms, ctx, log, offload) -> consent.Answer:
                 clicked=not elicits,
                 log=log,
             )
+            # Every way of not accepting counts. `consent.py` already treats
+            # them all as no, and re-asking an empty room is the purest form of
+            # the thing this guards against.
+            _cooldowns.answered(cmd.route, accepted=answer.accepted)
             if token is not None:
                 # A bar surface exists once per screen. Whichever panel answered
                 # spent the token; this is what takes the question off the

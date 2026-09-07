@@ -87,6 +87,8 @@ Panel {
   readonly property bool   needsReview: service ? service.needsReview : false
   readonly property string reviewHeadline: service ? service.reviewHeadline : ""
   readonly property var    review: service ? service.review : ({})
+  readonly property bool   askingSuppressed: service ? service.askingSuppressed : false
+  readonly property var    coolingRoutes: service ? service.coolingRoutes : []
   readonly property bool   canPrune: service ? service.canPrune : false
   readonly property int    prunableRules: service ? service.prunableRules : 0
 
@@ -496,6 +498,48 @@ Panel {
           color: root.permissionsCheckOk ? Qt.darker(Color.foreground, 1.4) : Color.urgent
           font.family: Style.font.family
           font.pixelSize: Style.font.bodySmall
+        }
+
+        // Why a guarded call may be refused without anybody being asked. Not a
+        // control: this expires on its own within minutes, and a button to
+        // clear it would be a control that *widens*, which needs the same token
+        // dance as everything else that does. Showing it is the point.
+        Column {
+          width: parent.width
+          spacing: 2
+          visible: root.askingSuppressed || root.coolingRoutes.length > 0
+
+          PanelSeparator { width: parent.width }
+
+          PanelSectionHeader { text: "NOT ASKING" }
+
+          Text {
+            width: parent.width
+            wrapMode: Text.WordWrap
+            visible: root.askingSuppressed
+            text: root.recentPrompts + " approval prompts recently, which is enough "
+                + "that the next would be answered out of habit. No more are being "
+                + "raised for now. Allow the command once instead of approving it "
+                + "every time."
+            color: Color.urgent
+            font.family: Style.font.family
+            font.pixelSize: Style.font.bodySmall
+          }
+
+          Repeater {
+            model: root.coolingRoutes
+
+            Text {
+              width: column.width
+              wrapMode: Text.WordWrap
+              text: "· " + modelData.route + " — answered no "
+                  + modelData.refusals + "×, not asking again for "
+                  + Math.max(1, Math.round(modelData.secondsLeft / 60)) + " min"
+              color: Qt.darker(Color.foreground, 1.4)
+              font.family: Style.font.family
+              font.pixelSize: Style.font.bodySmall
+            }
+          }
         }
 
         // Dead rules, offered for tidying. Its own block rather than part of

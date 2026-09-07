@@ -73,6 +73,9 @@ the existing tests are the specification:
 - A foreign `Origin` gets 403, a foreign `Host` gets 421.
 - Nothing is asked about that must not be: `blocked` and a `deny` rule are
   refused before a question exists. Only an accept runs anything.
+- A question put enough times is not put again. `cooldown.py` refuses before a
+  prompt is assembled, so a suppressed call costs no notification and no
+  resolver. It is in memory on purpose: a nag-guard is not a permission.
 - A consent token is both the filename and the contents, and is never given to
   the model. A file that merely exists is not a click.
 - An agent cannot switch off its own supervision. `policy.self_refusal` reads a

@@ -12,7 +12,7 @@ from mcp.server.subscriptions import InMemorySubscriptionBus, ToolsListChanged
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.responses import JSONResponse
 
-from . import __version__, frames
+from . import __version__, frames, gate
 from .auth import BearerAuth
 from .clients import Clients
 from .config import Config
@@ -207,6 +207,11 @@ def build(
                 # the thing that heals a `reloaded` frame the shell missed.
                 "tools": len(catalogue.present),
                 "tools_declared": len(catalogue.declared),
+                # Why a guarded call might be refused without anybody being
+                # asked. Carried here rather than on a frame because it changes
+                # continuously and the bar already polls this; a call refused
+                # with no explanation is the failure mode N14 exists to avoid.
+                "asking": gate.cooldown_state(),
                 **stats.snapshot(),
             }
         )
