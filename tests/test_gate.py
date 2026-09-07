@@ -960,13 +960,38 @@ class TestWhatTheNotificationTellsThePerson:
     happened the first time this was used on a real desktop (F31)."""
 
     @pytest.mark.anyio
-    async def test_it_says_what_to_click(self, commands, quiet_notifications):
+    async def test_it_says_what_clicking_does(self, commands, quiet_notifications):
+        """And what it does is open the panel, not approve. A click on a toast
+        must not be able to grant anything."""
         sent, _ = quiet_notifications
         await gate.authorize(
             guarded(commands), [], perms=asking(), ctx=Ctx(), log=LOG, offload=offload
         )
         body = sent[0]["body"]
-        assert "anywhere on this notification" in body, "'click' alone names no target"
+        assert "open the panel" in body
+        assert "bar opens the same panel" in body, "summoning can fail; say the other way in"
+
+    @pytest.mark.anyio
+    async def test_clicking_the_notification_cannot_approve_anything(
+        self, commands, quiet_notifications, consent_dir
+    ):
+        """The whole point of the change. What `--exec` runs opens a panel, and
+        the token is not in that argv at all -- it reaches the shell on a frame
+        and comes back from a button."""
+        from omarchy_mcp import prompt
+
+        sent, _ = quiet_notifications
+        await gate.authorize(
+            guarded(commands), [], perms=asking(), ctx=Ctx(), log=LOG, offload=offload
+        )
+        token = sent[0]["token"]
+        assert token, "there is still a question, so there is still a token"
+
+        argv = ["omarchy", "notification", "send", "-u", "critical", "h", "b", "--exec"]
+        argv += list(prompt.SUMMON)
+        assert token not in argv, "the one-time secret has one path, not two"
+        assert "summon" in prompt.SUMMON
+        assert "approve" not in prompt.SUMMON
 
     @pytest.mark.anyio
     async def test_it_names_the_surface_that_has_the_other_answers(

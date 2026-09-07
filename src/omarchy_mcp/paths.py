@@ -64,7 +64,12 @@ CONSENT_DIR = RUNTIME_DIR / PLUGIN_ID / "consent"
 #: a checkout and an installed copy both find their own helper.
 PLUGIN_DIR = Path(__file__).resolve().parents[2]
 
-#: Run by a notification's --exec when the user clicks it.
+#: The one writer of an answer. Run by the bar panel, not by the notification:
+#: a click on a toast opens the panel rather than answering, so that approving
+#: is a deliberate press of a labelled button. See `prompt.py` and F31.
+#:
+#: Kept as a path because the panel resolves it against the plugin directory,
+#: and because a checkout and an installed copy must each find their own.
 CONSENT_HELPER = PLUGIN_DIR / "bin" / "omarchy-mcp-consent"
 
 #: Read by BarWidget.qml. Written by Service.qml, not by the daemon: only
