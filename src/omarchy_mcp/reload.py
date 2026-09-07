@@ -59,6 +59,7 @@ import anyio
 import anyio.to_thread
 
 from . import (
+    activity,
     config as config_module,
     delta as delta_module,
     notify,
@@ -66,7 +67,7 @@ from . import (
     registry,
 )
 from .config import Config
-from .paths import CONFIG_FILE, PERMISSIONS_FILES, REGISTRY_SEEN_FILE
+from .paths import CONFIG_FILE, PERMISSIONS_FILES, PERMISSIONS_LOCAL_FILE, REGISTRY_SEEN_FILE
 from .permissions import Permissions, PermissionsError
 from .prompt import CONSENT_DIR
 from .settings import Settings
@@ -108,6 +109,8 @@ class Reloaded:
     #: Somebody pressed Acknowledge, so the snapshot advanced and the quarantine
     #: cleared. The one thing that moves `registry-seen.json`.
     acknowledged: bool = False
+    #: Somebody pressed Prune, and this many dead rules left the daemon's file.
+    pruned: int = 0
 
     def __bool__(self) -> bool:
         return (
@@ -115,6 +118,7 @@ class Reloaded:
             or self.policy_changed
             or self.permissions_changed
             or self.acknowledged
+            or bool(self.pruned)
         )
 
 
@@ -132,6 +136,7 @@ class Reloader:
         permission_paths: tuple[Path, ...] = PERMISSIONS_FILES,
         seen_path: Path = REGISTRY_SEEN_FILE,
         consent_dir: Path = CONSENT_DIR,
+        local_path: Path = PERMISSIONS_LOCAL_FILE,
         review: object | None = None,
         on_change: Callable[[Reloaded], None] | None = None,
         announce: Callable[[], Awaitable[None]] | None = None,
@@ -158,6 +163,8 @@ class Reloader:
         self._seen_path = seen_path
         self._consent_dir = consent_dir
         self._review = review if review is not None else delta_module.Review()
+        self._local_path = local_path
+        self._prune_token = ""
 
     # -- reading -------------------------------------------------------------
 
@@ -236,6 +243,57 @@ class Reloader:
         self._log.info("permissions review acknowledged; snapshot advanced")
         return True
 
+    @property
+    def prune_token(self) -> str:
+        return self._prune_token
+
+    def offer_prune(self, token: str) -> None:
+        """Publish a token for the dead rules the panel may tidy away."""
+        self._prune_token = token
+
+    def _poll_prune(self) -> int:
+        """Whether somebody pressed Prune, and how many rules went.
+
+        Same protection as acknowledging, for a narrower reason. Pruning cannot
+        widen anything -- a dead rule grants nothing, because it matches nothing
+        -- but it can erase evidence: a `deny` somebody hand-added to this file
+        and that has stopped matching is a protection that quietly failed, and
+        tidying it away without being seen is the wrong order.
+        """
+        if not self._prune_token:
+            return 0
+        marker = self._consent_dir / f"prune-{self._prune_token}"
+        try:
+            body = marker.read_text().strip()
+        except OSError:
+            return 0
+        try:
+            marker.unlink()
+        except OSError:
+            pass
+        if body != self._prune_token:
+            return 0
+
+        try:
+            commands = registry.all_commands()
+        except registry.RegistryError as exc:
+            self._log.warning("cannot prune without a registry: %s", exc)
+            return 0
+
+        try:
+            gone = permissions_module.prune(self._local_path, commands)
+        except permissions_module.PermissionsError as exc:
+            self._log.error("cannot prune a file that does not load: %s", exc)
+            return 0
+
+        self._prune_token = ""
+        for rule in gone:
+            self._log.info("pruned %r from %s", rule.matcher, self._local_path.name)
+            activity.note(
+                "permission", verb="prune", route=rule.matcher, via="panel"
+            )
+        return len(gone)
+
     def recompute_review(self) -> None:
         """Read the delta again, because the rules or the registry moved.
 
@@ -260,6 +318,7 @@ class Reloader:
         result = self._poll_config()
         permissions = self._poll_permissions()
         acknowledged = self._poll_acknowledgement()
+        pruned = self._poll_prune()
 
         if permissions is not None and permissions[0]:
             # A new rule can quarantine or release routes, so the delta is read
@@ -273,9 +332,9 @@ class Reloader:
                 base, permissions_changed=changed, permissions_rejected=rejected
             )
 
-        if acknowledged:
+        if acknowledged or pruned:
             base = result if result is not None else Reloaded(config=self._settings.current)
-            result = replace(base, acknowledged=True)
+            result = replace(base, acknowledged=acknowledged, pruned=pruned)
 
         if result is not None and self._on_change is not None:
             self._on_change(result)

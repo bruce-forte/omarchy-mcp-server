@@ -78,6 +78,7 @@ def build(
     stats: Stats | None = None,
     reload_from: Path | None = None,
     review: object | None = None,
+    prune_token: str = "",
 ):
     """Build the ASGI application for the MCP server.
 
@@ -189,6 +190,8 @@ def build(
             on_change=note,
             review=review,
         )
+        if prune_token:
+            reloader.offer_prune(prune_token)
 
     @mcp.custom_route("/health", methods=["GET"])
     async def health(_request):

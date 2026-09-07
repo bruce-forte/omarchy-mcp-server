@@ -8,6 +8,7 @@
 #   always      <token>   the bar panel's Always button
 #   deny        <token>   the bar panel's Deny button
 #   acknowledge <token>   the bar panel's Acknowledge button, for a review
+#   prune       <token>   the bar panel's Prune button, for dead rules
 #
 # `acknowledge` answers a different question -- "I have seen what changed" rather
 # than "yes, run this" -- but it travels the same way and for the same reason.
@@ -36,7 +37,7 @@ PLUGIN_ID="io.github.bruce-forte.mcp-server"
 CONSENT_DIR="${XDG_RUNTIME_DIR:-/tmp}/$PLUGIN_ID/consent"
 
 usage() {
-  echo "usage: omarchy-mcp-consent {approve|always|deny|acknowledge} <token>" >&2
+  echo "usage: omarchy-mcp-consent {approve|always|deny|acknowledge|prune} <token>" >&2
   exit 2
 }
 
@@ -51,7 +52,12 @@ case "$1" in
   deny)    verb=" deny" ;;
   # Not an answer to a prompt, so it lands under its own name rather than in a
   # pending call's file. The daemon looks for it on its poll.
-  acknowledge) verb=""; ack=1 ;;
+  acknowledge) verb=""; marker="ack" ;;
+  # Pruning removes rules that grant nothing -- they match no command -- so it
+  # cannot widen what an agent may do. It can still erase evidence: a dead
+  # `deny` somebody hand-added to this file is a protection that stopped
+  # working, and that is worth seeing before it is tidied away.
+  prune)       verb=""; marker="prune" ;;
   *)       usage ;;
 esac
 
@@ -69,8 +75,8 @@ token="$2"
 # as long as it sits there, and the daemon deletes it as soon as it reads it.
 umask 077
 mkdir -p "$CONSENT_DIR"
-if [[ ${ack:-0} -eq 1 ]]; then
-  printf '%s' "$token" >"$CONSENT_DIR/ack-$token"
+if [[ -n ${marker:-} ]]; then
+  printf '%s' "$token" >"$CONSENT_DIR/$marker-$token"
 else
   printf '%s%s' "$token" "$verb" >"$CONSENT_DIR/$token"
 fi

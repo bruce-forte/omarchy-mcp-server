@@ -46,12 +46,12 @@ reasons matter more than the choices when something needs revisiting.
       unlock what `run` structurally cannot do. Then Tier 2 (9).
 - [x] **4 — Resources.** Done. The 7 from decision 10, shaped by what Phase 0 found.
 - [x] **5 — Hardening.** Done. Generated `TOOLS.md`, CI, `SECURITY.md`.
-- [x] **6 — Consent and visibility.** Done, N1–N12. The user can see what an
+- [x] **6 — Consent and visibility.** Done, N1–N13. The user can see what an
       agent did, answer for the calls that warrant it, decide once and have it
-      written down, be told what an update changed under those decisions, and
-      stop the thing. N10 grew into the phase's largest item — five commits and
-      its own permissions document. N13 and N14 came out of it and are
-      deliberately not part of it. See [Next steps](#next-steps).
+      written down, be told what an update changed under those decisions, tidy
+      up after it, and stop the thing. N10 grew into the phase's largest item —
+      five commits and its own permissions document. N13 and N14 came out of it;
+      N14 is the one left. See [Next steps](#next-steps).
 
 Tests are not a phase. `policy.py` and the auth checks are tested in the phase
 that creates them — they are the security boundary, and tests retrofitted to a
@@ -59,7 +59,7 @@ security boundary only assert whatever the code already does.
 
 ## Next steps
 
-Phase 6 in detail, and **it is finished**: N1–N12 are done, and N13 and N14 are
+Phase 6 in detail. N1–N13 are done; **N14 is the only item left**, and it is
 what came out of N10 without being part of it. The theme was that the person the
 daemon acts on behalf of could not see what it did, could not answer for a call
 in flight, and could not stop it without a terminal. Decision 12 covers *daemon*
@@ -1634,16 +1634,44 @@ line — the tier exists for exactly this — but it means the protection agains
 hostile plugin code is a person reading a prompt, and N4's prompt is what they
 read. `policy.deny` is the way to take it off the table entirely.
 
-### N13 — Prune dead rules from the panel
+### N13 — Prune dead rules from the panel — done
 
 Came out of N10, which deliberately never prunes: a rule whose route vanished is
 the delta's evidence, and a daemon that quietly edits a file is one the user
-cannot reason about.
+cannot reason about. This is the other half — user-initiated, after being shown
+exactly what would go.
 
-But dead rules accumulate, and the explainer will list them forever. A
-user-initiated prune belongs in the panel, next to the delta: show exactly what
-would be removed, remove it on a click, record it as a `permission` event.
-`permissions.local.json` only — the user's own file is theirs to edit.
+`permissions.prunable` lists the rules in `permissions.local.json` that match no
+command this Omarchy ships; `permissions.prune` removes them and returns what
+went. The panel shows them, one line each, above a **Prune** button, and
+`omarchy-mcpd --review` prints the same list.
+
+**`permissions.local.json` only.** The user's own file is theirs to edit, and a
+daemon that tidied it would be rewriting a tracked file nobody asked it to
+touch.
+
+**It travels the consent channel**, like acknowledging, for a narrower reason
+worth stating. Pruning cannot widen anything: a dead rule grants nothing,
+because it matches nothing. It can still *erase evidence* — a `deny` somebody
+hand-added to that file and that has stopped matching is a protection that
+quietly failed, and tidying it away unseen is the wrong order. So the daemon
+mints a token, publishes it only on the frame the shell reads, and takes the
+offer once.
+
+Prunable is its own frame rather than a field on `review`, because the two are
+different sets with different lifetimes: a rule can be prunable without ever
+having appeared in a review, having already been dead when the snapshot was
+taken. It is offered and never notified about — housekeeping, not a warning.
+
+#### Watch for
+
+Building this found that **`PERMISSIONS_LOCAL_FILE` was not pinned in the test
+suite**. It is in the *config* directory rather than the state one, and the
+guard `test_every_written_path_is_pinned` only knew about state paths — so a
+test could have written to the user's real `~/.config/omarchy/mcp/`. The guard
+now covers it, and the rule it encodes is stated properly: what matters is that
+the daemon writes the path, not where the path lives. Third instance of the same
+class; see F29 and F30's neighbours.
 
 ### N14 — Anti-habituation for the approval prompt
 

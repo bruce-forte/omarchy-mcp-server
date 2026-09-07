@@ -115,8 +115,26 @@ Item {
   property bool   reviewLoading: false
   readonly property bool needsReview: reviewToken !== ""
 
+  // Dead rules the daemon could tidy out of its own file. Offered, never
+  // notified about: a rule that matches nothing grants nothing, so this is
+  // housekeeping rather than a warning. The token is held here for the same
+  // reason the others are.
+  property string pruneToken: ""
+  property int    prunableRules: 0
+  readonly property bool canPrune: pruneToken !== ""
+
+  function prune() {
+    if (pruneToken === "")
+      return false
+    pruneProc.token = pruneToken
+    pruneToken = ""
+    prunableRules = 0
+    pruneProc.running = true
+    return true
+  }
+
   function refreshReview() {
-    if (reviewProc.running || !root.needsReview)
+    if (reviewProc.running || (!root.needsReview && !root.canPrune))
       return
     reviewLoading = true
     reviewProc.running = true
@@ -358,6 +376,12 @@ Item {
           if (frame.state === "answered") {
             if (frame.marker === root.pendingMarker || root.pendingMarker === "")
               root.clearPending()
+            return
+          }
+
+          if (frame.state === "prunable") {
+            root.pruneToken = frame.token || ""
+            root.prunableRules = Number(frame.rules || 0)
             return
           }
 
@@ -690,6 +714,20 @@ Item {
       } catch (e) {
         console.warn("omarchy-mcp: could not parse the review:", e)
       }
+    }
+  }
+
+  Process {
+    id: pruneProc
+    property string token: ""
+    command: [root.pluginDir + "bin/omarchy-mcp-consent", "prune", pruneProc.token]
+
+    onExited: function (exitCode) {
+      if (exitCode !== 0)
+        console.warn("omarchy-mcp: could not prune; helper exited", exitCode)
+      pruneProc.token = ""
+      // The rows are stale either way once the file has been rewritten.
+      root.refreshReview()
     }
   }
 

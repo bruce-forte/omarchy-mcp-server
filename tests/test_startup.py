@@ -46,6 +46,7 @@ def permission_files(tmp_path, monkeypatch):
     paths = (tmp_path / "permissions.json", tmp_path / "permissions.local.json")
     monkeypatch.setattr(entry, "PERMISSIONS_FILES", paths)
     monkeypatch.setattr(entry, "PERMISSIONS_FILE", paths[0])
+    monkeypatch.setattr(entry, "PERMISSIONS_LOCAL_FILE", paths[1])
     return paths
 
 
@@ -380,3 +381,48 @@ class TestPrintReview:
         permission_files[0].write_text("{")
         assert entry._print_review(LOG) == entry.EX_CONFIG
         assert "cannot be read" in capsys.readouterr().out
+
+
+class TestPrunableAtStartup:
+    @pytest.fixture
+    def local(self, permission_files):
+        return permission_files[1]
+
+    def test_dead_rules_are_found(self, local, commands):
+        local.write_text(doc(allow=["omarchy gone away"]))
+        assert [r.matcher for r in entry._prunable(LOG)] == ["omarchy gone away"]
+
+    def test_a_clean_file_offers_nothing(self, local):
+        local.write_text(doc(allow=["omarchy install *"]))
+        assert entry._prunable(LOG) == ()
+
+    def test_it_is_never_notified_about(self, local, notifications, seen_baseline):
+        """Housekeeping, not a warning: a rule that matches nothing grants
+        nothing. It is offered in the panel and nowhere else."""
+        local.write_text(doc(allow=["omarchy gone away"]))
+        entry._prunable(LOG)
+        assert notifications == []
+
+    def test_the_report_previews_what_would_go(self, local, permission_files, capsys):
+        local.write_text(doc(allow=["omarchy gone away"]))
+        entry._print_review(LOG, as_json=True)
+        body = json.loads(capsys.readouterr().out)
+        assert body["prunable"] == [
+            {"effect": "allow", "matcher": "omarchy gone away", "source": "permissions.local.json"}
+        ]
+
+    def test_the_text_report_names_them(self, local, permission_files, capsys):
+        local.write_text(doc(allow=["omarchy gone away"]))
+        entry._print_review(LOG)
+        out = capsys.readouterr().out
+        assert "match nothing" in out
+        assert "omarchy gone away" in out
+
+    @pytest.fixture
+    def seen_baseline(self, tmp_path, monkeypatch, commands):
+        from omarchy_mcp import delta
+
+        path = tmp_path / "registry-seen.json"
+        monkeypatch.setattr(entry, "REGISTRY_SEEN_FILE", path)
+        delta.save_seen(path, commands)
+        return path

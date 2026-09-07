@@ -348,6 +348,11 @@ omarchy-mcpd --review
 A fresh install has nothing to compare against, so the first run records a
 baseline and tells you nothing.
 
+Rules that stop matching anything — a route was renamed out from under one —
+accumulate rather than being tidied away behind your back. The panel lists them
+and offers **Prune**, which removes them from `permissions.local.json` only.
+`--review` prints the same list.
+
 Copy [`permissions.example.json`](permissions.example.json) to start, and check
 your edits before restarting anything:
 

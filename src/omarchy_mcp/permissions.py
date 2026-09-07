@@ -844,6 +844,46 @@ def grant(path: Path, route: str, perms: Permissions, commands: dict[str, Comman
     return rule
 
 
+def prunable(path: Path, commands: dict[str, Command]) -> tuple[Rule, ...]:
+    """Rules in the daemon's own file that cover nothing on this Omarchy.
+
+    Read-only, and deliberately separate from the delta's `dead` list. Those two
+    are different sets: the delta names rules that went dead *since the last
+    acknowledgement*, which is a warning; this names rules that are dead *now*,
+    which is housekeeping. A rule can be the second without ever having been the
+    first, because it was already dead when the snapshot was taken.
+    """
+    try:
+        existing, _ = _read_local(path)
+    except PermissionsError:
+        # A file that will not parse is not a file to offer to edit. The daemon
+        # is already saying so somewhere louder.
+        return ()
+    return tuple(rule for rule in existing if not rule.covers(commands.values()))
+
+
+def prune(path: Path, commands: dict[str, Command]) -> tuple[Rule, ...]:
+    """Remove the dead rules from the daemon's own file. Returns what went.
+
+    N10 deliberately never prunes on its own: a rule whose route vanished is the
+    delta's evidence, and a daemon that quietly edits a file is one the user
+    cannot reason about. This is the other half of that -- **user-initiated**,
+    after being shown exactly what would go.
+
+    `permissions.local.json` only. The user's own file is theirs to edit, and a
+    daemon that tidied it would be editing a tracked file nobody asked it to
+    touch.
+    """
+    existing, options = _read_local(path)
+    dead = [rule for rule in existing if not rule.covers(commands.values())]
+    if not dead:
+        return ()
+
+    kept = [rule for rule in existing if rule not in dead]
+    _write_local(path, kept, options)
+    return tuple(dead)
+
+
 def _read_local(path: Path) -> tuple[list[Rule], Options]:
     """The daemon's own file as it stands. Missing reads as empty."""
     try:

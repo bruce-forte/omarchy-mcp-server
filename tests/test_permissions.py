@@ -34,6 +34,8 @@ from omarchy_mcp.permissions import (
     explain,
     grant,
     load,
+    prunable,
+    prune,
     parse,
 )
 from omarchy_mcp.permissions import NEVER_STORE
@@ -652,3 +654,77 @@ class TestGranting:
         local.write_text(json.dumps({"permissions": {"askTimeoutSeconds": 120}}))
         grant(local, "omarchy install app", Permissions(), commands)
         assert load((local.with_name("permissions.json"), local)).ask_timeout_s == 120
+
+
+class TestPruning:
+    """N10 deliberately never prunes on its own: a rule whose route vanished is
+    the delta's evidence, and a daemon that quietly edits a file is one the user
+    cannot reason about. This is the other half — user-initiated, after being
+    shown exactly what would go."""
+
+    @pytest.fixture
+    def local(self, tmp_path):
+        return tmp_path / "permissions.local.json"
+
+    def test_it_finds_rules_that_match_nothing(self, local, commands):
+        local.write_text(doc(allow=["omarchy install app", "omarchy gone away"]))
+        assert [r.matcher for r in prunable(local, commands)] == ["omarchy gone away"]
+
+    def test_a_live_rule_is_never_prunable(self, local, commands):
+        local.write_text(doc(allow=["omarchy install *"]))
+        assert prunable(local, commands) == ()
+
+    def test_pruning_removes_exactly_what_was_offered(self, local, commands):
+        local.write_text(doc(allow=["omarchy install app", "omarchy gone away"]))
+        offered = prunable(local, commands)
+        gone = prune(local, commands)
+
+        assert [r.matcher for r in gone] == [r.matcher for r in offered]
+        left = load((local.with_name("permissions.json"), local))
+        assert [r.matcher for r in left.rules] == ["omarchy install app"]
+
+    def test_it_prunes_a_dead_deny_too(self, local, commands):
+        """Somebody hand-added it, and it has stopped matching. It grants
+        nothing either way, but it is worth seeing before it is tidied."""
+        local.write_text(doc(deny=["omarchy vanished *"]))
+        assert [r.effect for r in prunable(local, commands)] == [Effect.DENY]
+        assert prune(local, commands)
+
+    def test_it_is_idempotent(self, local, commands):
+        local.write_text(doc(allow=["omarchy gone away"]))
+        assert prune(local, commands)
+        assert prune(local, commands) == ()
+
+    def test_it_keeps_settings_it_did_not_write(self, local, commands):
+        local.write_text(
+            json.dumps(
+                {
+                    "permissions": {
+                        "askTimeoutSeconds": 120,
+                        "allow": [{"kind": "route", "matcher": "omarchy gone away"}],
+                    }
+                }
+            )
+        )
+        prune(local, commands)
+        assert load((local.with_name("permissions.json"), local)).ask_timeout_s == 120
+
+    def test_what_it_leaves_still_loads(self, local, commands):
+        local.write_text(doc(allow=["omarchy install app", "omarchy gone away"]))
+        prune(local, commands)
+        reloaded = load((local.with_name("permissions.json"), local))
+        assert check(reloaded, commands) == ()
+
+    def test_a_missing_file_prunes_nothing(self, local, commands):
+        assert prunable(local, commands) == ()
+        assert prune(local, commands) == ()
+
+    def test_a_file_that_will_not_parse_is_not_one_to_offer_to_edit(self, local, commands):
+        local.write_text("{")
+        assert prunable(local, commands) == ()
+
+    def test_nothing_is_written_when_nothing_is_dead(self, local, commands):
+        local.write_text(doc(allow=["omarchy install app"]))
+        before = local.read_text()
+        assert prune(local, commands) == ()
+        assert local.read_text() == before

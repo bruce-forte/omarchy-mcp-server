@@ -87,6 +87,8 @@ Panel {
   readonly property bool   needsReview: service ? service.needsReview : false
   readonly property string reviewHeadline: service ? service.reviewHeadline : ""
   readonly property var    review: service ? service.review : ({})
+  readonly property bool   canPrune: service ? service.canPrune : false
+  readonly property int    prunableRules: service ? service.prunableRules : 0
 
   readonly property var recent: service ? service.recent : []
   readonly property bool recentLoading: service ? service.recentLoading : false
@@ -494,6 +496,54 @@ Panel {
           color: root.permissionsCheckOk ? Qt.darker(Color.foreground, 1.4) : Color.urgent
           font.family: Style.font.family
           font.pixelSize: Style.font.bodySmall
+        }
+
+        // Dead rules, offered for tidying. Its own block rather than part of
+        // the review: the two are different sets, and a rule can be prunable
+        // without ever having appeared in a review because it was already dead
+        // when the snapshot was taken.
+        Column {
+          width: parent.width
+          spacing: Style.spacing.sm
+          visible: root.canPrune
+
+          PanelSeparator { width: parent.width }
+
+          PanelSectionHeader { text: "DEAD RULES" }
+
+          Text {
+            width: parent.width
+            wrapMode: Text.WordWrap
+            text: root.prunableRules + " rule" + (root.prunableRules === 1 ? "" : "s")
+                + " in permissions.local.json match no command Omarchy ships. They "
+                + "grant nothing; a rule left over from a route that was renamed."
+            color: Qt.darker(Color.foreground, 1.4)
+            font.family: Style.font.family
+            font.pixelSize: Style.font.bodySmall
+          }
+
+          // Shown before anything goes. A daemon that quietly edits a file is
+          // one the user cannot reason about, which is why N10 never prunes on
+          // its own and this needs a press.
+          Repeater {
+            model: root.review.prunable || []
+
+            Text {
+              width: column.width
+              wrapMode: Text.WordWrap
+              text: "· " + modelData.effect + " '" + modelData.matcher + "'"
+              color: Qt.darker(Color.foreground, 1.4)
+              font.family: Style.font.family
+              font.pixelSize: Style.font.bodySmall
+            }
+          }
+
+          Button {
+            text: "Prune"
+            bordered: true
+            enabled: root.service !== null
+            onClicked: root.service.prune()
+          }
         }
 
         // The delta: what an `omarchy update` changed under rules that did not
