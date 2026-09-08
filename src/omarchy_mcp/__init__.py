@@ -44,11 +44,16 @@ Type hints (``def f(x: str) -> bool``)
     entirely: nothing is enforced at runtime, and a wrong hint never raises --
     so the checker is what makes them worth writing. ``make lint`` runs
     ``ruff`` and ``pyright`` over this package, the tests and the examples, and
-    CI fails on either. Two hints recur and are worth telling apart: ``object`` means "a
-    value this code never looks inside", and ``Any`` means "the checker cannot
-    say" -- which is what a JSON document parsed back out of a file is, and why
-    every ``as_dict``, ``explain`` and ``state`` here returns ``dict[str,
-    Any]``.
+    CI fails on either. Every parameter in this package is annotated and pyright
+    is set to fail on one that is not; the tests are held to the looser default,
+    where an unannotated ``tmp_path`` already says what it is.
+
+    Two hints recur and are worth telling apart. ``object`` means "a value this
+    code never looks inside". ``Any`` means "the checker cannot say" -- which is
+    what a JSON document parsed back out of a file is, and why every
+    ``as_dict``, ``explain`` and ``state`` here returns ``dict[str, Any]``. It
+    is also the honest answer for the SDK ``ctx`` that `gate.py` reads only
+    through ``getattr``.
 
 ``async def`` / ``await``
     An ``async def`` function does not run when called -- it returns a coroutine

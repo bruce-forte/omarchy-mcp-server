@@ -15,11 +15,13 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+from typing import Any
 
 from mcp.server.lowlevel.server import NotificationOptions
 from mcp.server.mcpserver import MCPServer
 from mcp.server.subscriptions import InMemorySubscriptionBus, ToolsListChanged
 from mcp.server.transport_security import TransportSecuritySettings
+from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from . import __version__, frames, gate, resources
@@ -27,7 +29,7 @@ from .auth import BearerAuth
 from .clients import Clients
 from .config import Config
 from .delta import Review
-from .reload import Reloader, lifespan_for
+from .reload import Reloaded, Reloader, lifespan_for
 from .settings import Settings
 from .stats import Stats
 from .tools import control, desktop, feedback, generic, system
@@ -59,7 +61,11 @@ def _advertise_tool_list_changed(mcp: MCPServer) -> None:
     # monkey-patching: swapping one attribute on a live object.
     build_options = server.create_initialization_options
 
-    def with_tools_changed(notification_options=None, *args, **kwargs):
+    def with_tools_changed(
+        notification_options: NotificationOptions | None = None,
+        *args: Any,
+        **kwargs: Any,
+    ):
         # ``*args, **kwargs`` forward every other argument untouched, so this
         # keeps working if the SDK's signature grows.
         return build_options(
@@ -120,7 +126,7 @@ def build(
     bus = InMemorySubscriptionBus()
     clients = Clients(log)
 
-    def lifespan(server):
+    def lifespan(server: Any):
         """The startup/shutdown hook the ASGI server runs around everything."""
         # `reloader` is built after the server it reloads, so this reads it at
         # call time rather than closing over the None it is now. A closure reads
@@ -170,7 +176,7 @@ def build(
         # Both of these are handed to the `Reloader` below as callbacks: it
         # calls them when a reload happens, and knows nothing about frames,
         # buses or the activity log itself.
-        def note(result) -> None:
+        def note(result: Reloaded) -> None:
             """Put a reload where a person can see it, and where it is kept.
 
             The frame reaches the bar now; the activity log keeps it after the
@@ -224,7 +230,7 @@ def build(
             reloader.offer_revoke(revoke_token)
 
     @mcp.custom_route("/health", methods=["GET"])
-    async def health(_request):
+    async def health(_request: Request):
         """The one route reachable without a token. See `auth.BearerAuth`."""
         # ``_request`` is named with an underscore because the endpoint takes it
         # and never reads it: this answer does not depend on the request.

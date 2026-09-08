@@ -47,6 +47,7 @@ thing to get right.
 from __future__ import annotations
 
 import itertools
+import logging
 import os
 import secrets
 from contextlib import asynccontextmanager
@@ -57,6 +58,7 @@ import anyio
 import anyio.to_thread
 
 from . import execute
+from .execute import Offload
 from .paths import CONSENT_DIR, PLUGIN_ID
 
 #: How often the parked call looks for a clicked token. Short enough that a
@@ -262,7 +264,9 @@ def dismiss(marker: str) -> None:
 # yield-in-the-middle shape, used with ``async with`` and able to ``await``
 # on both sides of the yield.
 @asynccontextmanager
-async def pending(label: str, body: str, *, token: str | None, log, offload):
+async def pending(
+    label: str, body: str, *, token: str | None, log: logging.Logger, offload: Offload
+):
     """Hold a critical notification up for as long as the question is open.
 
     A `-u critical` notification has no expiry, and a click does not dismiss it

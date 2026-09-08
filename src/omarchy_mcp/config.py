@@ -16,6 +16,7 @@ from __future__ import annotations
 import tomllib
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from typing import Any
 
 from .paths import ACTIVITY_FILE, CONFIG_FILE
 
@@ -174,7 +175,7 @@ def _name(raw: object, key: str, default: str, problems: list[str]) -> str:
     return name
 
 
-def _dead(policy: dict, problems: list[str]) -> None:
+def _dead(policy: dict[str, Any], problems: list[str]) -> None:
     """Report a `[policy]` key that no longer does anything.
 
     The rest of this module reports a *malformed* value and carries on. This

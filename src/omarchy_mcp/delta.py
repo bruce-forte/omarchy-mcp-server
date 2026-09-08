@@ -55,6 +55,7 @@ from __future__ import annotations
 import json
 import os
 import secrets
+from collections.abc import Sized
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -170,7 +171,7 @@ class Review:
         return bool(self.widened) or any(a.unclassified for a in self.arrivals)
 
 
-def _s(items) -> str:
+def _s(items: Sized) -> str:
     """The plural "s", or nothing when there is exactly one of something."""
     return "" if len(items) == 1 else "s"
 

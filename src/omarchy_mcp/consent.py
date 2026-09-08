@@ -27,9 +27,11 @@ desktop notification, and neither one changed a line of the rule.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import Enum
+from typing import Any
 
 import anyio
 
@@ -110,7 +112,7 @@ def _reason(outcome: Outcome, *, timeout_s: float, what: str, clicked: bool = Fa
     }[outcome]
 
 
-def supports_asking(capabilities) -> bool:
+def supports_asking(capabilities: Any) -> bool:
     """Whether this client can put a question in front of a person itself.
 
     Not `form` alone, which was the original rule and was wrong. Claude Code
@@ -147,7 +149,7 @@ async def ask(
     what: str,
     timeout_s: float = DEFAULT_TIMEOUT_S,
     clicked: bool = False,
-    log=None,
+    log: logging.Logger | None = None,
 ) -> Answer:
     """Await an answer, and fail closed if one does not arrive.
 

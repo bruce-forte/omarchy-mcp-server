@@ -113,7 +113,7 @@ def hyprctl(*args: str) -> object:
         raise DesktopError(f"hyprctl {' '.join(args)} returned invalid JSON") from exc
 
 
-def focused_monitor() -> dict:
+def focused_monitor() -> dict[str, Any]:
     """The monitor with keyboard focus, or the first one if nothing claims it."""
     monitors = hyprctl("monitors")
     if not isinstance(monitors, list) or not monitors:

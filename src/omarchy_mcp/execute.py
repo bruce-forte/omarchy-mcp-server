@@ -37,10 +37,19 @@ import os
 import shlex
 import signal
 import subprocess
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import Any
 
 from .paths import OMARCHY_PATH
+
+#: How a blocking call in this module reaches a worker thread. The function
+#: itself is `tools/_shared.offload`, but `gate.py` and `prompt.py` take it as
+#: an argument rather than importing it -- `tools/` depends on both of them --
+#: so the name they annotate that argument with lives here, at the point all
+#: three already meet.
+Offload = Callable[..., Awaitable[Any]]
 
 #: Commands in these groups open a window or wait for the user. Waiting on them
 #: is always wrong: they finish when a human is done, not when work is done.
@@ -75,7 +84,7 @@ class NotInstalled(Exception):
     turn it into a clear message. Subclassing ``Exception`` is all it takes.
     """
 
-    def __init__(self, name: str, searched=None) -> None:
+    def __init__(self, name: str, searched: Iterable[Path] | None = None) -> None:
         """Record what was looked for and where, and build the message."""
         searched = SEARCH if searched is None else searched
         self.name = name
@@ -93,7 +102,7 @@ class NotInstalled(Exception):
         return {"error": str(self), "missing": self.name}
 
 
-def resolve_binary(name: str, searched=None) -> str:
+def resolve_binary(name: str, searched: Iterable[Path] | None = None) -> str:
     """The file a bare command name should run, or raise.
 
     A name containing a separator is a path already and is used as given, which
@@ -285,7 +294,7 @@ def run(
     )
 
 
-def _terminate_group(proc: subprocess.Popen) -> None:
+def _terminate_group(proc: subprocess.Popen[Any]) -> None:
     """SIGTERM the child and everything it started; fall back to just the child."""
     try:
         # ``getpgid`` finds the process group the child leads (it leads one

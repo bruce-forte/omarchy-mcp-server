@@ -16,8 +16,9 @@ from __future__ import annotations
 
 import functools
 import json
+import logging
 from collections.abc import Awaitable, Callable
-from typing import ParamSpec, TypeVar
+from typing import Any, ParamSpec, TypeVar
 
 import anyio.to_thread
 
@@ -38,7 +39,7 @@ UNTRUSTED = (
 )
 
 
-async def offload(fn, *args, **kwargs):
+async def offload(fn: Callable[..., _T], *args: Any, **kwargs: Any) -> _T:
     """Run a blocking call on a worker thread, awaiting its result.
 
     Used as ``await offload(execute.run, argv, timeout_ms=...)`` -- the function
@@ -77,7 +78,7 @@ def threaded(fn: Callable[_P, _T]) -> Callable[_P, Awaitable[_T]]:
     # tool's JSON schema by inspecting the signature, and without this every
     # threaded tool would advertise ``(*args, **kwargs)``.
     @functools.wraps(fn)
-    async def wrapper(*args, **kwargs):
+    async def wrapper(*args: Any, **kwargs: Any) -> _T:
         return await offload(fn, *args, **kwargs)
 
     return wrapper
@@ -91,9 +92,9 @@ async def run_route(
     perms: Permissions,
     unreviewed: frozenset[str] = frozenset(),
     stats: Stats,
-    log,
+    log: logging.Logger,
     tool: str,
-    ctx=None,
+    ctx: Any = None,
     detach: bool | None = None,
     timeout_ms: int | None = None,
 ) -> str:

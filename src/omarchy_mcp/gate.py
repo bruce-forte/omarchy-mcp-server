@@ -35,15 +35,25 @@ being able to forget a ``try``.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
+from typing import Any
 
 from pydantic import BaseModel
 
 from . import activity, consent, cooldown, frames, permissions, prompt, registry, resolve
+from .execute import Offload
 from .paths import PERMISSIONS_LOCAL_FILE
 from .permissions import Effect, Outcome, Permissions, decide
 from .policy import Tier, self_refusal
 from .registry import Command
+from .resolve import Call
+
+#: `Any` for every `ctx` below, and deliberately not the SDK's `Context`. Nothing
+#: here holds one: each is read through `getattr(..., None)` because the SDK
+#: object is not this project's to depend on, and the tests pass their own
+#: stand-ins. Naming a type the code does not actually require would be a claim
+#: neither side keeps.
 
 
 @dataclass(frozen=True)
@@ -68,21 +78,21 @@ class Refused:
     tier: str
     outcome: str | None = None
     #: Set when the refusal is a resolver's, whose payload names near misses.
-    payload: dict | None = None
+    payload: dict[str, Any] | None = None
 
-    def as_dict(self) -> dict:
+    def as_dict(self) -> dict[str, Any]:
         """The JSON the agent gets instead of a result."""
         # A resolver's payload is already the right shape and carries the near
         # misses, so it is used whole rather than rebuilt.
         if self.payload is not None:
             return self.payload
-        body: dict[str, object] = {"error": self.reason, "tier": self.tier}
+        body: dict[str, Any] = {"error": self.reason, "tier": self.tier}
         if self.outcome is not None:
             body["consent"] = self.outcome
         return body
 
 
-def can_elicit(ctx) -> bool:
+def can_elicit(ctx: Any) -> bool:
     """Whether the client can be asked *through MCP*, on this connection.
 
     Two separate questions, and both have to be yes. The client must declare
@@ -135,7 +145,7 @@ _cooldowns = cooldown.Cooldowns()
 _pending: dict[int, object] = {}
 
 
-def cooldown_state() -> dict:
+def cooldown_state() -> dict[str, Any]:
     """What the daemon is currently declining to ask about, for `/health`.
 
     Read-only and deliberately not clearable from anywhere: clearing would
@@ -152,9 +162,9 @@ async def authorize(
     *,
     perms: Permissions,
     unreviewed: frozenset[str] = frozenset(),
-    ctx,
-    log,
-    offload,
+    ctx: Any,
+    log: logging.Logger,
+    offload: Offload,
 ) -> Allowed | Refused:
     """Decide whether ``cmd`` runs, asking the user if that is what is called for.
 
@@ -246,7 +256,7 @@ def _wants_always(answer: consent.Answer) -> bool:
     return isinstance(data, dict) and data.get("always") is True
 
 
-def _write_grant(route: str, perms: Permissions, log) -> None:
+def _write_grant(route: str, perms: Permissions, log: logging.Logger) -> None:
     """Append the `allow` rule, and say so where it will be kept.
 
     Blocking: it reads a file, writes a temp file, fsyncs and renames. Called
@@ -259,7 +269,15 @@ def _write_grant(route: str, perms: Permissions, log) -> None:
     activity.note("permission", verb="allow", route=rule.matcher, via="panel")
 
 
-async def _ask(cmd, call, *, perms, ctx, log, offload) -> consent.Answer:
+async def _ask(
+    cmd: Command,
+    call: Call,
+    *,
+    perms: Permissions,
+    ctx: Any,
+    log: logging.Logger,
+    offload: Offload,
+) -> consent.Answer:
     """Put the question on whichever surface can carry it, and wait for an answer.
 
     One question per session at a time, the notification held up for as long as

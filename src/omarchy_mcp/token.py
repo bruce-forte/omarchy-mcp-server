@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 import secrets
 import stat
+from pathlib import Path
 
 from .paths import STATE_DIR, TOKEN_FILE
 
@@ -53,7 +54,7 @@ def ensure() -> str:
     return token
 
 
-def _harden(path) -> None:
+def _harden(path: Path) -> None:
     """Re-tighten a token file that something else loosened.
 
     A leading underscore is the convention for "private to this module": nothing

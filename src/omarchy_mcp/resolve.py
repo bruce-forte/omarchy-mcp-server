@@ -37,6 +37,7 @@ import difflib
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from . import desktop, execute, registry
 
@@ -136,7 +137,7 @@ def _themes() -> list[str]:
     return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
 
-def _monitors() -> list[dict]:
+def _monitors() -> list[dict[str, Any]]:
     """Connected outputs, from the compositor that names them."""
     try:
         monitors = desktop.hyprctl("monitors")

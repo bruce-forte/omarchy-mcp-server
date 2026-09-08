@@ -22,6 +22,7 @@ reads their names, type hints and defaults, so renaming one changes the API.
 from __future__ import annotations
 
 import json
+import logging
 
 from mcp.server.mcpserver import Context
 from mcp.types import ToolAnnotations
@@ -35,7 +36,9 @@ from ._shared import UNTRUSTED, offload, threaded
 from .catalogue import Catalogue
 
 
-def register(tools: Catalogue, settings: Settings, log, stats: Stats | None = None) -> None:
+def register(
+    tools: Catalogue, settings: Settings, log: logging.Logger, stats: Stats | None = None
+) -> None:
     """Declare the four generic tools in ``tools``."""
     stats = stats or Stats()
 

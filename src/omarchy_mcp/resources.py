@@ -22,7 +22,11 @@ what makes the last three *templates* rather than fixed addresses.
 from __future__ import annotations
 
 import json
+import logging
+from collections.abc import Iterable
 from typing import Any
+
+from mcp.server.mcpserver import MCPServer
 
 from . import desktop, permissions, registry, shell
 from .permissions import describe
@@ -30,7 +34,7 @@ from .settings import Settings
 from .status import gather
 
 
-def register(mcp, settings: Settings, log) -> None:
+def register(mcp: MCPServer, settings: Settings, log: logging.Logger) -> None:
     """Attach every resource to ``mcp``.
 
     Nested functions rather than top-level ones so each closes over ``settings``
@@ -185,7 +189,7 @@ def register(mcp, settings: Settings, log) -> None:
             )
         return json.dumps(shell.as_dict(one), indent=2)
 
-    def _annotated(commands) -> dict[str, Any]:
+    def _annotated(commands: Iterable[registry.Command]) -> dict[str, Any]:
         """Registry entries carrying this server's verdict on each one.
 
         Reading the raw registry would leave the reader to work out which

@@ -9,6 +9,7 @@ Everything else stays in `omarchy_run`.
 from __future__ import annotations
 
 import json
+import logging
 
 from mcp.types import ImageContent, TextContent, ToolAnnotations
 
@@ -21,7 +22,9 @@ from .catalogue import Catalogue
 TARGETS = "screen (the focused monitor), window (the focused window), monitor, or region"
 
 
-def register(tools: Catalogue, settings: Settings, log, stats: Stats) -> None:
+def register(
+    tools: Catalogue, settings: Settings, log: logging.Logger, stats: Stats
+) -> None:
     """Declare the five desktop tools in ``tools``.
 
     See `tools/generic.py` for the shape every one of these follows.
@@ -48,7 +51,7 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats) -> None:
         monitor: str = "",
         region: str = "",
         max_width: int = desktop.DEFAULT_MAX_WIDTH,
-    ) -> list:
+    ) -> list[ImageContent | TextContent]:
         """Grab pixels and hand them back as an image plus a line of context.
 
         Returns a *list* of content blocks rather than a string: that is how the

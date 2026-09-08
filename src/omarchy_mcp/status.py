@@ -78,7 +78,7 @@ def gather() -> dict[str, Any]:
     # Defined inside ``gather`` because it exists only to be mapped over the
     # probes below, and because being nested lets it read ``PROBES`` and the
     # constants without them being passed in.
-    def probe(item):
+    def probe(item: tuple[str, list[str]]) -> tuple[str, Any]:
         # ``pool.map`` passes one argument, so the (name, argv) pair arrives as a
         # single tuple and is unpacked here.
         name, argv = item
