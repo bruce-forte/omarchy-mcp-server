@@ -2008,7 +2008,7 @@ error, and no assertion in 721 tests could have caught either.
   the moment somebody writes one wildcard in `permissions.json`.** That is the
   feature working, but the first time it fires it will look like a bug report.
 
-### N16 — A tab-based panel — planned
+### N16 — A tab-based panel — done
 
 N15 put a rules viewer into a column that already held a parked question, the
 daemon's health, a cooldown, dead rules, a delta review and the activity log. It
@@ -2163,6 +2163,37 @@ one keyboard is worse than either.
 **b is a rewrite of the layout, not an edit**, and will read as one however it is
 written — which is exactly why the keyboard and the gutter land after it rather
 than inside it.
+
+#### Verified on a live desktop
+
+All three tabs, the fixed card with the footer pinned, the action row wrapping to
+two lines at 520 so `Reload config` stops being clipped, the gutter with Edit and
+Remove in a straight column, the Log's four columns with relative times and
+severity colours, and the legend changing per tab.
+
+Two defects, neither of which a test in this repository could have caught, and
+both found by a person pressing something:
+
+**`[` and `]` did nothing at all.** The `ButtonGroup`'s `id` and the root
+property holding the tab names were both `tabs`, and inside a component an `id`
+wins over a property of the root object — so `tabs.indexOf(...)` called `indexOf`
+on an `Item`, threw, and every press was swallowed. `qmllint` is happy with it:
+it is valid QML that resolves to the wrong object. The strip is `tabStrip` now
+and the lookup says `root.tabs`, and the whole file was swept for the same class
+of collision — 37 ids against every root property, none left.
+
+**The severity glyphs shipped as empty strings.** Written as literal characters,
+they were silently dropped somewhere between being typed and reaching the file,
+and the column rendered blank. They are `\uF06A` escapes now, which is the better
+form regardless: a private-use character is an invisible box in a diff, in a
+review, and in any terminal without the font.
+
+A third thing, worth recording because it is a hazard rather than a defect:
+**driving the panel with `wtype` types into whatever holds keyboard focus**,
+which was the developer's terminal rather than the panel — a layer surface opened
+by IPC does not take focus. Two stray characters went into somebody's shell
+before that was noticed. The panel's keyboard cannot be verified from this side
+of the desk; it needs a person to click the bar icon first.
 
 #### Watch for
 

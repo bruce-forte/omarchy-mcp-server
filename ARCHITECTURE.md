@@ -105,8 +105,9 @@ fail validation. The `Makefile` sets `UV_PROJECT_ENVIRONMENT` so a bare
     │        │
     │        ├── polls GET /health every 10s
     │        ├── writes $XDG_RUNTIME_DIR/omarchy-mcp.state
-    │        └── IpcHandler: status, start, stop, restart,
-    │                        reloadConfig, rebuild, clientConfig
+    │        └── IpcHandler: status, recent, review, pending, permissions,
+    │                        clientConfig, copyClientConfig, checkPermissions,
+    │                        start, stop, restart, reloadConfig, rebuild
     │
     └── BarWidget.qml ──serviceFor()──> the service object
                         ──reads──────────> the state file, until it resolves
@@ -114,7 +115,10 @@ fail validation. The `Makefile` sets `UV_PROJECT_ENVIRONMENT` so a bare
 
 The daemon prints one JSON line to stdout per state change — `listening` with
 the port, or `failed` with the reason — and one per tool call, carrying the tool
-name and how it ended. Everything else goes to stderr, which `omarchy-shell`
+name and how it ended. The rest are the shell's only route to things it cannot
+poll for: `asking` and `answered` around a parked question, `review` and
+`prunable` and `editable` carrying the one-time tokens the panel answers with,
+and `reloaded` when either config file is re-read. Everything else goes to stderr, which `omarchy-shell`
 inherits, so `journalctl --user -f` carries the daemon's log alongside the
 shell's own QML errors. `frames.py` owns that channel.
 
@@ -138,6 +142,15 @@ remains because **the widget is constructed before the service exists**: the
 first evaluation of `serviceFor` is null on every startup, and it resolves only
 because the binding re-runs when the shell's service map changes. Verified on a
 live desktop; see `ROADMAP.md` N6.
+
+The panel is three bodies between two bands that never move. **Summary**,
+**Log** and **Rules** are tabs, stepped with `[` and `]`; a parked question sits
+above the strip and the daemon's buttons below it, on every tab, because neither
+may be behind a tab a person is not looking at. Arrows drive a keyed focus
+cursor — keyed rather than indexed because half its stops appear only when the
+daemon says so, and an index into a list that changes shape lights a different
+button than the one it pointed at. On the Log, which has nothing to press, the
+arrows scroll instead.
 
 **This is where new user-facing state and controls go.** The panel is what a
 person can find, and the service object is how it reaches the daemon — so
@@ -199,7 +212,7 @@ In dependency order, shallowest first:
 | `execute.py` | `argv` only, never a shell. Timeouts, process-group termination, output caps, detaching, and which file a bare command name runs |
 | `token.py` | The bearer token, created `0600` |
 | `auth.py` | Bearer authentication as **pure ASGI** — see below |
-| `resources.py` | The 4 concrete resources and 3 URI templates |
+| `resources.py` | The 5 concrete resources and 3 URI templates |
 | `clients.py` | The connections currently attached, and the two ways to tell them the tool list moved |
 | `reload.py` | Re-reads `config.toml` and the permissions files while serving, and refuses to when either does not parse. See below |
 | `server.py` | Assembles the MCP server, transport security, `/health` |
@@ -279,6 +292,12 @@ when the log is **read**, from what is already on disk; nothing is written and n
 timestamp is invented, because a guess in an audit trail is worse than a gap in
 one. The last `started` in a window is never marked: it is the session still
 running.
+
+**Severity is derived on read too**, for the same reason and by `activity.level`:
+`i`, `w` or `e`, worked out from what kind of record it is rather than stored, so
+the file keeps its shape and a log written a month ago reads like one written
+now. The panel's Log column and a terminal reading the same file cannot disagree
+about what counts as wrong, because there is one derivation.
 
 **One seam.** `stats.call(tool)` is a context manager. A tool opens one, fills
 in what it learns — the route, the resolved target, the tier, how the user
@@ -566,7 +585,7 @@ shell's IPC surface with full signatures, which is documented nowhere upstream.
 Five are concrete and appear in the `@` menu. Three are URI templates covering
 every command and every target without putting several hundred entries in a
 listing. Claude Code never enumerates templates (finding F8), so the concrete
-four are the discoverable set; templates still resolve when read by URI, and
+five are the discoverable set; templates still resolve when read by URI, and
 other clients may list them.
 
 ## What the tests pin
