@@ -85,7 +85,7 @@ def _logger(level: str) -> logging.Logger:
     return logging.getLogger("omarchy-mcp")
 
 
-def _load_permissions(log):
+def _load_permissions(log: logging.Logger):
     """The permissions document, or ``None`` when the daemon must not start.
 
     Unlike `config.toml`, a defective permissions file is not reported and
@@ -120,7 +120,7 @@ def _load_permissions(log):
     return loaded
 
 
-def _review(perms, log):
+def _review(perms: permissions_module.Permissions, log: logging.Logger):
     """What has changed under the rules since anybody last looked.
 
     Computed once at startup and held; `reload.py` recomputes it when the
@@ -155,7 +155,7 @@ def _review(perms, log):
     return found
 
 
-def _prunable(log):
+def _prunable(log: logging.Logger):
     """Dead rules in the daemon's own file, if the registry can be read."""
     try:
         commands = registry.all_commands()
@@ -168,7 +168,7 @@ def _prunable(log):
 # should end with, rather than printing and exiting itself. That is what lets
 # `main` stay a single list of "which flag was given" and lets the tests call
 # them directly.
-def _print_review(log, *, as_json: bool = False) -> int:
+def _print_review(log: logging.Logger, *, as_json: bool = False) -> int:
     """What changed under the rules, computed fresh from the same inputs.
 
     Read-only, and it carries no token: acknowledging is a separate action on a
@@ -250,7 +250,7 @@ def _print_review(log, *, as_json: bool = False) -> int:
 FINDING_LEVELS = ("error", "void", "shadowed", "redundant")
 
 
-def _print_permissions(log, *, as_json: bool = False) -> int:
+def _print_permissions(log: logging.Logger, *, as_json: bool = False) -> int:
     """What an agent may run, and which rule says so.
 
     The same report as `omarchy://permissions`, for a terminal. Answers the
@@ -318,7 +318,7 @@ def _print_permissions(log, *, as_json: bool = False) -> int:
     return 0
 
 
-def _check_permissions(log) -> int:
+def _check_permissions(log: logging.Logger) -> int:
     """Validate the document and say so, without starting anything.
 
     Exists because a defective document now costs a startup: with the daemon
@@ -385,7 +385,7 @@ def _editable(which: str):
 EDITOR_TIMEOUT_MS = 5_000
 
 
-def _edit(which: str, log) -> int:
+def _edit(which: str, log: logging.Logger) -> int:
     """Open one of the three files in the user's editor, creating it if absent.
 
     `omarchy launch editor` is Omarchy's own opener, so this finds whatever
@@ -424,7 +424,7 @@ def _edit(which: str, log) -> int:
     return 0
 
 
-def _refuse_to_start(log, detail: str) -> None:
+def _refuse_to_start(log: logging.Logger, detail: str) -> None:
     """Say it three ways, because each reaches a different person.
 
     stderr for `journalctl`, a frame so the bar has the reason without reading

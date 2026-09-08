@@ -8,6 +8,7 @@ to reach them without these.
 from __future__ import annotations
 
 import json
+import logging
 
 from mcp.server.mcpserver import Context
 from mcp.types import ToolAnnotations
@@ -21,7 +22,9 @@ from .catalogue import Catalogue
 URGENCIES = ("low", "normal", "critical")
 
 
-def register(tools: Catalogue, settings: Settings, log, stats: Stats) -> None:
+def register(
+    tools: Catalogue, settings: Settings, log: logging.Logger, stats: Stats
+) -> None:
     """Declare the two tools that put something in front of the person.
 
     Both are ``async def`` because they end in ``await run_route(...)``: they go

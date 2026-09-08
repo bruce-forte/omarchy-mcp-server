@@ -15,6 +15,8 @@ hand later. This is for the ones that are only ever read.
 
 from __future__ import annotations
 
+import logging
+
 from . import execute
 
 #: Long enough for a busy notification daemon, short enough that nothing waits
@@ -25,7 +27,13 @@ TIMEOUT_MS = 5_000
 # The bare ``*`` marks the end of the positional arguments: ``urgency`` and
 # ``log`` must be passed by name, so a third loose string cannot silently become
 # the urgency.
-def send(headline: str, body: str, *, urgency: str = "normal", log=None) -> None:
+def send(
+    headline: str,
+    body: str,
+    *,
+    urgency: str = "normal",
+    log: logging.Logger | None = None,
+) -> None:
     """Raise a notification. Never raises: this is the reporting path.
 
     A failure here means the desktop could not be told, which is worth a line

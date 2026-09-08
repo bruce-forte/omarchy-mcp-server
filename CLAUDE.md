@@ -26,8 +26,7 @@ This file is the working agreement.
   `Generated with`, no session trailer.
 - Run `make check` before committing. It runs the tests, `ruff`, `pyright`,
   `qmllint`, `shellcheck`, `omarchy plugin validate`, and three staleness gates:
-  that
-  `TOOLS.md` matches the server's current schemas, that
+  that `TOOLS.md` matches the server's current schemas, that
   `permissions.schema.json` matches the pydantic models that enforce it, and
   that `config.example.toml` still pins no defaults. CI runs the same things.
 - **Use the `Makefile`, not bare `uv`.** It sets `UV_PROJECT_ENVIRONMENT` so the
@@ -38,6 +37,13 @@ This file is the working agreement.
   schema, or annotations change, and `permissions.schema.json` with
   `make schema` whenever `permissions.py`'s models change. Both are generated;
   never edit either by hand, and `make check` fails if either is stale.
+- **Every parameter in `src/` and `examples/` carries a type.** `pyright` is
+  configured to fail on one that does not. `tests/` is deliberately exempt: an
+  unannotated `tmp_path` or `monkeypatch` is a pytest fixture whose name is its
+  type, and spelling those out would be a thousand annotations that say nothing.
+  Prefer the real type. `Any` is a legitimate answer where the code genuinely
+  accepts anything — `gate.py`'s `ctx`, read only through `getattr` — but say so
+  in a comment where you use it.
 - **A pydantic model's docstring is published.** It becomes the object's
   `description` in `permissions.schema.json`, so adding one to a `BaseModel` in
   `permissions.py` makes the schema stale on a purely editorial change. Document

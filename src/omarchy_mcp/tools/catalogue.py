@@ -33,6 +33,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from mcp.server.mcpserver import MCPServer
+
 from ..config import Config
 
 
@@ -102,7 +104,7 @@ class Catalogue:
         # declared, minus the ones the config switched off.
         return {name for name in self._entries if name not in disabled}
 
-    def apply(self, mcp, config: Config) -> Change:
+    def apply(self, mcp: MCPServer, config: Config) -> Change:
         """Make the server offer exactly the tools this configuration asks for.
 
         Called once at startup and again on every reload. Tracking what is

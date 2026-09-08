@@ -45,18 +45,24 @@ attached stayed in memory until the daemon exited.
 
 from __future__ import annotations
 
+import logging
 import weakref
+from typing import Any
+
+from mcp.server.context import CallNext, HandlerResult, ServerRequestContext
 
 
 class Clients:
     """The sessions currently attached, and how to tell them something changed."""
 
-    def __init__(self, log) -> None:
+    def __init__(self, log: logging.Logger) -> None:
         """Start with nothing attached. ``log`` is the daemon's logger."""
         self._log = log
-        self._connections: weakref.WeakSet = weakref.WeakSet()
+        self._connections: weakref.WeakSet[Any] = weakref.WeakSet()
 
-    async def observe(self, ctx, call_next):
+    async def observe(
+        self, ctx: ServerRequestContext[Any, Any], call_next: CallNext
+    ) -> HandlerResult:
         """Server middleware: remember the connection, then get out of the way.
 
         Runs for every inbound request and notification, before validation and

@@ -37,6 +37,7 @@ appended to forever and read back a line at a time.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import queue
 import threading
@@ -46,7 +47,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import IO, Any
 
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
+
 from . import __version__, execute
+from .config import Config
 from .paths import ACTIVITY_FILE, STATE_DIR
 
 #: Per argument, before it is elided. Long enough for a theme name, a path or a
@@ -190,7 +194,7 @@ def _notify(headline: str, body: str) -> None:
 class Sink:
     """The queue, the writer thread, and the file it appends to."""
 
-    def __init__(self, path: Path, max_bytes: int, log) -> None:
+    def __init__(self, path: Path, max_bytes: int, log: logging.Logger) -> None:
         """Build the sink. Nothing is opened and no thread runs until `start`."""
         self.path = path
         self.max_bytes = max_bytes
@@ -198,7 +202,9 @@ class Sink:
         #: ``queue.Queue`` is the standard library's thread-safe queue, and
         #: ``maxsize`` is what makes it *bounded*: full means an event is
         #: dropped and counted, rather than memory growing without limit.
-        self._q: queue.Queue = queue.Queue(maxsize=QUEUE_DEPTH)
+        #: ``Any`` rather than ``dict[str, Any]``: what goes on here is a record
+        #: or the `_STOP` sentinel, and the writer tells them apart by identity.
+        self._q: queue.Queue[Any] = queue.Queue(maxsize=QUEUE_DEPTH)
         self._thread: threading.Thread | None = None
         #: Guards the two drop fields, which producer threads write and the
         #: writer thread reads.
@@ -419,7 +425,7 @@ def note(name: str, **fields: object) -> None:
 
 
 @contextmanager
-def writer(config, log):
+def writer(config: Config, log: logging.Logger):
     """Run the writer for as long as the daemon serves.
 
     Yields ``None`` when logging is switched off, which is what `Stats` takes
@@ -456,12 +462,12 @@ class Closing:
     `Sink.close`. Non-lifespan traffic passes straight through untouched.
     """
 
-    def __init__(self, app, sink: Sink) -> None:
+    def __init__(self, app: ASGIApp, sink: Sink) -> None:
         """Wrap ``app``, closing ``sink`` when it finishes shutting down."""
         self.app = app
         self._sink = sink
 
-    async def __call__(self, scope, receive, send):
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         """The ASGI entry point; see `auth.BearerAuth` for what that means."""
         if scope["type"] != "lifespan":
             await self.app(scope, receive, send)
@@ -470,7 +476,7 @@ class Closing:
         # A stand-in for ASGI's ``send``, closed over the real one. Everything
         # passes through unchanged; the only addition is noticing the one
         # message that says the application has finished shutting down.
-        async def watched(message):
+        async def watched(message: Message) -> None:
             # Before the completion is reported, not after: once uvicorn has
             # its answer it is free to re-raise and end the process.
             if message["type"] == "lifespan.shutdown.complete":
@@ -480,7 +486,7 @@ class Closing:
         await self.app(scope, receive, watched)
 
 
-def path_for(config) -> Path:
+def path_for(config: Config) -> Path:
     """Always under the state directory.
 
     `config.activity_file` is a filename, not a path, and `config.py` refuses
@@ -497,7 +503,7 @@ def path_for(config) -> Path:
 _LIFECYCLE = ("started", "stopped")
 
 
-def mark_unclosed(records: list[dict]) -> list[dict]:
+def mark_unclosed(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Flag every session that has no recorded end.
 
     The daemon cannot always write its own `stopped`. On `omarchy restart shell`
@@ -529,7 +535,7 @@ def mark_unclosed(records: list[dict]) -> list[dict]:
     return records
 
 
-def tail(n: int = 20, path: Path | None = None) -> list[dict]:
+def tail(n: int = 20, path: Path | None = None) -> list[dict[str, Any]]:
     """The last ``n`` records, oldest first, reading across a rotation."""
     path = STATE_DIR / ACTIVITY_FILE if path is None else path
     lines: list[str] = []
@@ -539,7 +545,7 @@ def tail(n: int = 20, path: Path | None = None) -> list[dict]:
         except OSError:
             continue
 
-    out: list[dict] = []
+    out: list[dict[str, Any]] = []
     # ``lines[-n:]`` is the last n entries. Guarded because ``[-0:]`` is the
     # whole list rather than nothing, which would make ``n=0`` mean "everything".
     for raw in lines[-n:] if n > 0 else lines:
@@ -566,7 +572,7 @@ WARN_OUTCOMES = frozenset({"failed", "timed_out", "refused"})
 ERROR_EVENTS = frozenset({"config_rejected", "permissions_rejected", "dropped"})
 
 
-def level(body: dict) -> str:
+def level(body: dict[str, Any]) -> str:
     """How loud one record is: ``i``, ``w`` or ``e``.
 
     Derived from the record's kind rather than stored, so the file keeps its
@@ -589,7 +595,7 @@ def level(body: dict) -> str:
     return "i"
 
 
-def render(body: dict) -> str:
+def render(body: dict[str, Any]) -> str:
     """One record as a line a person reads, for ``omarchy-mcpd --tail``."""
     # An ISO timestamp is "2026-09-08T14:05:33+02:00"; characters 11 to 19 are
     # the "14:05:33" in the middle of it.

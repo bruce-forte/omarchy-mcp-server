@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 
 from mcp.types import ToolAnnotations
 
@@ -16,7 +17,9 @@ from .catalogue import Catalogue
 __all__ = ["register"]
 
 
-def register(tools: Catalogue, settings: Settings, log, stats: Stats) -> None:
+def register(
+    tools: Catalogue, settings: Settings, log: logging.Logger, stats: Stats
+) -> None:
     """Declare the one system tool in ``tools``."""
 
     @tools.tool(

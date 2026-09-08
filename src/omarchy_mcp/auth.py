@@ -37,6 +37,8 @@ from __future__ import annotations
 
 import hmac
 
+from starlette.types import ASGIApp, Receive, Scope, Send
+
 #: The 401 body, pre-encoded. The ``b`` prefix makes it ``bytes`` rather than a
 #: string, which is what ASGI wants to send; building it once avoids re-encoding
 #: the same eight words on every rejected request.
@@ -46,7 +48,13 @@ UNAUTHORIZED = b'{"error":"unauthorized"}'
 class BearerAuth:
     """Rejects any request to a guarded path without the exact token."""
 
-    def __init__(self, app, token: str, *, open_paths: frozenset[str] = frozenset({"/health"})):
+    def __init__(
+        self,
+        app: ASGIApp,
+        token: str,
+        *,
+        open_paths: frozenset[str] = frozenset({"/health"}),
+    ):
         """Wrap ``app``, letting only ``open_paths`` through unauthenticated.
 
         The bare ``*`` means every argument after it must be passed by name --
@@ -62,7 +70,7 @@ class BearerAuth:
         self._token = token
         self._open_paths = open_paths
 
-    async def __call__(self, scope, receive, send):
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         """The ASGI entry point: what ``await app(...)`` reaches.
 
         Defining ``__call__`` is what makes an *instance* of this class callable
@@ -81,7 +89,7 @@ class BearerAuth:
         # Authorised: hand the untouched call to the application underneath.
         await self.app(scope, receive, send)
 
-    def _authorized(self, scope) -> bool:
+    def _authorized(self, scope: Scope) -> bool:
         """True only for an ``Authorization: Bearer <exact token>`` header."""
         # ASGI header names arrive lowercased and as bytes, so the comparison is
         # against ``b"authorization"`` rather than a string.
@@ -100,7 +108,7 @@ class BearerAuth:
         # No Authorization header at all.
         return False
 
-    async def _reject(self, send) -> None:
+    async def _reject(self, send: Send) -> None:
         """Write the 401 directly, without ever reaching the wrapped app."""
         await send(
             {

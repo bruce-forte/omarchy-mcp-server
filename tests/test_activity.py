@@ -441,7 +441,16 @@ class TestClosingOnShutdown:
         async def app(scope, receive, send):
             seen.append(scope["type"])
 
-        await activity.Closing(app, s)({"type": "http"}, None, None)
+        # Both channels raise: ordinary traffic must reach the wrapped app
+        # untouched, and this middleware has no business reading or writing on
+        # the way past.
+        async def receive():
+            raise AssertionError("the middleware must not read the channel")
+
+        async def send(message):
+            raise AssertionError("the middleware must not write to the channel")
+
+        await activity.Closing(app, s)({"type": "http"}, receive, send)
         assert seen == ["http"]
 
     def test_closing_twice_writes_one_marker(self, tmp_path):

@@ -59,14 +59,17 @@ reach ever learns a token.
 
 from __future__ import annotations
 
+import logging
 import signal
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from typing import Any
 
 import anyio
 import anyio.to_thread
+from mcp.server.mcpserver import MCPServer
 
 from . import (
     activity,
@@ -156,8 +159,8 @@ class Reloader:
         self,
         settings: Settings,
         catalogue: Catalogue,
-        mcp,
-        log,
+        mcp: MCPServer,
+        log: logging.Logger,
         *,
         path: Path = CONFIG_FILE,
         permission_paths: tuple[Path, ...] = PERMISSIONS_FILES,
@@ -685,7 +688,7 @@ def lifespan_for(reloader: Reloader):
     """
 
     @asynccontextmanager
-    async def lifespan(_server):
+    async def lifespan(_server: Any):
         async with anyio.create_task_group() as tg:
             tg.start_soon(reloader.run)
             try:

@@ -99,7 +99,7 @@ class Cooldowns:
     #: Clock readings of the prompts raised recently, oldest first. A ``deque``
     #: is a list that is also cheap to remove from the *front*, which is what
     #: dropping prompts that have aged out of the window does.
-    _asked: deque = field(default_factory=deque)
+    _asked: deque[float] = field(default_factory=deque)
 
     def _now(self) -> float:
         """The current reading from whichever clock this instance was given."""

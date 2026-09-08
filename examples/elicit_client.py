@@ -39,6 +39,7 @@ from __future__ import annotations
 import pathlib
 import sys
 import tomllib
+from typing import Any
 
 import anyio
 import anyio.to_thread
@@ -122,14 +123,14 @@ def _leaves(exc: BaseException):
         yield exc
 
 
-def _field_name(params) -> str:
+def _field_name(params: types.ElicitRequestParams) -> str:
     """The single field the form is asking for."""
     schema = getattr(params, "requested_schema", None) or {}
     names = list((schema.get("properties") or {}).keys())
     return names[0] if names else "value"
 
 
-def _ask_at_the_terminal(params: types.ElicitRequestParams) -> dict | None:
+def _ask_at_the_terminal(params: types.ElicitRequestParams) -> dict[str, Any] | None:
     """Render the form as a numbered list and read an answer. None is a decline.
 
     Blocking, and called through ``anyio.to_thread.run_sync`` for that reason.

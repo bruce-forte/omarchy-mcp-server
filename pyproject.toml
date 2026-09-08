@@ -71,3 +71,23 @@ include = ["src", "tests", "examples"]
 extraPaths = ["src"]
 pythonVersion = "3.11"
 typeCheckingMode = "standard"
+
+# Stricter for the package and the examples than for the tests, and the split is
+# deliberate. A parameter with no annotation in `src/` is a gap in what this
+# project publishes about itself. In `tests/` it is almost always a pytest
+# fixture -- `tmp_path`, `monkeypatch`, `commands` -- where the name *is* the
+# type and spelling it out adds a thousand annotations that say nothing.
+[[tool.pyright.executionEnvironments]]
+root = "src"
+reportMissingParameterType = "error"
+reportMissingTypeArgument = "error"
+
+[[tool.pyright.executionEnvironments]]
+root = "examples"
+reportMissingParameterType = "error"
+reportMissingTypeArgument = "error"
+
+# Everything not under those roots -- `tests/` -- falls back to the settings
+# above. Listing it keeps that visible rather than implied.
+[[tool.pyright.executionEnvironments]]
+root = "tests"

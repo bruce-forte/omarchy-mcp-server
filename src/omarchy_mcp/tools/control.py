@@ -9,15 +9,17 @@ to look up first.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 from mcp.server.mcpserver import Context
 from mcp.types import ToolAnnotations
 from pydantic import Field, create_model
 
 from .. import consent, execute, gate, registry, resolve, shell
+from ..permissions import Permissions
 from ..settings import Settings
 from ..stats import Stats
 from ._shared import offload, run_route
@@ -57,7 +59,7 @@ MEDIA_ACTIONS = (
 )
 
 
-def register(tools: Catalogue, settings: Settings, log, stats: Stats) -> None:
+def register(tools: Catalogue, settings: Settings, log: logging.Logger, stats: Stats) -> None:
     """Declare the seven convenience tools in ``tools``.
 
     Each one is a small ``action`` switch over a handful of registry routes:
@@ -67,7 +69,9 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats) -> None:
 
     # A local shorthand for `_shared.run_route`, closing over the four arguments
     # every call in this module would otherwise repeat.
-    async def run(route, args, tool, ctx, **kw):
+    async def run(
+        route: str, args: list[str], tool: str, ctx: Any, **kw: Any
+    ) -> str:
         # One snapshot per call: a reload between two calls is seen, a reload
         # during one is not.
         return await run_route(
@@ -424,7 +428,7 @@ class _Picked:
 class _Refused:
     """No name to run with, and what the agent is told instead."""
 
-    payload: dict
+    payload: dict[str, Any]
 
 
 def _needs_a_name(extra: str = "") -> _Refused:
@@ -481,7 +485,9 @@ def _choice_model(themes: list[str], description: str):
     return create_model("ThemeChoice", name=field)
 
 
-async def _pick_theme(ctx, perms, log) -> _Picked | _Refused:
+async def _pick_theme(
+    ctx: Any, perms: Permissions, log: logging.Logger
+) -> _Picked | _Refused:
     """Ask the person which theme, and return it. Never runs anything."""
     if not gate.can_elicit(ctx):
         # The client declared no elicitation, or its transport cannot carry a
