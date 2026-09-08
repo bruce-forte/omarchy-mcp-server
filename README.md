@@ -7,14 +7,7 @@ Runs as an **Omarchy plugin**, so there is no systemd unit to enable, no second
 install step, and no separate package. The plugin supervises a small daemon; the
 daemon starts with your session and stops with it.
 
-> **Status: Phase 6, complete.** Nineteen tools, eight resources, a supervised
-> daemon, a bar widget that says whether it is serving, approval prompts that
-> reach the desktop, permissions you can read and edit from the bar, and an
-> activity log of everything an agent did. See [`ROADMAP.md`](ROADMAP.md).
-
 ## Getting started
-
-Five steps, about two minutes. Each links to the section that goes deeper.
 
 ### 1. Install the plugin
 
@@ -75,26 +68,38 @@ and blinks when an agent makes a call. → [Checking it works](#checking-it-work
 
 ### 5. Ask the agent for something
 
-Try *"what theme am I using, and what else is installed?"* — a read, so it runs
-without asking. Then try *"switch to Tokyo Night"*, and watch what happens: a
-**critical notification** appears on your desktop naming the command and the
-theme it resolved to. Clicking it opens the panel, where **Allow once**,
-**Always** and **Deny** are. Ignoring it refuses.
+Try _"what theme am I using, and what else is installed?"_, then _"switch to
+Tokyo Night"_. Both just happen — **no prompt**, and that is correct. Switching
+a theme is reversible in one more sentence, so it is `safe` and it runs.
 
-That is the shape of the whole thing. Reads run; commands that change your
-system in ways that are hard to undo ask you, at your desk, naming exactly what
-they would do. → [What an agent is allowed to run](#what-an-agent-is-allowed-to-run)
+Now ask for something that is not: _"install cowsay"_. A **critical
+notification** appears on your desktop naming the command and what its arguments
+resolved to. Clicking it opens the panel, where **Allow once**, **Always** and
+**Deny** are. Press **Deny** — nothing runs, and you have seen the whole
+mechanism.
+
+That is the shape of it, and the line is **not** "reads run, writes ask". Most
+things an agent does to your desktop — themes, wallpapers, volume, brightness,
+launching apps, opening windows — are `safe` and run without asking, because
+undoing them is another sentence to the agent. What asks is the tier called
+`guarded`: installs, removals, migrations, reboots, shell plugins. What is never
+allowed at all is anything needing sudo.
+
+If that split is not the one you want, it is yours to change — a `deny` rule
+refuses a route outright, and an `ask` rule puts a route you consider risky
+behind a prompt even though it derives as safe.
+→ [What an agent is allowed to run](#what-an-agent-is-allowed-to-run)
 
 ### What to do next
 
-| If you want to… | Go to |
-|---|---|
-| Stop being asked about a command you always approve | Press **Always** on the prompt, or write an `allow` rule — [Being asked, and writing it down](#being-asked-and-writing-it-down) |
-| See what an agent has actually done to your desktop | [Seeing what it did](#seeing-what-it-did) |
-| Understand which commands ask and which do not | [What an agent is allowed to run](#what-an-agent-is-allowed-to-run) |
-| Turn a tool off, or change the port | [Configuration](#configuration) |
-| Know exactly what a hostile web page can and cannot do to you | [`SECURITY.md`](SECURITY.md) |
-| Read the tool reference | [`TOOLS.md`](TOOLS.md) |
+| If you want to…                                               | Go to                                                                                                                           |
+| ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Stop being asked about a command you always approve           | Press **Always** on the prompt, or write an `allow` rule — [Being asked, and writing it down](#being-asked-and-writing-it-down) |
+| See what an agent has actually done to your desktop           | [Seeing what it did](#seeing-what-it-did)                                                                                       |
+| Understand which commands ask and which do not                | [What an agent is allowed to run](#what-an-agent-is-allowed-to-run)                                                             |
+| Turn a tool off, or change the port                           | [Configuration](#configuration)                                                                                                 |
+| Know exactly what a hostile web page can and cannot do to you | [`SECURITY.md`](SECURITY.md)                                                                                                    |
+| Read the tool reference                                       | [`TOOLS.md`](TOOLS.md)                                                                                                          |
 
 ## How this works
 
@@ -129,23 +134,23 @@ adds or renames commands needs no change here.
 
 When an agent calls a tool, the daemon does four things in order: works out what
 kind of command it is, applies your rules, resolves what the arguments actually
-name on *your* machine, and asks you if that is what your rules call for. Only
+name on _your_ machine, and asks you if that is what your rules call for. Only
 then does it spawn anything — as an argument list, never through a shell.
 
 For the reasoning behind each of those, read [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 ## Documentation
 
-| File | For |
-|------|-----|
-| `README.md` | Using it — install, connect a client, configure, uninstall |
-| [`TOOLS.md`](TOOLS.md) | The tool reference, generated from the server's own schemas |
-| [`ARCHITECTURE.md`](ARCHITECTURE.md) | How it works. Start here to read the source |
-| [`SECURITY.md`](SECURITY.md) | What an agent can and cannot do, and why |
-| [`ROADMAP.md`](ROADMAP.md) | What is done, what is left, what was decided against |
-| [`CLAUDE.md`](CLAUDE.md) | Working agreement, and Omarchy plugin conventions |
-| [`permissions.example.json`](permissions.example.json) | A starting point for your own rules |
-| [`permissions.schema.json`](permissions.schema.json) | The schema your editor validates them against |
+| File                                                   | For                                                         |
+| ------------------------------------------------------ | ----------------------------------------------------------- |
+| `README.md`                                            | Using it — install, connect a client, configure, uninstall  |
+| [`TOOLS.md`](TOOLS.md)                                 | The tool reference, generated from the server's own schemas |
+| [`ARCHITECTURE.md`](ARCHITECTURE.md)                   | How it works. Start here to read the source                 |
+| [`SECURITY.md`](SECURITY.md)                           | What an agent can and cannot do, and why                    |
+| [`ROADMAP.md`](ROADMAP.md)                             | What is done, what is left, what was decided against        |
+| [`CLAUDE.md`](CLAUDE.md)                               | Working agreement, and Omarchy plugin conventions           |
+| [`permissions.example.json`](permissions.example.json) | A starting point for your own rules                         |
+| [`permissions.schema.json`](permissions.schema.json)   | The schema your editor validates them against               |
 
 ## Contents
 
@@ -197,7 +202,7 @@ on your desktop naming what it would do and what it resolved to — the theme, t
 monitor, the file. Clicking it opens a panel with **Allow once**, **Always** and
 **Deny**; ignoring it refuses. The question reaches you at the desktop rather
 than in whichever terminal the agent happens to be running in, because that is
-where you are. *Always* writes the decision down, so you are asked once rather
+where you are. _Always_ writes the decision down, so you are asked once rather
 than every time.
 
 ## What it does
@@ -215,12 +220,12 @@ Omarchy has two control surfaces, and this exposes both:
 
 **Four generic tools** cover both surfaces completely:
 
-| Tool | Does |
-|------|------|
+| Tool                      | Does                                                                  |
+| ------------------------- | --------------------------------------------------------------------- |
 | `omarchy_search_commands` | Finds commands, with arguments, examples, and whether they can be run |
-| `omarchy_run` | Runs one. Arguments never touch a shell |
-| `omarchy_shell_targets` | Lists IPC targets and every method signature |
-| `omarchy_shell_call` | Calls one |
+| `omarchy_run`             | Runs one. Arguments never touch a shell                               |
+| `omarchy_shell_targets`   | Lists IPC targets and every method signature                          |
+| `omarchy_shell_call`      | Calls one                                                             |
 
 One tool per command would put tens of thousands of tokens of schema into a
 client's context before it did anything, so discovery and dispatch are separate.
@@ -230,13 +235,13 @@ client's context before it did anything, so discovery and dispatch are separate.
 Some return what the generic runner structurally cannot — an image, or data that
 is not Omarchy's at all:
 
-| Tool | Does |
-|------|------|
-| `omarchy_screenshot` | Returns the screen as an image, so an agent can see it |
-| `omarchy_desktop_state` | Hyprland's monitors, workspaces, windows, and focus |
-| `omarchy_screen_text` | OCR, for reading what something says |
-| `omarchy_clipboard_read` / `_write` | The clipboard, which is not an Omarchy command |
-| `omarchy_system_status` | Eight probes in one call instead of eight round trips |
+| Tool                                | Does                                                   |
+| ----------------------------------- | ------------------------------------------------------ |
+| `omarchy_screenshot`                | Returns the screen as an image, so an agent can see it |
+| `omarchy_desktop_state`             | Hyprland's monitors, workspaces, windows, and focus    |
+| `omarchy_screen_text`               | OCR, for reading what something says                   |
+| `omarchy_clipboard_read` / `_write` | The clipboard, which is not an Omarchy command         |
+| `omarchy_system_status`             | Eight probes in one call instead of eight round trips  |
 
 The rest are simply asked for constantly, and a search round trip before every
 volume change is a bad trade:
@@ -253,13 +258,13 @@ through `omarchy_run`.
 **Eight resources** carry the reference material. Tools are how an agent acts;
 resources are how a person reads — in Claude Code they appear as `@` mentions:
 
-| URI | Holds |
-|-----|-------|
-| `omarchy://commands` | The whole registry, annotated with what this server may run |
-| `omarchy://permissions` | The rules in force, what each covers here, and every route they decide |
+| URI                       | Holds                                                                      |
+| ------------------------- | -------------------------------------------------------------------------- |
+| `omarchy://commands`      | The whole registry, annotated with what this server may run                |
+| `omarchy://permissions`   | The rules in force, what each covers here, and every route they decide     |
 | `omarchy://shell/targets` | Every IPC target with full method signatures — documented nowhere upstream |
-| `omarchy://desktop/state` | Monitors, workspaces, windows, focus |
-| `omarchy://system/status` | The system status aggregate |
+| `omarchy://desktop/state` | Monitors, workspaces, windows, focus                                       |
+| `omarchy://system/status` | The system status aggregate                                                |
 
 Plus three URI templates — `omarchy://command/{route}`,
 `omarchy://commands/{group}`, `omarchy://shell/target/{name}` — which between
@@ -313,13 +318,13 @@ For clients configured by file rather than by command, add `--json`:
 
 ```json
 {
-  "mcpServers": {
-    "omarchy": {
-      "type": "http",
-      "url": "http://127.0.0.1:8765/mcp",
-      "headers": { "Authorization": "Bearer <your token>" }
+    "mcpServers": {
+        "omarchy": {
+            "type": "http",
+            "url": "http://127.0.0.1:8765/mcp",
+            "headers": { "Authorization": "Bearer <your token>" }
+        }
     }
-  }
 }
 ```
 
@@ -334,7 +339,7 @@ omarchy-shell io.github.bruce-forte.mcp-server status
 curl -s http://127.0.0.1:8765/health
 ```
 
-`status` reports whether the daemon is *serving*, which is not the same as
+`status` reports whether the daemon is _serving_, which is not the same as
 running — a wedged HTTP loop still has a live process, so the plugin probes
 `/health` rather than trusting the pid.
 
@@ -344,23 +349,23 @@ The plug icon in the bar says whether the server is serving, and blinks when an
 agent makes a call — the only thing on the desktop that marks the moment
 something acted on it. Click it for a panel with three tabs:
 
-| Tab | Shows |
-|-----|-------|
+| Tab         | Shows                                                                                                                                                                                                              |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **Summary** | whether it is serving and on which port, how many tools are offered, whether either config file failed to load, anything the server has stopped asking about, and a button that opens `config.toml` in your editor |
-| **Log** | the last 30 records, newest first, each with a severity icon and how long ago it happened |
-| **Rules** | every rule in force and what it covers, flagged when it is not doing what it looks like it does — with **Remove** on the grants this daemon wrote and **Edit** on each file |
+| **Log**     | the last 30 records, newest first, each with a severity icon and how long ago it happened                                                                                                                          |
+| **Rules**   | every rule in force and what it covers, flagged when it is not doing what it looks like it does — with **Remove** on the grants this daemon wrote and **Edit** on each file                                        |
 
 Two things are not in a tab, because they must not be behind one. A question
 waiting for an answer sits **above** the tabs, and these buttons sit **below**
 them, on every tab:
 
-| Button | Does |
-|--------|------|
-| **Stop** / **Start** | Switches the daemon off, or back on. A Stop lasts across a shell restart and a logout, until you start it again |
-| **Restart** | Bounces the daemon. Needed after changing `server.port` or the `[log]` settings; every other key re-reads itself within two seconds |
-| **Check permissions** | Says whether `permissions.json` would let the daemon start — the one control that is useful precisely when it will not |
-| **Reload config** | Re-reads `config.toml` now rather than within two seconds |
-| **Copy client config** | Puts the `claude mcp add …` line on your clipboard. It carries the bearer token, so it is never shown on screen |
+| Button                 | Does                                                                                                                                |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| **Stop** / **Start**   | Switches the daemon off, or back on. A Stop lasts across a shell restart and a logout, until you start it again                     |
+| **Restart**            | Bounces the daemon. Needed after changing `server.port` or the `[log]` settings; every other key re-reads itself within two seconds |
+| **Check permissions**  | Says whether `permissions.json` would let the daemon start — the one control that is useful precisely when it will not              |
+| **Reload config**      | Re-reads `config.toml` now rather than within two seconds                                                                           |
+| **Copy client config** | Puts the `claude mcp add …` line on your clipboard. It carries the bearer token, so it is never shown on screen                     |
 
 **It is keyboard-driven.** `[` and `]` move between tabs; `j`/`k` or the arrows
 walk the controls and `h`/`l` move within a row; `Enter` presses what is lit and
@@ -437,14 +442,31 @@ See [`SECURITY.md`](SECURITY.md).
 Commands are classified automatically from the registry, so the policy does not
 rot when Omarchy adds commands:
 
-| Tier | Rule | Behaviour |
-|------|------|-----------|
-| `blocked` | needs sudo | Refused always. The daemon has no controlling terminal, so a password prompt could never be answered. Not overridable |
-| `guarded` | installs, removes, migrates, reboots, shell plugins | Refused unless allowed in your config, or approved by you at the time |
-| `safe` | everything else | Runs |
+| Tier      | Rule                                                | Behaviour                                                                                                             |
+| --------- | --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `blocked` | needs sudo                                          | Refused always. The daemon has no controlling terminal, so a password prompt could never be answered. Not overridable |
+| `guarded` | installs, removes, migrates, reboots, shell plugins | Refused unless allowed in your config, or approved by you at the time                                                 |
+| `safe`    | everything else                                     | Runs                                                                                                                  |
 
-`omarchy_search_commands` reports the tier of every result, so an agent can see
-what it may do before trying.
+**The line is what is hard to undo, not what writes.** This surprises people, so
+it is worth being explicit: switching your theme, setting a wallpaper, changing
+the volume or brightness, launching an app, moving a window and sending a
+notification are all `safe`, and an agent does them **without asking you**.
+Undoing any of them is one more sentence to the agent. What is `guarded` is the
+`install`, `remove`, `migrate`, `update`, `dev`, `plugin` and `snapshot` groups,
+plus a handful of individually destructive routes — `omarchy system reboot`,
+`omarchy theme remove` and `omarchy restart shell` among them.
+
+If you want the line drawn somewhere else, draw it: an `ask` rule puts a route
+behind a prompt even though it derives as safe, and a `deny` rule refuses it
+outright. To see exactly where it falls on _your_ machine:
+
+```bash
+omarchy-mcpd --permissions
+```
+
+`omarchy_search_commands` reports the tier of every result too, so an agent can
+see what it may do before trying.
 
 **An agent cannot switch this server off.** Its own IPC target answers `status`
 and `recent` to an agent — both read-only — and refuses every other verb, as is
@@ -463,12 +485,12 @@ which is meant to be checked into your dotfiles:
 
 ```json
 {
-  "permissions": {
-    "guardedDefault": "ask",
-    "deny":  [{ "kind": "route", "matcher": "omarchy dev *" }],
-    "ask":   [{ "kind": "route", "matcher": "omarchy install *" }],
-    "allow": [{ "kind": "route", "matcher": "omarchy theme *" }]
-  }
+    "permissions": {
+        "guardedDefault": "ask",
+        "deny": [{ "kind": "route", "matcher": "omarchy dev *" }],
+        "ask": [{ "kind": "route", "matcher": "omarchy install *" }],
+        "allow": [{ "kind": "route", "matcher": "omarchy theme *" }]
+    }
 }
 ```
 
@@ -476,7 +498,7 @@ Rules are read **deny, then ask, then allow** — the first match decides, and a
 narrower rule never jumps the queue. A matcher is either an exact route
 (`omarchy install app`) or a prefix with a trailing ` *` (`omarchy install *`,
 which also covers the bare `omarchy install`). There is no separate notion of a
-group: every route's group *is* its second word, so `omarchy install *` is the
+group: every route's group _is_ its second word, so `omarchy install *` is the
 `install` group.
 
 Set `"guardedDefault": "deny"` to have guarded commands refused outright rather
@@ -488,7 +510,7 @@ that one; the daemon never touches `permissions.json`, which is yours.
 
 #### An update can widen a rule you wrote
 
-`omarchy install *` means *the install prefix*, not the fifteen routes that
+`omarchy install *` means _the install prefix_, not the fifteen routes that
 existed the day you typed it. So an `omarchy update` can put three more commands
 inside a sentence you already agreed to, and nothing in your file changed to say
 so. The server watches for exactly that:
@@ -524,15 +546,15 @@ The panel's **Rules** tab lists every rule in force, grouped by the file it came
 from, with what each one covers and whether it is doing anything at all. Four
 things get flagged:
 
-| Flag | What it means |
-|------|---------------|
-| `error` | The rule asserts something that can never be honoured — granting a sudo route, say. The daemon refuses to start on one |
-| `void` | The matcher covers nothing on this Omarchy: a typo, or a route that was renamed |
-| `shadowed` | It never decides anything, because an earlier rule with a different effect already covers everything it matches. **You believe you granted this and you did not** |
-| `redundant` | The same, but the earlier rule agrees with it. Safe to remove |
+| Flag        | What it means                                                                                                                                                     |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `error`     | The rule asserts something that can never be honoured — granting a sudo route, say. The daemon refuses to start on one                                            |
+| `void`      | The matcher covers nothing on this Omarchy: a typo, or a route that was renamed                                                                                   |
+| `shadowed`  | It never decides anything, because an earlier rule with a different effect already covers everything it matches. **You believe you granted this and you did not** |
+| `redundant` | The same, but the earlier rule agrees with it. Safe to remove                                                                                                     |
 
 A shadowed or redundant rule names the rule that got there first, and which file
-that one is in, because the two fixes are *delete this* and *narrow that*.
+that one is in, because the two fixes are _delete this_ and _narrow that_.
 
 Grants written by answering **always** get a **Remove** button. It takes `allow`
 rules out of `permissions.local.json` and nothing else — never a `deny`, never
@@ -549,7 +571,7 @@ Copy [`permissions.example.json`](permissions.example.json) to start, and check
 your edits before restarting anything — see [The command line](#the-command-line)
 for all four verbs.
 
-`--permissions` answers the question you actually have — *why can it do that?* —
+`--permissions` answers the question you actually have — _why can it do that?_ —
 by expanding every rule against the commands your Omarchy ships and listing the
 routes the document decides. Agents read the same report as
 `omarchy://permissions`.
@@ -570,11 +592,11 @@ toast should not be able to grant a command.
 
 **Three answers, one place.** The panel shows the pending question with:
 
-| | |
-|---|---|
-| **Allow once** | runs this call and changes nothing |
-| **Always** | runs it *and* writes an `allow` rule for that exact command to `permissions.local.json` — never a wildcard, however many times you press it, because you consented to what was on the screen |
-| **Deny** | refuses, unambiguously |
+|                |                                                                                                                                                                                              |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Allow once** | runs this call and changes nothing                                                                                                                                                           |
+| **Always**     | runs it _and_ writes an `allow` rule for that exact command to `permissions.local.json` — never a wildcard, however many times you press it, because you consented to what was on the screen |
+| **Deny**       | refuses, unambiguously                                                                                                                                                                       |
 
 The bar icon opens the same panel, so a notification that fails to summon it is
 not a dead end.
@@ -598,7 +620,7 @@ Two things asking never reaches. Anything needing sudo stays refused — no answ
 makes it runnable, so no rule may grant it and writing one is an error the
 server tells you about rather than a line that quietly does nothing. And
 anything a `deny` rule covers stays refused, because that is a decision you
-already took and re-asking it would turn your *no* into a question.
+already took and re-asking it would turn your _no_ into a question.
 
 One route is asked about every time and can never be granted:
 `omarchy update lock`, whose own argument is a command line. Allowing it once
@@ -619,10 +641,10 @@ near misses named rather than corrected into a different theme:
 ```jsonc
 // omarchy_theme(action="set", name="Tokoy Night")
 {
-  "error": "no theme named 'Tokoy Night' is installed.",
-  "unresolved": "theme",
-  "reason": "not_found",
-  "did_you_mean": ["Tokyo Night"]
+    "error": "no theme named 'Tokoy Night' is installed.",
+    "unresolved": "theme",
+    "reason": "not_found",
+    "did_you_mean": ["Tokyo Night"],
 }
 ```
 
@@ -630,13 +652,13 @@ The same applies to monitor names, wallpaper paths, and URLs. `reason` tells an
 agent whether the name was wrong (`not_found`, worth retrying with another) or
 whether nothing could be checked (`source_unavailable`, retrying will not help).
 
-This is also what makes an approval prompt worth answering: it names *Tokyo
-Night*, not *"an agent wants to run omarchy theme set"*.
+This is also what makes an approval prompt worth answering: it names _Tokyo
+Night_, not _"an agent wants to run omarchy theme set"_.
 
 ## Seeing what it did
 
-Every tool call is appended to an activity log, so *what did that agent do to my
-desktop* has an answer after the daemon is gone:
+Every tool call is appended to an activity log, so _what did that agent do to my
+desktop_ has an answer after the daemon is gone:
 
 ```
 ~/.local/state/io.github.bruce-forte.mcp-server/activity.jsonl
@@ -646,9 +668,18 @@ One JSON object per line — what was called, what it was understood to be actin
 on, whether you approved it, how it ended, and how long it took:
 
 ```jsonc
-{"ts":"2026-08-31T14:22:07+02:00","tool":"omarchy_run","route":"omarchy theme set",
- "args":["tokyo-night"],"target":"Tokyo Night","tier":"guarded","consent":"accepted",
- "outcome":"ok","exit":0,"ms":142}
+{
+    "ts": "2026-08-31T14:22:07+02:00",
+    "tool": "omarchy_run",
+    "route": "omarchy theme set",
+    "args": ["tokyo-night"],
+    "target": "Tokyo Night",
+    "tier": "guarded",
+    "consent": "accepted",
+    "outcome": "ok",
+    "exit": 0,
+    "ms": 142,
+}
 ```
 
 Refusals are in there too — a guarded route that was stopped is more interesting
@@ -743,18 +774,18 @@ to read them in.
 
 ## Troubleshooting
 
-| Symptom | Cause and fix |
-|---------|---------------|
-| The bar icon shows `!` | The daemon is not serving. `journalctl --user -f \| grep omarchy-mcp` says why |
-| `omarchy-mcpd: command not found` | It is not on `PATH` by design — see [The command line](#the-command-line) |
-| Client cannot connect | Wrong or stale token. Re-run `clientConfig` and re-add the server |
-| `address already in use` | Something else has port 8765. Set `port` in the config, restart, then re-run `clientConfig` |
-| Bootstrap failed on first login | Usually no network yet. `omarchy-shell io.github.bruce-forte.mcp-server rebuild` |
-| A command is refused | Check its tier with `omarchy_search_commands`, or `omarchy-mcpd --permissions`. Sudo commands cannot be run at all |
-| Tools do not appear in the client | The client caches the tool list; reconnect it |
+| Symptom                                                            | Cause and fix                                                                                                                                                        |
+| ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The bar icon shows `!`                                             | The daemon is not serving. `journalctl --user -f \| grep omarchy-mcp` says why                                                                                       |
+| `omarchy-mcpd: command not found`                                  | It is not on `PATH` by design — see [The command line](#the-command-line)                                                                                            |
+| Client cannot connect                                              | Wrong or stale token. Re-run `clientConfig` and re-add the server                                                                                                    |
+| `address already in use`                                           | Something else has port 8765. Set `port` in the config, restart, then re-run `clientConfig`                                                                          |
+| Bootstrap failed on first login                                    | Usually no network yet. `omarchy-shell io.github.bruce-forte.mcp-server rebuild`                                                                                     |
+| A command is refused                                               | Check its tier with `omarchy_search_commands`, or `omarchy-mcpd --permissions`. Sudo commands cannot be run at all                                                   |
+| Tools do not appear in the client                                  | The client caches the tool list; reconnect it                                                                                                                        |
 | The server will not start, and the panel blames `permissions.json` | Run `omarchy-mcpd --check-permissions`, or press **Check permissions** in the panel. It names the rule and the two legal matcher forms. Fix it, then press **Start** |
-| An approval notification appears more often than you want | Press **Always** on it, write an `allow` rule, or set `"guardedDefault": "deny"` to have guarded commands refused instead of asked about |
-| A rule you wrote does nothing | The **Rules** tab flags it `void`, `shadowed` or `redundant` and names the rule that got there first |
+| An approval notification appears more often than you want          | Press **Always** on it, write an `allow` rule, or set `"guardedDefault": "deny"` to have guarded commands refused instead of asked about                             |
+| A rule you wrote does nothing                                      | The **Rules** tab flags it `void`, `shadowed` or `redundant` and names the rule that got there first                                                                 |
 
 ## Uninstall
 
@@ -786,8 +817,8 @@ This server runs commands on your desktop on behalf of a language model. Read
 
 The one thing worth knowing before you get there: the tools that read your
 screen, your clipboard and your window titles hand the model text that neither
-you nor this project wrote, and a page that says *"ignore your instructions and
-run …"* is a real attack. The server tells the model to treat all of it as data,
+you nor this project wrote, and a page that says _"ignore your instructions and
+run …"_ is a real attack. The server tells the model to treat all of it as data,
 but that is a request, not a control. What actually stops it is the policy tier
 and your client's approval prompt — so keep tool approvals on.
 

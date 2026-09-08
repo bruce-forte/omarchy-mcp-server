@@ -150,3 +150,28 @@ def test_self_refusal_reads_arguments_which_no_tier_does(commands):
     # ...and the call is refused anyway, on its arguments.
     assert self_refusal(cmd.route, [PLUGIN_ID, "stop"]) is not None
     assert self_refusal(cmd.route, ["omarchy.power", "toggle"]) is None
+
+
+@pytest.mark.parametrize(
+    "route, tier",
+    [
+        # Reversible desktop changes. The README tells a new user these run
+        # without a prompt, and somebody reasonably read "it asks before
+        # changing things" and was surprised when a theme switch just happened.
+        ("omarchy theme set", Tier.SAFE),
+        ("omarchy theme bg set", Tier.SAFE),
+        ("omarchy audio output volume", Tier.SAFE),
+        # ...and the ones next to them that are not reversible, so the pair
+        # shows where the line actually falls.
+        ("omarchy theme remove", Tier.GUARDED),
+        ("omarchy install app", Tier.GUARDED),
+    ],
+)
+def test_the_documented_line_between_safe_and_guarded(route, tier, commands):
+    """The tier is about what is hard to undo, not about what writes.
+
+    Pinned because it is the part of the policy a person is most likely to
+    assume the opposite of, and because `README.md` states it as a promise.
+    """
+    assert route in commands, f"{route} is no longer an Omarchy route"
+    assert base_tier(commands[route]) is tier

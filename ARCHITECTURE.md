@@ -444,8 +444,11 @@ The order is the part worth stating:
 | `deny` | refuse; nothing is resolved and nobody is asked |
 
 Resolution comes before the question and only on the ask path. Before, because a
-prompt reading *"set theme Tokyo Night"* is consent and one reading *"run
-omarchy theme set"* is not — the user cannot tell what they are approving. Only
+prompt reading *"remove theme Tokyo Night"* is consent and one reading *"run
+omarchy theme remove"* is not — the user cannot tell what they are approving.
+(`theme remove` rather than `theme set` throughout, because `set` is `safe` and
+is never asked about: the tier is about what is hard to undo, not about what
+writes.) Only
 on that path, because a refusal nobody will be asked about should not spend a
 subprocess on a resolver, and because a question answered *yes* and then refused
 as unresolvable has spent something scarcer than a subprocess.
