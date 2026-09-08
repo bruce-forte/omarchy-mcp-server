@@ -579,8 +579,9 @@ so. The server watches for exactly that:
 - a **rule that now covers more** than it did — the one worth being told about
 - a **rule that has stopped matching** — a `deny` that upstream renamed out from
   under you looks exactly like one that is working
-- **commands in a group this plugin has never classified**, which derive as safe
-  and run
+- **commands in a group this plugin has never classified**, which are guarded —
+  so nothing runs unasked — but which cost a prompt on every call until the group
+  is classified or you allow the routes
 
 New commands that fall under an existing `allow` are **held at ask** until you
 review them: restrictions extend forward, grants do not. A `deny` or `ask` rule

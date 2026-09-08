@@ -80,7 +80,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-from .policy import Tier, base_tier
+from .policy import GUARDED_GROUPS, GUARDED_ROUTES, Tier, base_tier
 from .registry import Command
 
 #: Guarded routes that may be asked about and never granted outright.
@@ -743,6 +743,33 @@ class Outcome:
         return self.rule is not None
 
 
+def _why_guarded(route: str) -> str:
+    """The first sentence of a guarded route's reason, in the person's terms.
+
+    Two different facts wear the same tier. A route in `GUARDED_GROUPS` is
+    guarded because somebody classified it; one in neither list is guarded
+    because nobody has, and telling an agent -- and the approval prompt, which
+    quotes this -- that a brand-new group "changes the system in ways that are
+    hard to undo" would be asserting something nobody has actually checked.
+
+    The group is the route's second word, which is why this needs the route and
+    not the `Command`: `evaluate` is reached from both, and the string is the
+    only place the difference shows.
+    """
+    parts = route.split()
+    group = parts[1] if len(parts) > 1 else ""
+    if group and group not in GUARDED_GROUPS and route not in GUARDED_ROUTES:
+        return (
+            f"`{route}` is in the {group!r} command group, which this MCP server has "
+            f"never classified -- it is newer than the server's own list. Unclassified "
+            f"is treated as guarded rather than assumed harmless, so it is asked about."
+        )
+    return (
+        f"`{route}` can change the system in ways that are hard to undo, and no "
+        f"permission rule covers it."
+    )
+
+
 def evaluate(
     route: str, tier: Tier, perms: Permissions, *, unreviewed: frozenset[str] = frozenset()
 ) -> Outcome:
@@ -787,8 +814,7 @@ def evaluate(
             perms.guarded_default,
             tier,
             None,
-            f"`{route}` can change the system in ways that are hard to undo, and no "
-            f"permission rule covers it. To allow it, add "
+            f"{_why_guarded(route)} To allow it, add "
             f'{{"kind": "route", "matcher": "{route}"}} to the "allow" list in '
             f"~/.config/omarchy/mcp/permissions.json.",
         )

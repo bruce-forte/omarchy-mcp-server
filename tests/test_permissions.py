@@ -938,3 +938,50 @@ class TestSeeding:
         path = tmp_path / "fresh" / "permissions.json"
         assert seed(path)
         assert path.exists()
+
+
+class TestAnUnclassifiedGroup:
+    """What `policy.SAFE_GROUPS` means once the document is consulted.
+
+    The tier is `policy.py`'s answer and is tested there. This is the half that
+    decides what actually happens to the call: guarded, so it asks; and every
+    rule still outranks that, in both directions.
+    """
+
+    #: A route Omarchy has not shipped, in a group nobody here has classified.
+    NEW = "omarchy backup wipe"
+
+    def test_it_asks_rather_than_running(self):
+        outcome = evaluate(self.NEW, Tier.GUARDED, Permissions())
+        assert outcome.effect is Effect.ASK
+        assert outcome.asks
+
+    def test_the_reason_says_nobody_classified_it(self):
+        """Not "changes the system in ways that are hard to undo" -- nobody has
+        checked that, and the prompt quotes this sentence to the user."""
+        reason = evaluate(self.NEW, Tier.GUARDED, Permissions()).reason
+        assert "never classified" in reason
+        assert "'backup'" in reason, "the group is the actionable half"
+        assert "hard to undo" not in reason
+
+    def test_a_classified_guarded_route_keeps_its_own_reason(self):
+        """The wording is per-route, so `omarchy install app` is unaffected."""
+        reason = evaluate("omarchy install app", Tier.GUARDED, Permissions()).reason
+        assert "hard to undo" in reason
+        assert "never classified" not in reason
+
+    def test_a_deny_rule_still_denies_it(self):
+        outcome = evaluate(self.NEW, Tier.GUARDED, pooled(deny=["omarchy backup *"]))
+        assert outcome.effect is Effect.DENY
+
+    def test_an_allow_rule_is_what_lets_it_run(self):
+        """The whole point: the user says so explicitly, once, and then it runs.
+        Answering "always" at the prompt writes exactly this rule."""
+        outcome = evaluate(self.NEW, Tier.GUARDED, pooled(allow=[self.NEW]))
+        assert outcome.effect is Effect.ALLOW
+
+    def test_guarded_default_deny_covers_it_too(self):
+        """It is guarded, so the switch that refuses guarded routes refuses this
+        one -- without anybody having to name a group they have not heard of."""
+        outcome = evaluate(self.NEW, Tier.GUARDED, pooled(guardedDefault="deny"))
+        assert outcome.effect is Effect.DENY

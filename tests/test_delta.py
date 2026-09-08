@@ -18,6 +18,7 @@ import pytest
 from omarchy_mcp import delta
 from omarchy_mcp.permissions import Effect, Permissions, Rule, evaluate
 from omarchy_mcp.policy import base_tier
+from omarchy_mcp.registry import Command
 
 
 def rules(*specs: tuple[Effect, str]) -> Permissions:
@@ -32,6 +33,26 @@ def rules(*specs: tuple[Effect, str]) -> Permissions:
 def without(commands, prefix: str) -> frozenset[str]:
     """A snapshot from before some routes existed."""
     return frozenset(r for r in commands if not r.startswith(prefix))
+
+
+def _arrival(route: str) -> Command:
+    """A command in a group the committed fixture does not contain.
+
+    Built rather than taken from the fixture on purpose: an unclassified group
+    is by definition one nobody has put in a list, and every group in the
+    fixture is in one (`test_policy.test_every_group_omarchy_ships_is_classified`
+    is the gate that keeps it that way).
+    """
+    return Command(
+        route=route,
+        binary="omarchy",
+        group=route.split()[1],
+        summary="",
+        args="",
+        examples=(),
+        requires_sudo=False,
+        hidden=False,
+    )
 
 
 class TestTheSnapshot:
@@ -167,25 +188,52 @@ class TestDeadRules:
 
 
 class TestAnUnclassifiedGroup:
-    def test_a_group_never_seen_before_is_flagged_and_urgent(self, commands):
-        """`GUARDED_GROUPS` is hand-written, so a destructive group Omarchy
-        invents tomorrow derives as safe and runs. That is the honest limit of
-        decision 4."""
-        seen = without(commands, "omarchy theme")
-        review = delta.compute(seen, commands, Permissions())
+    """A group in neither `GUARDED_GROUPS` nor `SAFE_GROUPS`.
+
+    This used to be a question about the snapshot -- is the group *new* since
+    the last acknowledgement -- because an unclassified group derived `safe` and
+    ran, so "new" was the only signal anything had happened. `SAFE_GROUPS` made
+    it a static property: unclassified is guarded whether it arrived today or
+    has been sitting unclassified for a year. The review still reports it,
+    because only a person can decide which list it belongs in.
+    """
+
+    def test_a_group_nobody_classified_is_flagged_and_urgent(self, commands):
+        arrived = dict(commands)
+        arrived["omarchy backup wipe"] = _arrival("omarchy backup wipe")
+        review = delta.compute(frozenset(commands), arrived, Permissions())
         flagged = [a for a in review.arrivals if a.unclassified]
 
-        assert flagged, "a whole new group must be reported"
-        assert all(a.effect == "allow" for a in flagged), "it still runs"
+        assert [a.route for a in flagged] == ["omarchy backup wipe"]
+        assert all(a.effect == "ask" for a in flagged), "guarded, so nothing runs"
+        assert all(a.tier == "guarded" for a in flagged)
         assert review.urgent
 
-    def test_a_new_route_in_a_familiar_group_is_not_flagged(self, commands):
-        """Every safe route's group is absent from GUARDED_GROUPS -- that is why
-        it is safe. The test is whether the *group* is new."""
+    def test_a_deny_rule_still_beats_it(self, commands):
+        """Restrictions extend forward. Guarded is the floor, not the ceiling."""
+        arrived = dict(commands)
+        arrived["omarchy backup wipe"] = _arrival("omarchy backup wipe")
+        review = delta.compute(
+            frozenset(commands), arrived, rules((Effect.DENY, "omarchy backup *"))
+        )
+        (new,) = [a for a in review.arrivals if a.route == "omarchy backup wipe"]
+        assert new.effect == "deny"
+        assert new.unclassified, "still worth reporting: the rule is the user's, not ours"
+
+    def test_a_new_route_in_a_classified_group_is_not_flagged(self, commands):
+        """`theme` is named in `SAFE_GROUPS`, so a new route in it is somebody's
+        decision already -- one new route, not one new group."""
         seen = frozenset(commands) - {"omarchy theme list"}
         review = delta.compute(seen, commands, Permissions())
         assert [a.unclassified for a in review.arrivals] == [False]
         assert not review.urgent
+
+    def test_a_whole_classified_group_arriving_is_not_flagged(self, commands):
+        """Every route in it is new and none of it is unclassified: the
+        classification is what this asks about, not the snapshot."""
+        review = delta.compute(without(commands, "omarchy theme"), commands, Permissions())
+        assert review.arrivals
+        assert not any(a.unclassified for a in review.arrivals)
 
     def test_a_handful_of_new_guarded_routes_is_not_urgent(self, commands):
         """They ask anyway. That can wait for the next time the panel opens."""

@@ -14,12 +14,35 @@ from omarchy_mcp.paths import PLUGIN_ID
 from omarchy_mcp.policy import (
     GUARDED_GROUPS,
     GUARDED_ROUTES,
+    SAFE_GROUPS,
     SELF_READ_VERBS,
     Tier,
     base_tier,
     self_refusal,
     shell_call_refusal,
+    unclassified,
 )
+from omarchy_mcp.registry import Command
+
+
+def command(route: str, *, sudo: bool = False) -> Command:
+    """A registry row with the group Omarchy would have given it.
+
+    Only for the classification tests below, which need a group the committed
+    fixture does not contain: the whole point of the allowlist is what happens
+    to a group nobody has seen, and a fixture is by definition a group somebody
+    has seen.
+    """
+    return Command(
+        route=route,
+        binary="omarchy",
+        group=route.split()[1],
+        summary="",
+        args="",
+        examples=(),
+        requires_sudo=sudo,
+        hidden=False,
+    )
 
 
 def test_every_sudo_command_is_blocked(commands):
@@ -58,6 +81,71 @@ def test_guarded_groups_still_exist(commands):
     live = {c.group for c in commands.values()}
     stale = GUARDED_GROUPS - live
     assert not stale, f"these guarded groups no longer exist in Omarchy: {sorted(stale)}"
+
+
+# --- an unclassified group is guarded, not safe -----------------------------
+#
+# The classification is an allowlist. `GUARDED_GROUPS` alone was a blocklist,
+# and a blocklist is wrong by default the day upstream adds anything: a group
+# absent from it derived `safe` and ran unasked on arrival.
+
+
+def test_a_group_in_neither_list_is_guarded():
+    """The property this whole design turns on. Omarchy ships `omarchy backup
+    wipe` tomorrow; nobody here has ever heard of `backup`."""
+    cmd = command("omarchy backup wipe")
+    assert cmd.group not in GUARDED_GROUPS
+    assert cmd.group not in SAFE_GROUPS
+    assert base_tier(cmd) is Tier.GUARDED
+
+
+def test_a_group_in_neither_list_reads_as_unclassified():
+    """Guarded for a different reason than `omarchy install app` is, and the
+    approval prompt says so rather than asserting it is destructive."""
+    assert unclassified(command("omarchy backup wipe")) is True
+
+
+def test_a_classified_group_is_not_unclassified():
+    """Both halves: named safe, and named guarded. Neither is a gap."""
+    assert unclassified(command("omarchy theme list")) is False
+    assert unclassified(command("omarchy install app")) is False
+
+
+def test_sudo_beats_an_unclassified_group():
+    """Blocked is the tier no rule promotes, and it is checked first. A sudo
+    command's group is not the interesting fact about it."""
+    cmd = command("omarchy backup wipe", sudo=True)
+    assert base_tier(cmd) is Tier.BLOCKED
+    assert unclassified(cmd) is False
+
+
+def test_every_group_omarchy_ships_is_classified(commands):
+    """The gate that makes the allowlist maintainable rather than a trap.
+
+    Refreshing `tests/fixtures/commands.json` from a newer Omarchy fails here
+    until somebody puts each new group in one list or the other -- which is the
+    decision this design exists to force, made at a keyboard rather than by a
+    command running unasked.
+    """
+    live = {c.group for c in commands.values()}
+    unnamed = live - GUARDED_GROUPS - SAFE_GROUPS
+    assert not unnamed, (
+        f"these groups are in neither GUARDED_GROUPS nor SAFE_GROUPS, so every "
+        f"command in them is guarded: {sorted(unnamed)}"
+    )
+
+
+def test_the_two_group_lists_do_not_overlap():
+    """A group in both would be a decision made twice and readable neither way."""
+    assert not (GUARDED_GROUPS & SAFE_GROUPS)
+
+
+def test_safe_groups_still_exist(commands):
+    """The mirror of `test_guarded_groups_still_exist`: a name left behind by an
+    upstream rename is a line nobody can act on."""
+    live = {c.group for c in commands.values()}
+    stale = SAFE_GROUPS - live
+    assert not stale, f"these safe groups no longer exist in Omarchy: {sorted(stale)}"
 
 
 # --- N12: an agent must not be able to switch off its own supervisor ---------

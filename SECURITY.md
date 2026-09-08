@@ -112,10 +112,21 @@ from configuration — not as a policy judgement, but because it could not work:
 the daemon has no controlling terminal, so a password prompt could never be
 answered. Allowing them would produce a hung request, not a privileged one.
 
-### Destructive commands are refused unless you allow them
+### Anything not classified as safe is refused unless you allow them
 
 Installing, removing, migrating, rebooting, and similar are `guarded` and refused
-by default. You can promote individual routes or whole groups in
+by default. **So is any command in a group this server has never classified.**
+
+The classification is an *allowlist*, and that is the security property: `policy.py`
+holds `SAFE_GROUPS`, the groups somebody looked at and left alone, and a group in
+neither that list nor `GUARDED_GROUPS` is guarded. A blocklist alone would be wrong
+by default the day Omarchy invents a group — absent from the blocklist used to mean
+"runs, unasked, on arrival", so an `omarchy update` introducing `omarchy backup wipe`
+would have executed it on first call with nothing on screen.
+
+The cost is deliberate: a genuinely harmless new group also asks, until somebody adds
+it to `SAFE_GROUPS`. One prompt and one line of code, against a destructive command
+running unattended. You can promote individual routes or whole groups in
 `~/.config/omarchy/mcp/config.toml`. The current lists are in
 [`TOOLS.md`](TOOLS.md), generated from the code.
 
@@ -281,9 +292,11 @@ keeps meaning what a wildcard means without silently granting what nobody saw.
 
 Also reported: a rule that has **stopped matching** — a silent loss of
 protection when it is a `deny` — and commands arriving in a **group this plugin
-has never classified**, which is the honest limit of deriving tiers from
-`GUARDED_GROUPS`. Those two raise a `critical` notification; a handful of new
-guarded routes that will ask anyway do not.
+has never classified**. The second no longer means anything runs: such a command
+is guarded, so it asks. It is reported because only you can decide which list the
+group belongs in, and until you do every call costs a prompt. Those two raise a
+`critical` notification; a handful of new guarded routes that will ask anyway do
+not.
 
 The comparison is against `registry-seen.json` in the state directory, which
 holds the **route list**, not a hash: a fingerprint says something changed and
