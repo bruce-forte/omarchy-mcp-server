@@ -74,15 +74,31 @@ py: sync
 run:
 	./bin/omarchy-mcpd
 
-# Ask the running daemon for something guarded and answer it here, over MCP
-# elicitation -- the consent path Claude Code cannot take, because the protocol
-# revision it negotiates carries no back-channel (ROADMAP F23). Declines by
-# default, so it changes nothing:
-#   make elicit
-#   make elicit ARGS='--accept'
-#   make elicit ARGS='"omarchy theme set" Nord'
+# Answer a real approval over MCP elicitation -- the consent path Claude Code
+# cannot take, because the protocol revision it negotiates carries no
+# back-channel (ROADMAP F23). Declines by default, so it changes nothing:
+#   make elicit                                  # the form: which theme?
+#   make elicit ARGS='--accept'                  # say yes to the consent question
+#   make elicit ARGS='"omarchy theme set" Nord'  # skip the form
+#
+# It starts its own daemon **from this checkout** and stops it again, so what
+# you are testing is the code in front of you. Talking to the installed plugin
+# instead would leave you debugging whatever was committed when you last ran
+# `omarchy plugin update`, which reads as the feature not working:
+#   make py CMD='examples/elicit_client.py --port 8765'
+ELICIT_PORT ?= 8799
 elicit: sync
-	@uv run --frozen python examples/elicit_client.py $(ARGS)
+	@echo "starting a daemon from this checkout on port $(ELICIT_PORT)..."
+	@./bin/omarchy-mcpd --port $(ELICIT_PORT) > /tmp/omarchy-mcp-elicit.log 2>&1 & \
+	pid=$$!; \
+	trap 'kill $$pid 2>/dev/null; wait $$pid 2>/dev/null' EXIT INT TERM; \
+	for _ in $$(seq 1 60); do \
+	  curl -sf "http://127.0.0.1:$(ELICIT_PORT)/health" >/dev/null 2>&1 && break; \
+	  sleep 0.25; \
+	done; \
+	curl -sf "http://127.0.0.1:$(ELICIT_PORT)/health" >/dev/null 2>&1 || { \
+	  echo "the daemon did not come up; see /tmp/omarchy-mcp-elicit.log"; exit 1; }; \
+	uv run --frozen python examples/elicit_client.py --port $(ELICIT_PORT) $(ARGS)
 
 clean:
 	rm -rf .venv .pytest_cache .ruff_cache

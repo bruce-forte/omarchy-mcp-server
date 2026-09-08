@@ -702,7 +702,7 @@ Claude Code does the second, so elicitation cannot reach it — not a client gap
 and not something to wait out, but the negotiated revision. That is why the
 notification is the primary surface rather than a nicety beside it.
 
-You can watch the other path work. From a checkout, with the daemon running:
+You can watch the other path work. From a checkout:
 
 ```bash
 make elicit                                  # the form: which theme?
@@ -713,6 +713,17 @@ make elicit ARGS='--accept'                  # ...and say yes to it
 It attaches as a handshake-era client, so the daemon asks *it* rather than your
 desktop, and the question is printed in your terminal.
 `examples/elicit_client.py` explains the negotiation in its own docstring.
+
+**It starts its own daemon from the checkout** on port 8799 and stops it again,
+so what you are testing is the code in front of you. That is not a detail: the
+installed plugin is whatever was committed when you last ran
+`omarchy plugin update`, and pointing the demo at that leaves you debugging an
+older build — which reads exactly like the feature not working. To use the
+installed daemon deliberately:
+
+```bash
+make py CMD='examples/elicit_client.py --port 8765'
+```
 
 **Two different questions, and the bare `make elicit` shows both.** It calls
 `omarchy_theme(action="set")` and deliberately names no theme, which is a

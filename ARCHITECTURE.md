@@ -440,6 +440,13 @@ make elicit                     # declines, so nothing runs
 make elicit ARGS='--accept'     # says yes
 ```
 
+It spawns a daemon from the checkout on port 8799 and stops it again, rather
+than talking to the installed plugin. The installed plugin is a *clone* of
+whatever was committed at the last `omarchy plugin update`, so pointing a demo
+at it while developing means testing an older build, and the failure looks like
+the feature being broken rather than absent. The client says so when the server
+had every reason to ask and did not.
+
 It shows both kinds of elicitation, which are worth telling apart. `gate.py`
 uses it to ask **may this run** -- a schema with nothing required, where any
 accept will do. `tools/control.py` uses it to ask **which one did you mean**:
