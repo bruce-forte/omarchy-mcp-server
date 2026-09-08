@@ -13,6 +13,12 @@ dependencies = [
     # not apply; see ROADMAP.md finding F1.
     "mcp>=2,<3",
     "uvicorn>=0.30",
+    # `mcp` brings this in, but three modules here import it directly -- the
+    # ASGI types in `auth.py` and `activity.py`, the request and response types
+    # in `server.py` -- and a direct import earns a declared dependency. The
+    # bound is the major, like `mcp`'s above: it is the SDK that decides which
+    # starlette is actually installed.
+    "starlette>=1,<2",
 ]
 
 [dependency-groups]

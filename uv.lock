@@ -356,6 +356,7 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "mcp" },
+    { name = "starlette" },
     { name = "uvicorn" },
 ]
 
@@ -370,6 +371,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "mcp", specifier = ">=2,<3" },
+    { name = "starlette", specifier = ">=1,<2" },
     { name = "uvicorn", specifier = ">=0.30" },
 ]
 
