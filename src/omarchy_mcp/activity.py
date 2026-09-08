@@ -477,6 +477,43 @@ def tail(n: int = 20, path: Path | None = None) -> list[dict]:
     return mark_unclosed(out)
 
 
+#: Outcomes that mean the machine is wrong, rather than the call being refused
+#: or failing on its own terms. `not_installed` is here because a missing
+#: dependency is a defect on the desktop, not a thing an agent did.
+ERROR_OUTCOMES = frozenset({"error", "not_installed"})
+
+#: Outcomes worth noticing that are nonetheless working as designed. A refusal
+#: is the policy doing its job, and a timed-out question is nobody at the desk.
+WARN_OUTCOMES = frozenset({"failed", "timed_out", "refused"})
+
+#: Events that mean the daemon is running something other than what the files
+#: say. Both are states a person has to act on.
+ERROR_EVENTS = frozenset({"config_rejected", "permissions_rejected", "dropped"})
+
+
+def level(body: dict) -> str:
+    """How loud one record is: ``i``, ``w`` or ``e``.
+
+    Derived from the record's kind rather than stored, so the file keeps its
+    shape and an old log reads the same as a new one. The panel's Log tab shows
+    it as a column; deriving it in QML instead would put the judgement of what
+    counts as wrong in the UI layer, where the terminal could not agree with it.
+    """
+    if "event" in body:
+        if body.get("event") in ERROR_EVENTS:
+            return "e"
+        # A session with no recorded end. Expected after `omarchy restart
+        # shell`, which is why it is a warning rather than an error -- see F30.
+        return "w" if body.get("unclosed") else "i"
+
+    outcome = str(body.get("outcome", ""))
+    if outcome in ERROR_OUTCOMES:
+        return "e"
+    if outcome in WARN_OUTCOMES:
+        return "w"
+    return "i"
+
+
 def render(body: dict) -> str:
     """One record as a line a person reads, for ``omarchy-mcpd --tail``."""
     when = str(body.get("ts", ""))[11:19]

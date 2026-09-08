@@ -474,7 +474,18 @@ def main(argv: list[str] | None = None) -> int:
             # will. The bar panel has to tell those apart -- "no calls" shown
             # to someone whose counter reads 42 is a lie the widget would be
             # telling on the daemon's behalf.
-            print(json.dumps({"activity": cfg.activity, "records": records}))
+            # `level` is derived here rather than stored, so the panel's Log
+            # column and a terminal reading the same file cannot disagree about
+            # what counts as wrong. Added to the copy, never to the record: it
+            # is not a field of the log.
+            print(
+                json.dumps(
+                    {
+                        "activity": cfg.activity,
+                        "records": [{**r, "level": activity.level(r)} for r in records],
+                    }
+                )
+            )
         else:
             for body in records:
                 print(activity.render(body))
