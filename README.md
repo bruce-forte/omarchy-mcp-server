@@ -7,10 +7,132 @@ Runs as an **Omarchy plugin**, so there is no systemd unit to enable, no second
 install step, and no separate package. The plugin supervises a small daemon; the
 daemon starts with your session and stops with it.
 
-> **Status: Phase 6.** Nineteen tools, eight resources, a supervised daemon, a
-> bar widget that says whether it is serving, approval prompts that reach the
-> desktop, permissions you can read and edit from the bar, and an activity log
-> of everything an agent did. See [`ROADMAP.md`](ROADMAP.md).
+> **Status: Phase 6, complete.** Nineteen tools, eight resources, a supervised
+> daemon, a bar widget that says whether it is serving, approval prompts that
+> reach the desktop, permissions you can read and edit from the bar, and an
+> activity log of everything an agent did. See [`ROADMAP.md`](ROADMAP.md).
+
+## Getting started
+
+Five steps, about two minutes. Each links to the section that goes deeper.
+
+### 1. Install the plugin
+
+```bash
+omarchy plugin add https://github.com/bruce-forte/omarchy-mcp-server.git --enable
+```
+
+The first run builds a Python environment under
+`~/.local/state/io.github.bruce-forte.mcp-server/` — a second or two, and it
+needs the network once. Nothing else is installed and no service is enabled;
+`omarchy-shell` supervises the daemon from now on.
+
+A **plug icon** appears in your bar. That icon is the whole UI: it says whether
+the server is serving, and clicking it opens the panel where everything else
+happens. → [Install](#install)
+
+### 2. Give yourself a shortcut to the CLI
+
+The daemon's own command lives inside the plugin directory and is **not** on
+your `PATH`. Everything below, and the panel itself, refers to it as
+`omarchy-mcpd`, so make that true:
+
+```bash
+echo "alias omarchy-mcpd='~/.config/omarchy/plugins/io.github.bruce-forte.mcp-server/bin/omarchy-mcpd'" \
+  >> ~/.bashrc && source ~/.bashrc
+```
+
+Skip this if you would rather type the full path each time. It is only ever
+needed from a terminal — the bar panel needs none of it.
+
+### 3. Connect your client
+
+The server requires a bearer token, generated on first run. Print the exact line
+to run:
+
+```bash
+omarchy-shell io.github.bruce-forte.mcp-server clientConfig
+```
+
+which gives you something like:
+
+```bash
+claude mcp add --transport http omarchy http://127.0.0.1:8765/mcp \
+  --header "Authorization: Bearer <your token>"
+```
+
+Run it, and the agent has the desktop. More than one client can attach at once.
+→ [Connecting a client](#connecting-a-client)
+
+### 4. Check it is actually serving
+
+```bash
+omarchy-shell io.github.bruce-forte.mcp-server status
+```
+
+Or just look at the bar: the plug icon shows `!` when the daemon is not serving,
+and blinks when an agent makes a call. → [Checking it works](#checking-it-works)
+
+### 5. Ask the agent for something
+
+Try *"what theme am I using, and what else is installed?"* — a read, so it runs
+without asking. Then try *"switch to Tokyo Night"*, and watch what happens: a
+**critical notification** appears on your desktop naming the command and the
+theme it resolved to. Clicking it opens the panel, where **Allow once**,
+**Always** and **Deny** are. Ignoring it refuses.
+
+That is the shape of the whole thing. Reads run; commands that change your
+system in ways that are hard to undo ask you, at your desk, naming exactly what
+they would do. → [What an agent is allowed to run](#what-an-agent-is-allowed-to-run)
+
+### What to do next
+
+| If you want to… | Go to |
+|---|---|
+| Stop being asked about a command you always approve | Press **Always** on the prompt, or write an `allow` rule — [Being asked, and writing it down](#being-asked-and-writing-it-down) |
+| See what an agent has actually done to your desktop | [Seeing what it did](#seeing-what-it-did) |
+| Understand which commands ask and which do not | [What an agent is allowed to run](#what-an-agent-is-allowed-to-run) |
+| Turn a tool off, or change the port | [Configuration](#configuration) |
+| Know exactly what a hostile web page can and cannot do to you | [`SECURITY.md`](SECURITY.md) |
+| Read the tool reference | [`TOOLS.md`](TOOLS.md) |
+
+## How this works
+
+Four pieces, one process each doing one job:
+
+```
+  omarchy-shell (Quickshell)
+    │
+    ├── Service.qml ──spawns──> bin/omarchy-mcpd ──> python -m omarchy_mcp
+    │        │                    (bootstrap)            (the daemon)
+    │        │                                             │
+    │        │<─── state + one line per tool call ─────────┤
+    │        ├──── polls GET /health every 10s ────────────┘
+    │        │
+    │        └── IpcHandler: status, recent, review, permissions, start, stop, …
+    │
+    └── BarWidget.qml ── the plug icon, and the panel behind it
+```
+
+- **The daemon** is a small HTTP server bound to `127.0.0.1`, speaking MCP behind
+  a bearer token. It holds the policy, the permissions, and the activity log.
+- **`Service.qml`** supervises it: starts it with your session, restarts it if it
+  dies, and probes `/health` rather than trusting that the process exists — a
+  wedged HTTP loop still has a live pid.
+- **`BarWidget.qml`** is the plug icon and its panel. It is the surface you use
+  to answer a question, read what happened, and see your rules.
+
+**Nothing here is a hand-written catalogue.** `omarchy commands --json`
+describes every command Omarchy ships; the daemon reads that listing live and
+classifies each route by rule rather than by a list, so an `omarchy update` that
+adds or renames commands needs no change here.
+
+When an agent calls a tool, the daemon does four things in order: works out what
+kind of command it is, applies your rules, resolves what the arguments actually
+name on *your* machine, and asks you if that is what your rules call for. Only
+then does it spawn anything — as an argument list, never through a shell.
+
+For the reasoning behind each of those, read [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 ## Documentation
 
@@ -27,6 +149,8 @@ daemon starts with your session and stops with it.
 
 ## Contents
 
+- [Getting started](#getting-started)
+- [How this works](#how-this-works)
 - [What this is](#what-this-is)
 - [What it does](#what-it-does)
 - [Install](#install)
@@ -35,6 +159,7 @@ daemon starts with your session and stops with it.
 - [Configuration](#configuration)
 - [What an agent is allowed to run](#what-an-agent-is-allowed-to-run)
 - [Seeing what it did](#seeing-what-it-did)
+- [The command line](#the-command-line)
 - [Development](#development)
 - [Troubleshooting](#troubleshooting)
 - [Uninstall](#uninstall)
@@ -198,6 +323,10 @@ For clients configured by file rather than by command, add `--json`:
 }
 ```
 
+The panel's **Copy client config** button puts the same line on your clipboard
+without showing the token on screen, which is the one to use during a screen
+share.
+
 ## Checking it works
 
 ```bash
@@ -263,9 +392,20 @@ shows its default, so keys you leave alone keep tracking upstream defaults.
 # timeout_ms = 30000
 # max_output_b = 262144
 
+[tools]
+# Curated tools to switch off. Everything they do stays reachable through
+# omarchy_run; a disabled tool is absent from the client's list, not refused.
+# disabled = ["omarchy_screenshot", "omarchy_clipboard_write"]
+
 [log]
 # level = "info"
+# activity = true
+# activity_max_bytes = 1048576
+# activity_file = "activity.jsonl"
 ```
+
+The full template, with every key explained, is
+[`config.example.toml`](config.example.toml).
 
 What an agent may run is **not** in this file. It lives beside it in
 `permissions.json` — see [Being asked, and writing it down](#being-asked-and-writing-it-down).
@@ -307,9 +447,10 @@ rot when Omarchy adds commands:
 what it may do before trying.
 
 **An agent cannot switch this server off.** Its own IPC target answers `status`
-and `recent` to an agent — both read-only — and refuses every other verb, as is any command that would disable,
-remove or replace this plugin. The refusal points at the bar panel, which is
-where you press Stop, Restart or Reload config. See [`SECURITY.md`](SECURITY.md).
+and `recent` to an agent — both read-only — and refuses every other verb, as is
+any command that would disable, remove or replace this plugin. The refusal
+points at the bar panel, which is where you press Stop, Restart or Reload
+config. See [`SECURITY.md`](SECURITY.md).
 
 ### Being asked, and writing it down
 
@@ -340,6 +481,10 @@ group: every route's group *is* its second word, so `omarchy install *` is the
 
 Set `"guardedDefault": "deny"` to have guarded commands refused outright rather
 than asked about.
+
+Beside it, `permissions.local.json` is the daemon's own file: the only thing it
+ever writes, holding the rules you created by pressing **Always**. Gitignore
+that one; the daemon never touches `permissions.json`, which is yours.
 
 #### An update can widen a rule you wrote
 
@@ -375,9 +520,9 @@ and offers **Prune**, which removes them from `permissions.local.json` only.
 
 ### Seeing the rules, and taking one back
 
-The panel's **RULES** section lists every rule in force, grouped by the file it
-came from, with what each one covers and whether it is doing anything at all.
-Four things get flagged:
+The panel's **Rules** tab lists every rule in force, grouped by the file it came
+from, with what each one covers and whether it is doing anything at all. Four
+things get flagged:
 
 | Flag | What it means |
 |------|---------------|
@@ -401,19 +546,8 @@ need attention. That verb, like `review` and `pending`, answers **you** — an
 agent asking this plugin's own target gets only `status` and `recent`.
 
 Copy [`permissions.example.json`](permissions.example.json) to start, and check
-your edits before restarting anything:
-
-```bash
-omarchy-mcpd --check-permissions   # would the daemon start?
-omarchy-mcpd --permissions         # what is in force, and what each rule covers
-omarchy-mcpd --review              # what changed under it since you last looked
-omarchy-mcpd --edit permissions    # open it in your editor, with a template if new
-```
-
-`--edit` takes `permissions`, `local` or `config`. It opens the file in whatever
-editor you use, and if the permissions file is not there yet it writes a
-starting one first — an empty rule block and the `$schema` line, so your editor
-checks a matcher as you type it. It never changes a file that already exists.
+your edits before restarting anything — see [The command line](#the-command-line)
+for all four verbs.
 
 `--permissions` answers the question you actually have — *why can it do that?* —
 by expanding every rule against the commands your Omarchy ships and listing the
@@ -426,6 +560,8 @@ is a protection you think you have and do not. You get a critical notification
 naming the problem, the bar panel says so, and the panel's **Check permissions**
 button tells you when the fix is good. (An edit made while the server is running
 is gentler: a broken save leaves the rules it already had in force.)
+
+### What being asked looks like
 
 A guarded route raises a critical notification naming the command and what it
 resolved to — the theme, the monitor, the path. **Clicking it opens the panel.**
@@ -473,6 +609,8 @@ question appears there instead. Claude Code's does not — the protocol revision
 it negotiates carries no server-initiated requests at all — which is why the
 notification is the primary surface rather than a nicety beside it.
 
+### Arguments are checked before anything runs
+
 Whatever the tier, an argument that names something is checked against your
 machine before anything is spawned. A theme name is matched the way Omarchy
 matches it — case and spaces do not count — and a near miss is refused with the
@@ -491,6 +629,9 @@ near misses named rather than corrected into a different theme:
 The same applies to monitor names, wallpaper paths, and URLs. `reason` tells an
 agent whether the name was wrong (`not_found`, worth retrying with another) or
 whether nothing could be checked (`source_unavailable`, retrying will not help).
+
+This is also what makes an approval prompt worth answering: it names *Tokyo
+Night*, not *"an agent wants to run omarchy theme set"*.
 
 ## Seeing what it did
 
@@ -517,7 +658,7 @@ than a safe one that ran. `outcome` is one of `ok`, `failed`, `timed_out`,
 Read the end of it without `jq`, running or not:
 
 ```bash
-~/.config/omarchy/plugins/io.github.bruce-forte.mcp-server/bin/omarchy-mcpd --tail 20
+omarchy-mcpd --tail 20
 ```
 
 Or click the bar icon, which shows the same records without their arguments.
@@ -529,7 +670,45 @@ copied, and it is created `0600` in a `0700` directory. It rotates at 1 MiB
 keeping one previous generation, so it costs at most 2 MiB.
 
 Switch it off, resize it, or rename it under `[log]` in your config; see
-[`config.example.toml`](config.example.toml).
+[Configuration](#configuration).
+
+## The command line
+
+`omarchy-mcpd` is the daemon, and also the tool for reading its state from a
+terminal. It is **not on your `PATH`** — it lives inside the plugin directory:
+
+```
+~/.config/omarchy/plugins/io.github.bruce-forte.mcp-server/bin/omarchy-mcpd
+```
+
+Alias it, as in [Getting started](#2-give-yourself-a-shortcut-to-the-cli), or
+type the path. Every verb below reads files directly, so all of them work
+whether or not the daemon is running — which is exactly when you need them.
+
+```bash
+omarchy-mcpd --tail 20             # the last 20 things an agent did
+omarchy-mcpd --permissions         # what is in force, and what each rule covers
+omarchy-mcpd --check-permissions   # would the daemon start? exit 0 if yes
+omarchy-mcpd --review              # what changed under your rules since you looked
+omarchy-mcpd --edit permissions    # open it in your editor, with a template if new
+omarchy-mcpd --print-client-config # the client setup line, with the token
+```
+
+`--edit` takes `permissions`, `local` or `config`. It opens the file in whatever
+editor you use, and if the permissions file is not there yet it writes a
+starting one first — an empty rule block and the `$schema` line, so your editor
+checks a matcher as you type it. It never changes a file that already exists.
+
+`--tail`, `--review`, `--permissions` and `--print-client-config` all take
+`--json` for a machine-readable form. `--version` prints the version.
+
+The same answers are reachable through the plugin's IPC target, which is what a
+script or another agent discovers:
+
+```bash
+omarchy-shell io.github.bruce-forte.mcp-server status
+qs ipc -n -p "$OMARCHY_PATH/shell" show     # every verb, with signatures
+```
 
 ## Development
 
@@ -543,9 +722,10 @@ omarchy plugin update io.github.bruce-forte.mcp-server
 `plugin add` **clones**, so only committed work gets installed.
 
 ```bash
-make check        # tests, qmllint, manifest validation
+make check        # tests, qmllint, shellcheck, manifest validation, staleness gates
 make test
 make tools        # regenerate TOOLS.md from the server's schemas
+make schema       # regenerate permissions.schema.json from the pydantic models
 make run          # run the daemon in the foreground
 ```
 
@@ -557,18 +737,24 @@ anywhere inside a plugin folder and a virtualenv is largely symlinks.
 (`omarchy-shell io.github.bruce-forte.mcp-server restart`). Editing QML needs
 `omarchy restart shell`.
 
+The source carries its own documentation: every module opens with why it is
+shaped the way it is, and [`ARCHITECTURE.md`](ARCHITECTURE.md) says which order
+to read them in.
+
 ## Troubleshooting
 
 | Symptom | Cause and fix |
 |---------|---------------|
 | The bar icon shows `!` | The daemon is not serving. `journalctl --user -f \| grep omarchy-mcp` says why |
+| `omarchy-mcpd: command not found` | It is not on `PATH` by design — see [The command line](#the-command-line) |
 | Client cannot connect | Wrong or stale token. Re-run `clientConfig` and re-add the server |
-| `address already in use` | Something else has port 8765. Set `port` in the config, then re-run `clientConfig` |
+| `address already in use` | Something else has port 8765. Set `port` in the config, restart, then re-run `clientConfig` |
 | Bootstrap failed on first login | Usually no network yet. `omarchy-shell io.github.bruce-forte.mcp-server rebuild` |
-| A command is refused | Check its tier with `omarchy_search_commands`. Sudo commands cannot be run at all |
+| A command is refused | Check its tier with `omarchy_search_commands`, or `omarchy-mcpd --permissions`. Sudo commands cannot be run at all |
 | Tools do not appear in the client | The client caches the tool list; reconnect it |
 | The server will not start, and the panel blames `permissions.json` | Run `omarchy-mcpd --check-permissions`, or press **Check permissions** in the panel. It names the rule and the two legal matcher forms. Fix it, then press **Start** |
-| An approval notification appears more often than you want | Write an `allow` rule for the route, or set `"guardedDefault": "deny"` to have guarded commands refused instead of asked about |
+| An approval notification appears more often than you want | Press **Always** on it, write an `allow` rule, or set `"guardedDefault": "deny"` to have guarded commands refused instead of asked about |
+| A rule you wrote does nothing | The **Rules** tab flags it `void`, `shadowed` or `redundant` and names the rule that got there first |
 
 ## Uninstall
 
