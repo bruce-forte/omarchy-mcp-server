@@ -23,6 +23,7 @@ dev = [
     # same thing: a pyright release that adds a check would otherwise fail the
     # build on a commit that changed nothing.
     "pyright==1.1.411",
+    "ruff==0.16.6",
 ]
 
 [tool.pytest.ini_options]
@@ -33,6 +34,35 @@ markers = ["anyio: async test, run on the asyncio backend"]
 [tool.ruff]
 line-length = 100
 src = ["src"]
+
+# Only the linter is wired up, not `ruff format`. The line breaks in this
+# codebase are hand-placed -- an argument list broken where the reader needs the
+# break, not where 100 columns happen to fall -- and a formatter would rewrite
+# most of the source to no benefit.
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle: line length, whitespace, imports after code
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes: unused imports and names, undefined names
+    "I",    # isort: one import order, so a diff never argues about it
+    "UP",   # pyupgrade: syntax this project's floor (3.11) makes obsolete
+    "B",    # bugbear: the mistakes that are legal Python and still wrong
+    "BLE",  # blind-except: `except Exception` needs a written reason
+    "C4",   # comprehensions
+    "RUF",  # ruff's own, including stale `noqa` directives
+]
+# `class Effect(str, Enum)` rather than `StrEnum`. The two differ in what
+# `str()` and an f-string give back -- the member for one, the value for the
+# other -- and this project's enums are serialised through an explicit `.value`
+# everywhere precisely so that the distinction never has to be remembered.
+ignore = ["UP042"]
+
+# `from . import config as config_module, delta as delta_module, ...` stays one
+# statement. The default splits every aliased member into a statement of its
+# own, which turns the one place this project renames a module on import into
+# five near-identical lines.
+[tool.ruff.lint.isort]
+combine-as-imports = true
 
 # The project is never installed into the venv (see the note at the top), so the
 # type checker is told where the package lives the same way pytest is.

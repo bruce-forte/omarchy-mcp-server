@@ -259,7 +259,7 @@ async def main() -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(anyio.run(main))
-    except* Exception as group:
+    except* Exception as group:  # noqa: BLE001 -- the transport raises anything
         # The transport wraps failures in an ExceptionGroup, and a connection
         # refused is the ordinary case here rather than a bug worth a traceback.
         # Groups nest, so the leaves are what carry the message worth printing:

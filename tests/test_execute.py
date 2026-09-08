@@ -103,5 +103,5 @@ def test_ordinary_commands_are_not_detached():
 def test_cap_boundary_is_not_off_by_one():
     text = "x" * 100
     assert execute.cap(text, 100) == (text, False)
-    capped, truncated = execute.cap(text, 99)
+    _, truncated = execute.cap(text, 99)
     assert truncated is True

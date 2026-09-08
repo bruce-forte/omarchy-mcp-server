@@ -889,7 +889,7 @@ omarchy plugin update io.github.bruce-forte.mcp-server
 `plugin add` **clones**, so only committed work gets installed.
 
 ```bash
-make check        # tests, pyright, qmllint, shellcheck, manifest validation, gates
+make check        # tests, ruff, pyright, qmllint, shellcheck, validation, gates
 make test
 make tools        # regenerate TOOLS.md from the server's schemas
 make schema       # regenerate permissions.schema.json from the pydantic models

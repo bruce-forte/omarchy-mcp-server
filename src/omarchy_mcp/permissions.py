@@ -222,7 +222,10 @@ class RuleModel(BaseModel):
         for the registry, and the answer changes with an Omarchy upgrade -- see
         `check`.
         """
-        legal = 'either an exact route ("omarchy install app") or a prefix and a trailing " *" ("omarchy install *")'
+        legal = (
+            'either an exact route ("omarchy install app") or a prefix and a '
+            'trailing " *" ("omarchy install *")'
+        )
         if value != value.strip() or "  " in value:
             raise ValueError(f"{value!r} has stray whitespace; {legal}")
         if not value:

@@ -27,7 +27,6 @@ from mcp.server.mcpserver import Context
 from mcp.types import ToolAnnotations
 
 from .. import execute, gate, registry, shell
-from ..config import Config
 from ..permissions import describe
 from ..policy import shell_call_refusal
 from ..settings import Settings

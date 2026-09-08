@@ -93,6 +93,6 @@ class Clients:
                 continue
             try:
                 await connection.send_tool_list_changed()
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 -- a dead client is not our failure
                 self._log.debug("could not notify a client (%s); dropping it", exc)
                 self._connections.discard(connection)

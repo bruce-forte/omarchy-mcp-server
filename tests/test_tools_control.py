@@ -71,8 +71,8 @@ class TestToolBehaviour:
 
         from omarchy_mcp.config import Config
         from omarchy_mcp.settings import Settings
-        from omarchy_mcp.tools.catalogue import Catalogue
         from omarchy_mcp.stats import Stats
+        from omarchy_mcp.tools.catalogue import Catalogue
 
         ran = []
 
@@ -165,8 +165,12 @@ class TestAskingWhichTheme:
     """
 
     class Elicitation:
-        def __init__(self, form=object(), url=None):
-            self.form, self.url = form, url
+        # ``None`` as the default and the marker built inside, because a call in
+        # a default argument is evaluated once at definition and shared by every
+        # instance. Harmless for an opaque marker; a trap for anything mutable.
+        def __init__(self, form=None, url=None):
+            self.form = object() if form is None else form
+            self.url = url
 
     class Caps:
         def __init__(self, elicitation):

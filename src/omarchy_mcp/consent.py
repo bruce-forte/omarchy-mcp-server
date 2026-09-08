@@ -128,7 +128,10 @@ def supports_asking(capabilities) -> bool:
     elicitation = getattr(capabilities, "elicitation", None)
     if elicitation is None:
         return False
-    return getattr(elicitation, "url", None) is None or getattr(elicitation, "form", None) is not None
+    return (
+        getattr(elicitation, "url", None) is None
+        or getattr(elicitation, "form", None) is not None
+    )
 
 
 def unsupported(what: str, *, timeout_s: float = DEFAULT_TIMEOUT_S) -> Answer:

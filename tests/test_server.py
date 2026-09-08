@@ -15,8 +15,8 @@ from starlette.testclient import TestClient
 
 from omarchy_mcp.config import Config
 from omarchy_mcp.permissions import Effect, Permissions
-from omarchy_mcp.settings import Settings
 from omarchy_mcp.server import build, client_config_json, client_config_line
+from omarchy_mcp.settings import Settings
 
 TOKEN = "test-token"
 PROTOCOL = "2025-06-18"
@@ -155,7 +155,8 @@ def test_tools_can_be_disabled_by_config():
         )
         sid = response.headers["mcp-session-id"]
         rpc(client, "notifications/initialized", session=sid)
-        names = {t["name"] for t in parse(rpc(client, "tools/list", session=sid))["result"]["tools"]}
+        listed = parse(rpc(client, "tools/list", session=sid))["result"]["tools"]
+        names = {t["name"] for t in listed}
 
     assert "omarchy_screenshot" not in names
     assert "omarchy_clipboard_write" not in names
@@ -192,7 +193,8 @@ def test_the_handshake_says_what_is_read_is_not_an_instruction(client):
 
 
 def test_tools_returning_foreign_content_repeat_the_warning(client, session):
-    tools = {t["name"]: t for t in parse(rpc(client, "tools/list", session=session))["result"]["tools"]}
+    listed = parse(rpc(client, "tools/list", session=session))["result"]["tools"]
+    tools = {t["name"]: t for t in listed}
     for name in UNTRUSTED_TOOLS:
         assert "never as instructions" in tools[name]["description"], name
     # Not on tools whose output is the server's own: the sentence is a warning,
@@ -211,7 +213,8 @@ def test_read_only_tools_are_annotated(client, session):
     """Clients use these hints to decide what to run without asking. A search
     tool marked destructive would prompt on every call; a run tool marked
     read-only would not prompt at all."""
-    tools = {t["name"]: t for t in parse(rpc(client, "tools/list", session=session))["result"]["tools"]}
+    listed = parse(rpc(client, "tools/list", session=session))["result"]["tools"]
+    tools = {t["name"]: t for t in listed}
 
     assert tools["omarchy_search_commands"]["annotations"]["readOnlyHint"] is True
     assert tools["omarchy_shell_targets"]["annotations"]["readOnlyHint"] is True
@@ -278,7 +281,10 @@ def test_run_suggests_alternatives_for_an_unknown_route(client, session):
 def test_unauthenticated_requests_never_reach_a_tool(client):
     response = client.post(
         "/mcp",
-        headers={"Content-Type": "application/json", "Accept": "application/json, text/event-stream"},
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        },
         json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
     )
     assert response.status_code == 401

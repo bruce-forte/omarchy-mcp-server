@@ -38,7 +38,7 @@ def send(headline: str, body: str, *, urgency: str = "normal", log=None) -> None
             timeout_ms=TIMEOUT_MS,
             max_output_b=4096,
         )
-    except Exception as exc:  # reporting path: never let it become the failure
+    except Exception as exc:  # noqa: BLE001 -- reporting path: never let it become the failure
         if log is not None:
             # ``%s`` placeholders with the values as extra arguments, rather than
             # an f-string: the logging module only formats the message if

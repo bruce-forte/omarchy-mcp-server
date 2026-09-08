@@ -62,7 +62,7 @@ from __future__ import annotations
 import signal
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import anyio
@@ -115,7 +115,10 @@ class Reloaded:
     """What one reload did. Falsy when the file was read and meant nothing new."""
 
     config: Config
-    tools: Change = Change()
+    # ``default_factory`` rather than ``= Change()``: the shared instance a
+    # plain default would create is harmless here, `Change` being frozen, but
+    # the habit is what makes the mutable case safe.
+    tools: Change = field(default_factory=Change)
     policy_changed: bool = False
     rejected: bool = False
     #: The permissions document was re-read and says something new.
@@ -539,7 +542,10 @@ class Reloader:
         # ``zip`` walks the two tuples in step, pairing them up; ``enumerate``
         # adds the position, which is what lets the daemon's own file be skipped.
         # So this asks: did anything *other* than our file move?
-        if any(a != b for position, (a, b) in enumerate(zip(previous, raw)) if position != index):
+        # ``strict=True`` because the lengths were compared just above: a
+        # mismatch here would be a bug rather than a shorter walk.
+        pairs = enumerate(zip(previous, raw, strict=True))
+        if any(a != b for position, (a, b) in pairs if position != index):
             return False
         return permissions_module.wrote_ourselves(raw[index])
 
@@ -662,7 +668,7 @@ class Reloader:
                         # move it. A client that re-listed on a policy change
                         # would get the same answer and learn nothing.
                         await self._announce()
-                except Exception:
+                except Exception:  # noqa: BLE001 -- a reload must not end the daemon
                     # A reload must not be able to end the daemon. Whatever went
                     # wrong, the config in force is still a valid one.
                     # ``log.exception`` logs the message *and* the traceback,

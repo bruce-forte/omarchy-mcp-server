@@ -126,7 +126,9 @@ def test_permissions_take_effect_without_a_restart(tmp_path):
     reloader, settings, _, _ = build(tmp_path, "")
     assert settings.permissions.rules == ()
 
-    permission_paths(tmp_path)[0].write_text('{"permissions": {"deny": [{"kind": "route", "matcher": "omarchy theme set"}]}}')
+    permission_paths(tmp_path)[0].write_text(
+        '{"permissions": {"deny": [{"kind": "route", "matcher": "omarchy theme set"}]}}'
+    )
     result = polled(reloader)
 
     assert result.permissions_changed
@@ -177,7 +179,7 @@ def test_a_file_left_broken_is_reported_once(tmp_path, no_notifications):
 
 
 def test_fixing_the_file_applies_it_and_says_so(tmp_path, no_notifications):
-    reloader, settings, catalogue, path = build(tmp_path, "")
+    reloader, _, catalogue, path = build(tmp_path, "")
     path.write_text("[tools\n")
     reloader.poll()
 
@@ -272,7 +274,9 @@ def test_a_defective_document_leaves_the_running_one_in_force(tmp_path, no_notif
     document -- the one the user last successfully wrote -- so it stands. An
     editor's mid-keystroke autosave must not drop every attached session."""
     reloader, settings, _, _ = build(
-        tmp_path, "", json.dumps({"permissions": {"deny": [{"kind": "route", "matcher": "omarchy dev *"}]}})
+        tmp_path,
+        "",
+        json.dumps({"permissions": {"deny": [{"kind": "route", "matcher": "omarchy dev *"}]}}),
     )
     before = settings.permissions
     assert before.rules
@@ -336,7 +340,9 @@ def test_the_second_file_is_pooled_with_the_first(tmp_path):
     reloader, settings, _, _ = build(tmp_path, "")
 
     permission_paths(tmp_path)[1].write_text(
-        json.dumps({"permissions": {"allow": [{"kind": "route", "matcher": "omarchy install app"}]}})
+        json.dumps(
+            {"permissions": {"allow": [{"kind": "route", "matcher": "omarchy install app"}]}}
+        )
     )
     result = polled(reloader)
 
@@ -538,7 +544,9 @@ def test_removing_a_grant_needs_the_token_the_daemon_published(tmp_path, command
 
     _press(tmp_path, token, "allow", "omarchy install app", body="wrong revoke allow x")
     assert reloader.poll() is None
-    assert permissions_module.load((local,)).rules, "a file that does not name the token is not a press"
+    assert permissions_module.load((local,)).rules, (
+        "a file that does not name the token is not a press"
+    )
 
     _press(tmp_path, token, "allow", "omarchy install app")
     result = polled(reloader)
@@ -579,7 +587,7 @@ def test_two_presses_in_one_poll_are_two_removals(tmp_path, commands):
 
 
 def test_a_press_is_spent_whether_or_not_it_was_current(tmp_path, commands):
-    reloader, local, token = _revoke_ready(tmp_path, {"allow": ["omarchy install app"]})
+    reloader, _, token = _revoke_ready(tmp_path, {"allow": ["omarchy install app"]})
     marker = _press(tmp_path, token, "allow", "omarchy install app")
 
     reloader.poll()
@@ -649,7 +657,7 @@ def test_a_change_this_daemon_made_is_not_announced_back(tmp_path, commands, no_
 def test_a_hand_edit_in_the_same_window_still_notifies(tmp_path, commands, no_notifications):
     """The test that matters: suppression is for the file this daemon wrote,
     not for whatever moved at the same time."""
-    reloader, local, token = _revoke_ready(tmp_path, {"allow": ["omarchy install app"]})
+    reloader, _, token = _revoke_ready(tmp_path, {"allow": ["omarchy install app"]})
     _press(tmp_path, token, "allow", "omarchy install app")
     reloader.poll()
 
