@@ -177,6 +177,12 @@ class Review:
         plugin has never classified, are the two that a person has to see. A
         handful of new guarded routes that will ask anyway can wait for the next
         time the panel is opened.
+
+        The unclassified half stayed urgent when N17 made it guarded, for a
+        different reason than it had before. It used to mean *this already ran*.
+        It now means *this asks on every call, and will keep asking* until the
+        group is classified upstream or the user allows the routes -- which is
+        the one thing here nobody but them can end.
         """
         return bool(self.widened) or any(a.unclassified for a in self.arrivals)
 

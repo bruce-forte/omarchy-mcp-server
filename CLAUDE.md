@@ -73,6 +73,13 @@ the existing tests are the specification:
 
 - Every sudo command classifies `blocked`, and **no rule** can promote it.
   Naming one in `allow` or `ask` stops the daemon rather than being void.
+- **`safe` is an allowlist.** A command group in neither `SAFE_GROUPS` nor
+  `GUARDED_GROUPS` classifies `guarded`, not `safe`, so a group Omarchy adds
+  after the last release asks rather than running unattended (N17). Refreshing
+  `tests/fixtures/commands.json` fails
+  `test_every_group_omarchy_ships_is_classified` until every new group is put in
+  one list or the other — that is the decision the design exists to force, and
+  it is made at a keyboard.
 - `deny` → `ask` → `allow`, first match wins, and specificity never reorders it.
 - A route whose own argument is a command line (`NEVER_STORE`) may be asked
   about and never granted.

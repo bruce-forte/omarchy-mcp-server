@@ -20,7 +20,10 @@ then [What the server does not defend against](#what-the-server-does-not-defend-
 3. **What it asks you about.** Commands that change your system in ways that are
    hard to undo raise a notification naming the command *and what its arguments
    resolved to on your machine*, and run only if you press a labelled button.
-   Silence refuses. So does a dismissal, and so does a deadline.
+   Silence refuses. So does a dismissal, and so does a deadline. **So do commands
+   this server has never classified** — `safe` is an allowlist of command groups,
+   so anything Omarchy adds after this server's last release asks rather than
+   running.
 4. **The real risk is not in this list.** It is prompt injection: the tools that
    read your screen, your clipboard and your window titles hand the model text
    that neither you nor this project wrote. That is
@@ -112,7 +115,7 @@ from configuration — not as a policy judgement, but because it could not work:
 the daemon has no controlling terminal, so a password prompt could never be
 answered. Allowing them would produce a hung request, not a privileged one.
 
-### Anything not classified as safe is refused unless you allow them
+### Anything not classified as safe is refused unless you allow it
 
 Installing, removing, migrating, rebooting, and similar are `guarded` and refused
 by default. **So is any command in a group this server has never classified.**
@@ -126,9 +129,19 @@ would have executed it on first call with nothing on screen.
 
 The cost is deliberate: a genuinely harmless new group also asks, until somebody adds
 it to `SAFE_GROUPS`. One prompt and one line of code, against a destructive command
-running unattended. You can promote individual routes or whole groups in
-`~/.config/omarchy/mcp/config.toml`. The current lists are in
-[`TOOLS.md`](TOOLS.md), generated from the code.
+running unattended.
+
+You promote individual routes or whole prefixes in
+`~/.config/omarchy/mcp/permissions.json` — the `[policy]` table in `config.toml`
+moved there and the daemon reports it as dead if it finds one. Both group lists
+are in [`TOOLS.md`](TOOLS.md), generated from the code, so they cannot drift from
+what is enforced.
+
+**The prompt says which of the two reasons applies.** A route in a guarded group
+reads *"can change the system in ways that are hard to undo"*; an unclassified
+one reads that its group is newer than this server's list. Asserting that a
+brand-new group is destructive would be claiming something nobody checked, and
+the two want different answers from you: allow the route, or file the group.
 
 This tier protects against **accidents, not attackers**. An agent that already
 has shell access does not need this server to do damage. The value is that a

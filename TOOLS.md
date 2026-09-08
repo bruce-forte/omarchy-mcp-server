@@ -235,13 +235,17 @@ Between them these cover every command and every IPC target without putting seve
 
 Every command is classified from `omarchy commands --json`. `omarchy_search_commands` reports the tier of each result.
 
+**`safe` is an allowlist.** A command is safe only if its group is named below; a group in neither list is `guarded`, so a command group Omarchy adds after this release of the server is asked about rather than assumed harmless. If a route you expected to be safe is being asked about, that is why, and an `allow` rule in `permissions.json` settles it.
+
 | Tier | Rule | Behaviour |
 |------|------|-----------|
 | `blocked` | needs sudo | Refused always. The server has no controlling terminal, so a password prompt could never be answered. Not overridable |
-| `guarded` | destructive | Asked about on the desktop, unless `~/.config/omarchy/mcp/permissions.json` says otherwise |
-| `safe` | everything else | Runs |
+| `guarded` | destructive, **or in no classified group** | Asked about on the desktop, unless `~/.config/omarchy/mcp/permissions.json` says otherwise |
+| `safe` | in a group classified safe | Runs |
 
 Guarded groups: `apply`, `channel`, `dev`, `drive`, `hibernation`, `install`, `migrate`, `pkg`, `plugin`, `provision`, `reinstall`, `remove`, `setup`, `snapshot`, `update`, `upgrade`.
+
+Safe groups: `agent`, `audio`, `bar`, `battery`, `bluetooth`, `branding`, `brightness`, `capture`, `chromium`, `clipboard`, `cmd`, `crash`, `default`, `disk`, `display`, `dns`, `done`, `file`, `font`, `games`, `git`, `hook`, `hw`, `hyprland`, `installed`, `launch`, `menu`, `mise`, `monitor`, `network`, `notification`, `osd`, `plymouth`, `power`, `powerprofiles`, `refresh`, `reminder`, `restart`, `screensaver`, `share`, `shell`, `show`, `state`, `sudo`, `system`, `tailscale`, `theme`, `toggle`, `transcode`, `tui`, `version`, `voxtype`, `weather`, `webapp`, `windows`.
 
 Individually guarded routes: `omarchy hyprland window close all`, `omarchy restart shell`, `omarchy system logout`, `omarchy system reboot`, `omarchy system shutdown`, `omarchy theme remove`, `omarchy toggle hybrid gpu`, `omarchy windows vm`.
 
