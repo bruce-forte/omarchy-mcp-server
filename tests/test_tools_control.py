@@ -231,6 +231,41 @@ class TestAskingWhichTheme:
         assert schema.model_json_schema()["properties"]["name"]["enum"] == themes
 
     @pytest.mark.anyio
+    async def test_the_question_is_the_registry_s_own_words(self, themes, perms, log):
+        """Not a literal in this file: `summary` and `args` come off the command.
+
+        So the form says what `omarchy theme set --help` says, and keeps saying
+        it when upstream rewords the command.
+        """
+        seen: list = []
+        ctx = self.Ctx(reply=self._accept("Nord"), capture=seen)
+
+        await control._pick_theme(ctx, perms, log)
+
+        (message, schema), = seen
+        cmd = control.registry.get("omarchy theme set")
+        assert cmd.summary.rstrip(".") in message
+        # `args` is `<theme-name>`, which names the field for the person.
+        assert "theme name" in schema.model_json_schema()["properties"]["name"]["description"]
+
+    def test_wording_survives_a_route_that_is_not_there(self):
+        """An upstream rename must not produce a form with no question on it."""
+        message, description = control._wording("omarchy theme vanished", "theme")
+        assert "theme" in message and message.endswith("?")
+        assert "theme" in description
+
+    def test_wording_ignores_an_args_spec_that_names_no_single_value(self, monkeypatch):
+        """`[--monitor NAME] [value]` is a flag list, not a name for one thing."""
+        cmd = control.registry.get("omarchy theme set")
+        monkeypatch.setattr(
+            control.registry,
+            "get",
+            lambda _route: type(cmd)(**{**cmd.__dict__, "args": "[--monitor NAME] [value]"}),
+        )
+        _message, description = control._wording("omarchy theme set", "theme")
+        assert description == "The theme to apply"
+
+    @pytest.mark.anyio
     async def test_a_decline_chooses_nothing(self, themes, perms, log):
         ctx = self.Ctx(reply=type("R", (), {"action": "decline"})())
 
@@ -269,6 +304,6 @@ class TestAskingWhichTheme:
         """A hundred-entry dropdown is worse than a text box, and the resolver
         refuses a wrong name with near misses either way."""
         many = [f"theme-{n}" for n in range(control.MAX_CHOICES + 1)]
-        rendered = control._choice_model(many).model_json_schema()
+        rendered = control._choice_model(many, "The theme to apply").model_json_schema()
         assert "enum" not in rendered["properties"]["name"]
         assert rendered["properties"]["name"]["type"] == "string"

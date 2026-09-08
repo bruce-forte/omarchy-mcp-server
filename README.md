@@ -728,11 +728,14 @@ make py CMD='examples/elicit_client.py --port 8765'
 **Two different questions, and the bare `make elicit` shows both.** It calls
 `omarchy_theme(action="set")` and deliberately names no theme, which is a
 *missing parameter* rather than a permission question. The server answers with a
-**form** — the installed themes as an enum, which a client renders as a picker:
+**form** — the installed themes as an enum, which a client renders as a picker.
+Neither the question nor the choices are written down anywhere here: the
+wording is Omarchy's own summary of `omarchy theme set`, and the options are
+whatever `omarchy theme list` says right now:
 
 ```
 --- the server is asking ---
-Which theme should I switch to?
+Apply an Omarchy theme. Which one?
 
    1. Catppuccin
    ...

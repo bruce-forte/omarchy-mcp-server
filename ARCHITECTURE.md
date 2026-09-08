@@ -456,6 +456,15 @@ and so arrives at the client as a picker rather than a text box. That is form
 mode doing the thing it exists for, and `consent.Answer.data` has carried the
 typed reply since N3 precisely so that it could.
 
+**Nothing about that form is written down here.** The choices come from
+`resolve._themes`, which is `omarchy theme list`; the question and the field's
+description come from the registry entry's own `summary` and `args` --
+*"Apply an Omarchy theme"* and `<theme-name>`. So the form says what
+`omarchy theme set --help` says and goes on saying it after upstream rewords the
+command, for the same reason there is no command catalogue in this project. The
+literal fallback exists only for a route that has been renamed away, because a
+missing summary must not produce a form with no question on it.
+
 **Choosing is not consenting.** The picked name is handed back to the same
 `run_route` an explicitly-named theme would have taken, so the tier, the rules,
 the resolver and the approval prompt all still apply to it -- a form and a

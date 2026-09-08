@@ -424,7 +424,40 @@ def _needs_a_name(extra: str = "") -> _Refused:
     return _Refused({"error": ('action "set" needs a theme name' + extra)})
 
 
-def _choice_model(themes: list[str]):
+#: An args spec that is exactly one placeholder, which is the only shape that
+#: names a single value: `<theme-name>`, `<path-to-image>`.
+_ONE_PLACEHOLDER = re.compile(r"^<([a-z][a-z0-9-]*)>$")
+
+
+def _wording(route: str, thing: str) -> tuple[str, str]:
+    """The form's message and field description, in Omarchy's own words.
+
+    Both are read from the registry entry for ``route`` rather than written
+    here: ``summary`` is how Omarchy describes the command -- "Apply an Omarchy
+    theme" -- and ``args`` is what the command calls its parameter,
+    ``<theme-name>``. So the question a person is asked says what
+    ``omarchy theme set --help`` says, and goes on saying it after upstream
+    rewords the command. That is the same reason nothing else here keeps a
+    catalogue: the registry is the source of truth, and this is one more thing
+    read from it rather than duplicated beside it.
+
+    ``thing`` is what to call the value when the registry cannot say -- a route
+    that has been renamed away, or one whose summary is empty. A missing
+    summary must not produce a form with no question on it.
+    """
+    cmd = registry.get(route)
+    summary = (cmd.summary if cmd else "").strip().rstrip(".")
+    # `<theme-name>` -> "theme name". Matched whole rather than stripped of
+    # brackets, so that an args spec naming anything other than exactly one
+    # placeholder -- `[--monitor NAME] [value]`, an alternation, a flag list --
+    # fails to match and falls back instead of being mangled into a label.
+    match = _ONE_PLACEHOLDER.match((cmd.args if cmd else "").strip())
+    label = match.group(1).replace("-", " ") if match else thing
+    message = f"{summary}. Which one?" if summary else f"Which {thing} should I use?"
+    return message, f"The {label} to apply"
+
+
+def _choice_model(themes: list[str], description: str):
     """A one-field pydantic model whose field is an enum of ``themes``.
 
     Built per call because the choices are whatever is installed right now. A
@@ -432,7 +465,7 @@ def _choice_model(themes: list[str]):
     show a picker rather than a text box; past `MAX_CHOICES` the enum is
     dropped, because a hundred-entry dropdown is worse than typing.
     """
-    described = Field(description="Which theme to switch to")
+    described = Field(description=description)
     if 0 < len(themes) <= MAX_CHOICES:
         field = (Literal[tuple(themes)], described)
     else:
@@ -458,14 +491,15 @@ async def _pick_theme(ctx, perms, log) -> _Picked | _Refused:
     if not themes:
         return _needs_a_name("; no themes appear to be installed")
 
-    model = _choice_model(themes)
+    message, description = _wording("omarchy theme set", "theme")
+    model = _choice_model(themes, description)
     # The same deadline a consent question gets, deliberately: a form left
     # unanswered is a tool call parked on somebody who walked away, which is the
     # thing `askTimeoutSeconds` bounds. It is the user's own setting, so
     # somebody who finds 60s tight for reading a list can raise it. A late
     # answer is ignored rather than acted on, as everywhere else here.
     answer = await consent.ask(
-        lambda: ctx.elicit("Which theme should I switch to?", model),
+        lambda: ctx.elicit(message, model),
         what="which theme to switch to",
         timeout_s=perms.ask_timeout_s,
         log=log,
