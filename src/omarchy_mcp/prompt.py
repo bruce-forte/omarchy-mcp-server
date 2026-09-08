@@ -101,6 +101,10 @@ MAX_ARG_CHARS = 80
 #: Distinguishes concurrent prompts, because `omarchy notification dismiss`
 #: matches a summary *substring* and two identical headlines would dismiss each
 #: other (F26).
+#:
+#: ``itertools.count`` is an endless counter: ``next(_counter)`` yields 1, then
+#: 2, and so on for the life of the process. One shared counter at module level,
+#: so two prompts can never draw the same number.
 _counter = itertools.count(1)
 
 
@@ -114,6 +118,7 @@ _counter = itertools.count(1)
 #: Anything not in here is **no answer at all** -- not a yes. A newer helper
 #: writing a word an older daemon does not know must read as silence, and
 #: silence already fails closed.
+#: Each value is (what the answer means, whether to remember it).
 VERBS = {
     "once": ("accept", False),
     "always": ("accept", True),
@@ -137,8 +142,12 @@ class Clicked:
 
 def _flatten(text: str) -> str:
     """Strip an untrusted string down to something that cannot forge a line."""
+    # ``isprintable()`` is False for newlines, tabs and every other control
+    # character, which is exactly the set that could forge a line in the message
+    # a person reads. Joining the survivors rebuilds the string without them.
     clean = "".join(ch for ch in text if ch.isprintable())
     if len(clean) > MAX_ARG_CHARS:
+        # One character short of the cap, to leave room for the ellipsis.
         clean = clean[: MAX_ARG_CHARS - 1] + "…"
     return clean
 
@@ -153,6 +162,9 @@ def message(route: str, args: list[str], target: str | None) -> str:
     is flattened and quoted, so nothing an argument contains can add a line or
     counterfeit the frame around it.
     """
+    # ``repr`` puts quotes round each argument and makes any remaining oddity
+    # visible as an escape, so an argument cannot pass itself off as part of the
+    # frame around it.
     shown = " ".join(repr(_flatten(a)) for a in args)
     lines = [
         "An agent is asking to run a guarded command.",
@@ -167,15 +179,21 @@ def message(route: str, args: list[str], target: str | None) -> str:
 
 
 def new_token() -> str:
+    """A fresh one-time secret for one question. Never given to the model."""
     return secrets.token_urlsafe(TOKEN_BYTES)
 
 
 def _path(token: str) -> Path:
+    """Where the answer to this question would be written."""
     return CONSENT_DIR / token
 
 
 def _prepare_dir() -> None:
+    """Make sure the consent directory exists and only this user can see it."""
     CONSENT_DIR.mkdir(parents=True, exist_ok=True)
+    # ``0o700`` is owner-only, including the execute bit that a directory needs
+    # to be entered at all. Set every time rather than only at creation, in case
+    # something loosened it since.
     os.chmod(CONSENT_DIR, 0o700)
 
 
@@ -192,9 +210,14 @@ def _answer(token: str) -> str | None:
     try:
         body = _path(token).read_text().strip()
     except OSError:
+        # No file yet -- which is the normal case while the question is open --
+        # or one that cannot be read. Neither is an answer.
         return None
     if body == token:
+        # The bare token on its own: the original "yes, once".
         return "once"
+    # Otherwise "<token> <verb>". Splitting on the first space keeps the check
+    # on the token exact.
     head, _, verb = body.partition(" ")
     if head != token:
         return None
@@ -204,6 +227,8 @@ def _answer(token: str) -> str | None:
 def _clear(token: str) -> None:
     """A token is spent once. A leftover file must never approve a later ask."""
     try:
+        # ``unlink`` is delete. It raises when the file is not there, which is
+        # the ordinary case for a question nobody answered.
         _path(token).unlink()
     except OSError:
         pass
@@ -232,6 +257,9 @@ def dismiss(marker: str) -> None:
     )
 
 
+# ``@asynccontextmanager`` is ``@contextmanager``'s async twin: the same
+# yield-in-the-middle shape, used with ``async with`` and able to ``await``
+# on both sides of the yield.
 @asynccontextmanager
 async def pending(label: str, body: str, *, token: str | None, log, offload):
     """Hold a critical notification up for as long as the question is open.
@@ -251,8 +279,14 @@ async def pending(label: str, body: str, *, token: str | None, log, offload):
     await offload(send, headline, f"{body}\n\n{hint}" if body else hint, token=token)
     log.info("consent asked: %s %s", label, marker)
     try:
+        # The question is now on screen. The caller's ``async with`` body waits
+        # for an answer; control returns here whichever way that ends.
         yield marker
     finally:
+        # A shielded scope cannot be cancelled, so these two awaits run to
+        # completion even when the reason for getting here is that everything
+        # around them was cancelled. Without the shield, a cancelled call would
+        # leave its critical notification on screen for good.
         with anyio.CancelScope(shield=True):
             await offload(dismiss, marker)
             if token is not None:
@@ -267,8 +301,13 @@ async def desktop_ask(token: str) -> Clicked:
     implemented and one place to read it.
     """
     while True:
+        # Reading a file is blocking, so it goes to a worker thread; the event
+        # loop stays free for every other client while this one waits.
         verb = await anyio.to_thread.run_sync(_answer, token)
         if verb is not None:
             action, always = VERBS[verb]
             return Clicked(action, {"always": True} if always else None)
+        # ``await`` on a sleep yields the loop rather than blocking it. This
+        # loop has no exit of its own: it is cancelled from outside, by the
+        # deadline in `consent.ask`.
         await anyio.sleep(POLL_INTERVAL_S)

@@ -2,6 +2,15 @@
 
 Omarchy watches ``~/.config/omarchy/plugins/`` and reloads the shell on any
 write inside it, so nothing here ever resolves into the plugin directory.
+
+Every name below is a ``pathlib.Path`` rather than a string. A ``Path`` knows
+how to join with ``/`` (``STATE_DIR / "token"``), and carries ``.exists()``,
+``.read_text()`` and ``.mkdir()`` on itself, so path handling never turns into
+string surgery.
+
+These are computed once, when the module is first imported, and never change
+afterwards. That is deliberate: the test suite pins every one of them at a
+temporary directory, and a value re-read per call could slip past that.
 """
 
 from __future__ import annotations
@@ -13,6 +22,13 @@ PLUGIN_ID = "io.github.bruce-forte.mcp-server"
 
 
 def _xdg(var: str, default: str) -> Path:
+    """The XDG base directory named by ``var``, or its documented fallback.
+
+    The XDG spec says a program should honour ``$XDG_STATE_HOME`` and friends
+    and fall back to a fixed path under the home directory when unset. ``or``
+    covers both "unset" and "set to the empty string", because ``os.environ.get``
+    returns ``None`` for the first and ``""`` for the second, and both are falsy.
+    """
     return Path(os.environ.get(var) or Path.home() / default)
 
 

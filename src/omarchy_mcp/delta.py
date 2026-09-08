@@ -42,6 +42,12 @@ of what changed is gone before anybody clicked. The one exception is the very
 first run, which has nothing to compare against and nothing to tell anyone --
 every route is "new" on a fresh install, and reviewing 400 of them is the
 catalogue this feature exists to avoid.
+
+The whole comparison is set arithmetic. ``seen`` is a `frozenset` of the routes
+last acknowledged, and Python's set operators do the rest: ``set(commands) -
+seen`` is what arrived, ``seen - set(commands)`` is what went away. `compute` is
+a pure function of (snapshot, registry, rules) with no I/O in it, so a test can
+hand it three values and check the answer.
 """
 
 from __future__ import annotations
@@ -128,6 +134,11 @@ class Review:
     token: str = field(default="", compare=False)
 
     def __bool__(self) -> bool:
+        """Whether there is anything to review at all.
+
+        Defining ``__bool__`` is what lets a caller write ``if review:`` and
+        ``if not review:``; without it every object counts as true.
+        """
         return bool(self.arrivals or self.widened or self.dead or self.gone)
 
     @property
@@ -137,6 +148,7 @@ class Review:
 
     @property
     def headline(self) -> str:
+        """One line summarising the review, for the notification and the bar."""
         parts = []
         if self.arrivals:
             parts.append(f"{len(self.arrivals)} new")
@@ -159,6 +171,7 @@ class Review:
 
 
 def _s(items) -> str:
+    """The plural "s", or nothing when there is exactly one of something."""
     return "" if len(items) == 1 else "s"
 
 
@@ -196,15 +209,22 @@ def save_seen(path: Path, commands: dict[str, Command], *, version: str = "") ->
         "omarchy": version,
         "routes": sorted(commands),
     }
+    # Write-to-temp-then-rename, the standard way to update a file atomically:
+    # a reader ever only sees the old file or the new one, never a half-written
+    # one, and a crash mid-write cannot destroy what was there.
     with open(tmp, "w") as handle:
         json.dump(body, handle, indent=2)
         handle.write("\n")
+        # ``flush`` pushes Python's buffer into the OS; ``fsync`` pushes the
+        # OS's buffer onto the disk. Both, in that order, or the rename can land
+        # before the contents do.
         handle.flush()
         os.fsync(handle.fileno())
     os.replace(tmp, path)
 
 
 def new_token() -> str:
+    """A fresh acknowledgement token. Published only on the frame, never to an agent."""
     return secrets.token_urlsafe(TOKEN_BYTES)
 
 
@@ -220,10 +240,14 @@ def compute(
     from .permissions import evaluate  # local: permissions does not import this
 
     # Groups are exactly the second token of a route, so the snapshot carries
-    # them without having stored them.
+    # them without having stored them. ``"omarchy theme set".split()[1]`` is
+    # "theme".
     known_groups = frozenset(r.split()[1] for r in seen if len(r.split()) > 1)
 
     arrivals = []
+    # ``set(commands)`` is the set of its *keys* -- the routes -- and ``-`` is
+    # set difference, so this is "routes that exist now and did not before".
+    # Sorted so the review reads the same way twice.
     for route in sorted(set(commands) - seen):
         cmd = commands[route]
         tier = base_tier(cmd)
@@ -249,6 +273,8 @@ def compute(
             )
         )
 
+    # Two empty lists in one statement; the right-hand side is a tuple that is
+    # unpacked into the two names.
     widened, dead = [], []
     for rule in perms.rules:
         before = tuple(r for r in sorted(seen) if rule.matches(r))
@@ -268,10 +294,17 @@ def compute(
         dead=tuple(dead),
         gone=tuple(sorted(seen - set(commands))),
     )
+    # An empty review needs no token: there is nothing to acknowledge.
     return review if not review else _with_token(review)
 
 
 def _with_token(review: Review) -> Review:
+    """A copy of the review carrying a freshly minted acknowledgement token.
+
+    A copy rather than an assignment, because `Review` is frozen. Written out
+    field by field rather than with ``dataclasses.replace`` so that adding a
+    field without thinking about the token is a visible omission here.
+    """
     return Review(
         arrivals=review.arrivals,
         widened=review.widened,
@@ -345,6 +378,9 @@ def as_dict(review: Review) -> dict[str, object]:
 def message(review: Review) -> str:
     """The notification body. A paragraph, not a listing -- the panel has that."""
     lines = []
+    # Ordered by how much each one deserves the person's attention: a rule that
+    # widened, then a command nothing has classified, then a dead rule, then the
+    # ones that will simply ask.
     if review.widened:
         for rule in review.widened[:NAMED_IN_NOTIFICATION]:
             shown = ", ".join(rule.routes[:NAMED_IN_NOTIFICATION])

@@ -1,4 +1,14 @@
-"""Assembling the MCP server."""
+"""Assembling the MCP server.
+
+`build` is the wiring diagram for the whole daemon: it makes the tool
+catalogue, the `MCPServer` the SDK provides, the reloader that watches the
+config files, the `/health` endpoint the bar polls, and finally wraps the lot in
+the bearer-token check from `auth.py`. What comes back is an ASGI application --
+see `auth.py` for what that means -- ready for uvicorn to serve.
+
+Read it top to bottom: the order the objects are built in is the order they
+depend on each other.
+"""
 
 from __future__ import annotations
 
@@ -44,9 +54,14 @@ def _advertise_tool_list_changed(mcp: MCPServer) -> None:
     `subscriptions/listen` being served, which it is.
     """
     server = mcp._lowlevel_server
+    # The original method is kept in a variable *before* the attribute is
+    # reassigned, so the replacement below can still call it. This is
+    # monkey-patching: swapping one attribute on a live object.
     build_options = server.create_initialization_options
 
     def with_tools_changed(notification_options=None, *args, **kwargs):
+        # ``*args, **kwargs`` forward every other argument untouched, so this
+        # keeps working if the SDK's signature grows.
         return build_options(
             notification_options or NotificationOptions(tools_changed=True), *args, **kwargs
         )
@@ -91,7 +106,10 @@ def build(
     it dies with.
     """
     stats = stats or Stats()
+    # Accepts either type and normalises to the holder; see `Settings.of`.
     settings = Settings.of(config)
+    # From here on ``config`` is the snapshot inside the holder, so this
+    # function reads one configuration throughout.
     config = settings.current
     # Declared first, because the reloader needs the catalogue and the server
     # needs the reloader's lifespan. Nothing is registered until `apply` below.
@@ -103,8 +121,11 @@ def build(
     clients = Clients(log)
 
     def lifespan(server):
+        """The startup/shutdown hook the ASGI server runs around everything."""
         # `reloader` is built after the server it reloads, so this reads it at
-        # call time rather than closing over the None it is now.
+        # call time rather than closing over the None it is now. A closure reads
+        # the variable when it runs, not when it is defined, which is exactly
+        # what makes this work.
         return lifespan_for(reloader)(server)
 
     mcp = MCPServer(
@@ -144,6 +165,9 @@ def build(
     if reload_from is not None:
         _advertise_tool_list_changed(mcp)
 
+        # Both of these are handed to the `Reloader` below as callbacks: it
+        # calls them when a reload happens, and knows nothing about frames,
+        # buses or the activity log itself.
         def note(result) -> None:
             """Put a reload where a person can see it, and where it is kept.
 
@@ -178,6 +202,7 @@ def build(
             )
 
         async def announce() -> None:
+            """Tell every attached client the tool list moved, both ways."""
             await bus.publish(ToolsListChanged())
             await clients.tools_changed()
 
@@ -198,6 +223,9 @@ def build(
 
     @mcp.custom_route("/health", methods=["GET"])
     async def health(_request):
+        """The one route reachable without a token. See `auth.BearerAuth`."""
+        # ``_request`` is named with an underscore because the endpoint takes it
+        # and never reads it: this answer does not depend on the request.
         # Reached without a token: it carries no secrets and it is how the
         # supervising QML tells "serving" from "process exists".
         return JSONResponse(
@@ -220,6 +248,8 @@ def build(
         )
 
     app = mcp.streamable_http_app(transport_security=_transport_security(config.port))
+    # Wrapped last, so it is outermost: every request passes the token check
+    # before any of the above sees it.
     return BearerAuth(app, token)
 
 

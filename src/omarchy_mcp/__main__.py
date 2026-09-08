@@ -4,6 +4,18 @@ Started by ``bin/omarchy-mcpd``, which is started by ``Service.qml``. Being a
 child of ``omarchy-shell`` is what gives this process ``WAYLAND_DISPLAY``,
 ``HYPRLAND_INSTANCE_SIGNATURE`` and ``DBUS_SESSION_BUS_ADDRESS`` from the live
 graphical session -- every command that touches the desktop needs them.
+
+The file is named ``__main__.py`` because that is the module Python runs for
+``python -m omarchy_mcp``. `main` is the whole command line: it parses the
+arguments, and every ``--flag`` that reports something returns before the daemon
+is built. What is left at the bottom of `main` is the actual startup, in order:
+load the permissions (or refuse to start), read the token, compute the review,
+open the activity log, build the app, and hand it to uvicorn.
+
+The exit code matters as much as the output. `main` returns an integer that
+``SystemExit`` turns into the process's status, and `Service.qml` reads it: 0 is
+a clean stop, 1 is a failure worth retrying, and `EX_CONFIG` (78) means "the
+file is wrong, stop trying".
 """
 
 from __future__ import annotations
@@ -60,6 +72,11 @@ EX_CONFIG = 78
 
 
 def _logger(level: str) -> logging.Logger:
+    """Configure logging to stderr and return this daemon's logger.
+
+    stderr on purpose: stdout is the frame channel `omarchy-shell` parses, and a
+    stray log line on it would be a line the shell cannot read.
+    """
     logging.basicConfig(
         stream=sys.stderr,
         level=LOG_LEVELS.get(level, logging.INFO),
@@ -147,6 +164,10 @@ def _prunable(log):
     return permissions_module.prunable(PERMISSIONS_LOCAL_FILE, commands)
 
 
+# Every ``_print_*`` and ``_check_*`` below returns the exit code the process
+# should end with, rather than printing and exiting itself. That is what lets
+# `main` stay a single list of "which flag was given" and lets the tests call
+# them directly.
 def _print_review(log, *, as_json: bool = False) -> int:
     """What changed under the rules, computed fresh from the same inputs.
 
@@ -180,6 +201,8 @@ def _print_review(log, *, as_json: bool = False) -> int:
         print(json.dumps(body, indent=2))
         return 0
 
+    # Nested, because it is printed at three different exit points below and
+    # closes over ``dead_local`` rather than taking it as an argument.
     def _say_prunable():
         if not dead_local:
             return
@@ -262,7 +285,11 @@ def _print_permissions(log, *, as_json: bool = False) -> int:
     if not report["rules"]:
         print("No rules. Guarded commands take the default above; everything else runs.\n")
     for rule in report["rules"]:
+        # The worst level present, or "" if there is none. `FINDING_LEVELS` is
+        # in severity order, so the first hit is the right one.
         flag = next((f" [{level}]" for level in FINDING_LEVELS if level in rule), "")
+        # ``:>5`` right-aligns in five columns, so "deny", "ask" and "allow"
+        # line up down the page.
         print(f"{rule['effect']:>5}  {rule['matcher']}{flag}")
         print(f"       {rule['source']} -- covers {rule['covers']}")
         for route in rule["routes"]:
@@ -343,6 +370,9 @@ def _editable(which: str):
     exactly these. A table like that would have written the developer's own
     `permissions.json` the first time a test ran `--edit`.
     """
+    # Built fresh on each call, and indexed immediately: `EDITABLE` has already
+    # limited ``which`` to these three, so a missing key here is impossible
+    # rather than something to handle.
     return {
         "permissions": PERMISSIONS_FILE,
         "local": PERMISSIONS_LOCAL_FILE,
@@ -409,10 +439,22 @@ def _refuse_to_start(log, detail: str) -> None:
         urgency="critical",
         log=log,
     )
+    # Explicitly ``None``, which is what `_load_permissions` returns to its
+    # caller to mean "do not start". A bare ``return`` would say the same thing
+    # less visibly.
     return None
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Parse the command line and either report something or serve.
+
+    ``argv`` is taken as an argument rather than read from ``sys.argv`` so the
+    tests can call `main` with a list. Returns the process's exit code.
+    """
+    # ``argparse`` is the standard library's command-line parser: each
+    # ``add_argument`` declares one flag, and ``parse_args`` turns the list into
+    # an object with one attribute per flag. ``description=__doc__`` puts this
+    # module's docstring into ``--help``.
     parser = argparse.ArgumentParser(prog="omarchy-mcpd", description=__doc__)
     parser.add_argument("--port", type=int, help="override the configured port")
     parser.add_argument(
@@ -458,6 +500,7 @@ def main(argv: list[str] | None = None) -> int:
 
     cfg = config_module.load()
     if args.port:
+        # `Config` is frozen, so an override is a copy with one field changed.
         cfg = dataclasses.replace(cfg, port=args.port)
 
     log = _logger(cfg.log_level)
@@ -519,6 +562,9 @@ def main(argv: list[str] | None = None) -> int:
         # The frame is not the audit trail: it goes out whether or not the log
         # is on, because a user who turned the log off did not ask the bar to
         # stop telling them an agent is doing something.
+        # The ``lambda`` is called once per finished tool call, with the record.
+        # Passing a function rather than importing `frames` inside `stats.py` is
+        # what keeps the counters ignorant of the shell they are displayed in.
         stats = Stats(sink=sink, on_call=lambda rec: frames.call(rec.tool, rec.result))
         # The holder the reloader swaps. Everything downstream reads it.
         settings = Settings(cfg, permissions)
@@ -548,6 +594,8 @@ def main(argv: list[str] | None = None) -> int:
             # after uvicorn.run() runs -- it dies by signal (F28).
             app = activity.Closing(app, sink)
 
+        # Imported here rather than at the top of the file: it is a heavy import
+        # and none of the reporting flags above ever reach this line.
         import uvicorn
 
         log.info("serving on http://127.0.0.1:%d/mcp", cfg.port)
@@ -587,5 +635,8 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+# True only when this module is the one Python was told to run, and not when
+# something imports it. ``SystemExit`` with an integer is how a Python program
+# sets its exit status.
 if __name__ == "__main__":
     raise SystemExit(main())

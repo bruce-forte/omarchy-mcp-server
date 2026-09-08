@@ -23,6 +23,12 @@ arguments rather than its route -- see `self_refusal`.
 
 This module is the security boundary. It is pure, takes the registry as an
 argument, and is tested against every route Omarchy ships.
+
+"Pure" means every function here is decided entirely by its arguments: nothing
+is read from disk, no clock is consulted, nothing is spawned, and nothing is
+remembered between calls. That is what makes it exhaustively testable -- a test
+can hand it every route Omarchy ships and check the answer -- and it is why the
+registry arrives as an argument rather than being imported and read here.
 """
 
 from __future__ import annotations
@@ -34,6 +40,10 @@ from .paths import PLUGIN_ID
 from .registry import Command
 
 #: Groups whose commands install, remove, or rewrite the system.
+#:
+#: A ``frozenset`` is an immutable set: membership tests are instant however
+#: long the list grows, and no later code can add to it by accident. Both
+#: matter here, since these two constants are half of the classification.
 GUARDED_GROUPS = frozenset(
     {
         "install",
@@ -79,6 +89,17 @@ GUARDED_ROUTES = frozenset(
 
 
 class Tier(str, Enum):
+    """The three kinds of command, in increasing order of restriction.
+
+    An ``Enum`` is a fixed set of named values, so a tier can only ever be one of
+    these three -- a typo'd ``"gaurded"`` is an error at the point it is written
+    rather than a comparison that quietly never matches.
+
+    Inheriting from ``str`` as well makes each member usable *as* a string:
+    ``Tier.SAFE == "safe"`` is True and ``json.dumps`` serialises it without
+    help, which is why the JSON a tool returns can carry it directly.
+    """
+
     SAFE = "safe"
     GUARDED = "guarded"
     BLOCKED = "blocked"
@@ -123,6 +144,8 @@ def shell_call_refusal(target: str, method: str) -> str | None:
     panel, which is a surface the person is at, and no legitimate use is lost by
     routing the agent through them.
     """
+    # Returning ``None`` is this module's way of saying "no refusal"; a string is
+    # both the refusal and the reason shown to the agent.
     if target != PLUGIN_ID:
         return None
     if method in SELF_READ_VERBS:
@@ -152,6 +175,8 @@ def self_refusal(route: str, args: Sequence[str]) -> str | None:
     plugin still has to be allowed or approved. This is the narrower rule on top:
     naming *ours* is refused however the guarded tier is configured.
     """
+    # ``Sequence`` accepts a list, a tuple, or anything else indexable, so a
+    # caller is not forced to convert; this makes one concrete list to work with.
     args = list(args)
 
     if route == _SHELL_ROUTE:
@@ -174,7 +199,11 @@ def self_refusal(route: str, args: Sequence[str]) -> str | None:
 
 
 def base_tier(cmd: Command) -> Tier:
-    """The tier before any user configuration is applied."""
+    """The tier before any user configuration is applied.
+
+    Order matters: sudo is checked first, so a sudo command in a guarded group
+    still comes back ``BLOCKED``, which is the tier no rule can promote.
+    """
     if cmd.requires_sudo:
         return Tier.BLOCKED
     if cmd.group in GUARDED_GROUPS or cmd.route in GUARDED_ROUTES:

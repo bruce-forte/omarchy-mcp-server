@@ -48,6 +48,23 @@ It does own one write: `grant`, which appends an ``allow`` rule when a person
 answers *always* at the desk. The daemon is the only writer, it only ever writes
 `permissions.local.json`, and it only ever writes an exact route -- see `grant`
 for why each of those is load-bearing.
+
+Reading this file
+-----------------
+
+It is long, and it is four things in order, marked by banner comments:
+
+1. **the document** -- pydantic models describing the JSON on disk. They both
+   validate what is read and generate the published JSON Schema.
+2. **rules in memory** -- `Rule` and `Permissions`, the frozen shapes the rest
+   of the daemon holds.
+3. **reading** -- `parse` and `load`, turning files into those shapes, plus
+   `check`, which finds the defects only the live registry can reveal.
+4. **the ladder** -- `evaluate` and `decide`, the actual decision, and then the
+   writers (`grant`, `prune`, `revoke`, `seed`).
+
+If you read one function, read `evaluate`: it is the whole precedence ladder in
+one place, deliberately, so that it cannot be applied by halves.
 """
 
 from __future__ import annotations
@@ -155,6 +172,14 @@ class PermissionsError(ValueError):
 # dependency: the SDK already brings pydantic in, the models generate the
 # published JSON Schema (`make schema`), and per-field errors are already the
 # shape an error message needs -- which key, which index, and what was wrong.
+#
+# If pydantic is new: a `BaseModel` subclass declares fields as annotated
+# attributes, and `Model.model_validate(some_dict)` checks a dict against them,
+# raising `ValidationError` listing every field that did not fit. Unlike a plain
+# type hint, this *is* enforced -- validating untrusted input is the whole job.
+# `Field(...)` attaches the description and constraints that end up in the
+# published schema, and `Literal["route"]` means the value may be that exact
+# string and nothing else.
 
 
 class RuleModel(BaseModel):
@@ -185,6 +210,9 @@ class RuleModel(BaseModel):
         json_schema_extra={"pattern": r"^[^\s*]+( [^\s*]+)*( \*)?$"},
     )
 
+    # A pydantic validator: it runs on the ``matcher`` field during validation,
+    # and raising ``ValueError`` inside it is how a field is rejected -- the
+    # message ends up in the ``ValidationError`` that `_explain` formats.
     @field_validator("matcher")
     @classmethod
     def _shape(cls, value: str) -> str:
@@ -219,7 +247,15 @@ class RuleModel(BaseModel):
         return value
 
 
+# The ``"permissions"`` object: the two settings and the three rule lists.
+#
+# A comment rather than a docstring, deliberately: pydantic copies a model's
+# docstring into the generated JSON Schema as the object's ``description``, and
+# `make schema` would then fail as stale on a purely editorial change.
 class PermissionsBlock(BaseModel):
+    #: ``extra="forbid"`` rejects any key not declared below. The default would
+    #: silently ignore it, which is how a misspelled ``"dney"`` becomes a
+    #: protection somebody believes they have.
     model_config = ConfigDict(extra="forbid")
 
     #: What a guarded route with no matching rule does. Named after upstream's
@@ -247,6 +283,8 @@ class PermissionsBlock(BaseModel):
     )
 
     deny: list[RuleModel] = Field(
+        # ``default_factory=list`` gives each document its own empty list; a
+        # plain ``= []`` default would be one list shared by every instance.
         default_factory=list,
         description="Refused outright. Consulted first, and a narrower allow never overrides one.",
     )
@@ -302,6 +340,7 @@ class Rule:
 
     @property
     def wild(self) -> bool:
+        """Whether this is a prefix matcher rather than an exact route."""
         return self.matcher.endswith(WILDCARD)
 
     def matches(self, route: str) -> bool:
@@ -318,6 +357,8 @@ class Rule:
         if not self.wild:
             return route == self.matcher
         prefix = self.prefix
+        # The ``+ " "`` matters: without it ``omarchy install *`` would also
+        # match a hypothetical ``omarchy installer``, which is a different word.
         return route == prefix or route.startswith(prefix + " ")
 
     def covers(self, commands: Iterable[Command]) -> tuple[str, ...]:
@@ -346,6 +387,9 @@ class Permissions:
         `rules` is already in precedence order, so this is the first match --
         which is the whole rule, stated once, in one place.
         """
+        # ``next(generator, default)`` takes the first item a generator produces
+        # and stops there, returning the default if there is none. Nothing after
+        # the first match is even evaluated, which is the point.
         return next((r for r in self.rules if r.matches(route)), None)
 
 
@@ -394,6 +438,9 @@ def parse(text: str, *, source: str) -> tuple[tuple[Rule, ...], Options]:
     block = doc.permissions
     rules: list[Rule] = []
     for effect in PRECEDENCE:
+        # ``getattr(block, "deny")`` is ``block.deny``, with the attribute name
+        # taken from the enum -- so the three lists are read in precedence order
+        # by construction rather than by three copies of the same loop.
         for index, model in enumerate(getattr(block, effect.value)):
             rules.append(
                 Rule(
@@ -421,6 +468,9 @@ def _explain(exc: ValidationError, source: str) -> str:
     """
     lines = [f"{source} is not a valid permissions document:"]
     for err in exc.errors():
+        # ``loc`` is pydantic's path to the offending value, as a tuple like
+        # ``("permissions", "deny", 0, "matcher")``. Joined with dots it reads
+        # as the place in the file a person should look.
         where = ".".join(str(part) for part in err["loc"]) or "(root)"
         message = err["msg"].removeprefix("Value error, ")
         lines.append(f"  {where}: {message}")
@@ -440,8 +490,12 @@ def load(paths: Sequence[Path]) -> Permissions:
     file goes first, so the explainer quotes their rule rather than the daemon's
     copy of the same decision.
     """
+    #: One bucket per effect, so rules can be pooled across files and still come
+    #: out in precedence order at the end.
     pooled: dict[Effect, list[Rule]] = {effect: [] for effect in PRECEDENCE}
     settings: dict[str, object] = {}
+    #: Which file set each setting, so the second one to claim it is an error
+    #: naming both files rather than a silent overwrite.
     claimed: dict[str, str] = {}
 
     for path in paths:
@@ -465,6 +519,9 @@ def load(paths: Sequence[Path]) -> Permissions:
             claimed[key] = path.name
             settings[key] = value
 
+    # A nested comprehension: the outer ``for`` walks the effects in precedence
+    # order and the inner one flattens each bucket into a single tuple. Every
+    # deny, then every ask, then every allow.
     ordered = tuple(rule for effect in PRECEDENCE for rule in pooled[effect])
     return Permissions(
         rules=ordered,
@@ -571,6 +628,9 @@ def check(perms: Permissions, commands: dict[str, Command]) -> tuple[Finding, ..
                     f"allows everything, so it can be asked about and never granted.",
                 )
             )
+    # Identity, not equality: two rules can be identical in every field -- same
+    # effect, same matcher, same file -- and still be two separate entries that
+    # must be reported separately. ``id()`` is what tells them apart.
     findings.extend(_inert(perms, commands, {id(f.rule) for f in findings}))
     return tuple(findings)
 
@@ -602,8 +662,12 @@ def _inert(
         for route in covered:
             first = next((r for r in earlier if r.matches(route)), None)
             if first is None:
+                # One route this rule alone decides is enough: it is not inert.
                 break
             deciders.append(first)
+        # A ``for``/``else``: the ``else`` runs only when the loop finished
+        # without hitting ``break``. Here that means *every* covered route was
+        # already claimed, which is exactly the definition of inert.
         else:
             differing = next((r for r in deciders if r.effect is not rule.effect), None)
             by = differing if differing is not None else deciders[0]
@@ -628,6 +692,7 @@ def _inert(
 
 
 def errors(findings: Iterable[Finding]) -> tuple[Finding, ...]:
+    """Just the findings that stop the daemon. See `Finding` for the four levels."""
     return tuple(f for f in findings if f.level == "error")
 
 
@@ -650,6 +715,7 @@ class Outcome:
 
     @property
     def allowed(self) -> bool:
+        """Whether this route runs with nobody being asked."""
         return self.effect is Effect.ALLOW
 
     @property
@@ -663,6 +729,7 @@ class Outcome:
 
     @property
     def by_rule(self) -> bool:
+        """Whether a written rule decided this, as opposed to the tier or the default."""
         return self.rule is not None
 
 
@@ -1040,6 +1107,8 @@ def seed(path: Path) -> bool:
     line, and that line is what validates a matcher before this module ever sees
     it.
     """
+    # The three lists, empty and in precedence order, so the file a person opens
+    # shows them the order they are read in.
     body = {effect.value: [] for effect in PRECEDENCE}
     document = {
         "$schema": SCHEMA_URL,
@@ -1048,6 +1117,9 @@ def seed(path: Path) -> bool:
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
+        # ``"x"`` is exclusive-create: it fails if the file exists. That makes
+        # "never overwrites" a guarantee from the operating system rather than
+        # from an ``if path.exists()`` an editor could slip in between.
         with open(path, "x") as handle:
             json.dump(document, handle, indent=2)
             handle.write("\n")
@@ -1083,6 +1155,9 @@ def wrote_ourselves(raw: bytes | None) -> bool:
     """Whether ``raw`` is exactly the document this daemon last wrote itself."""
     if not raw or not _self_written:
         return False
+    # A SHA-256 digest is a short fixed-length fingerprint of the bytes.
+    # Comparing digests rather than the documents keeps one string in memory
+    # instead of a whole file, and identical bytes always digest identically.
     return hashlib.sha256(raw).hexdigest() == _self_written
 
 
@@ -1109,6 +1184,8 @@ def _write_local(path: Path, rules: Sequence[Rule], options: Options) -> None:
     }
 
     text = json.dumps(document, indent=2) + "\n"
+    # Recorded *before* the write, so the reloader's poll can never see the new
+    # file ahead of the fingerprint for it. See `wrote_ourselves`.
     global _self_written
     _self_written = hashlib.sha256(text.encode()).hexdigest()
 

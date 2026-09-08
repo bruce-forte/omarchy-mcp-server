@@ -42,9 +42,16 @@ import json
 import sys
 import threading
 
+#: Held across the write and the flush, so two threads cannot interleave halves
+#: of two lines. A module-level lock is right here because stdout is itself a
+#: single shared resource.
 _lock = threading.Lock()
 
 
+# ``**fields`` collects every extra keyword argument into a dict, so
+# ``emit("call", tool="x", outcome="ok")`` arrives as ``{"tool": ..., "outcome":
+# ...}``. Each frame kind below is a named wrapper over this, which is what
+# keeps the field names in one place instead of at every call site.
 def emit(state: str, **fields: object) -> None:
     """Write one frame. Never raises: a tool call must not fail over a pipe.
 
@@ -52,6 +59,8 @@ def emit(state: str, **fields: object) -> None:
     is run by hand instead, stdout is a terminal and these lines are visible
     there, which is the intended debugging view rather than an accident.
     """
+    # Serialised before the lock is taken: ``json.dumps`` can be slow for a
+    # large frame, and there is no reason to make other threads wait for it.
     line = json.dumps({"state": state, **fields})
     try:
         with _lock:

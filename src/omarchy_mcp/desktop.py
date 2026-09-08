@@ -37,7 +37,11 @@ TESSERACT_ARGS = (
 
 
 class DesktopError(RuntimeError):
-    pass
+    """A desktop tool is missing, hung, or answered with something unusable.
+
+    One exception type for the whole module, so a tool body can wrap a call in a
+    single ``except DesktopError`` and turn any of it into one clear message.
+    """
 
 
 def _exe(argv: list[str]) -> str:
@@ -48,6 +52,8 @@ def _exe(argv: list[str]) -> str:
     and `tesseract` are ordinary names in /usr/bin with a session PATH in front
     of them.
     """
+    # Imported inside the function to avoid a circular import at module load;
+    # `registry.py` carries the same note.
     from .execute import NotInstalled, resolve_binary
 
     try:
@@ -58,16 +64,32 @@ def _exe(argv: list[str]) -> str:
 
 @dataclass(frozen=True)
 class Capture:
+    """A screenshot: the PNG itself, and the size it actually came out at."""
+
+    #: ``bytes``, not ``str``: a PNG is binary and is not text in any encoding.
     png: bytes
     width: int
     height: int
 
     def as_base64(self) -> str:
+        """The PNG as text, which is the only way JSON can carry it.
+
+        Base64 re-encodes arbitrary bytes as 64 safe characters, costing about a
+        third more size. ``b64encode`` returns bytes in turn, so ``.decode`` --
+        safely ASCII, since those 64 characters are all it can produce.
+        """
         return base64.b64encode(self.png).decode("ascii")
 
 
+# ``*args`` collects any number of positional arguments into a tuple, so this is
+# called as ``hyprctl("monitors")`` or ``hyprctl("dispatch", "workspace", "2")``.
 def hyprctl(*args: str) -> object:
-    """Run `hyprctl -j` and parse the reply."""
+    """Run `hyprctl -j` and parse the reply.
+
+    Returns whatever the JSON was -- Hyprland answers some queries with a list
+    and others with an object -- so every caller checks with ``isinstance``
+    before indexing into it.
+    """
     argv = ["hyprctl", "-j", *args]
     try:
         proc = subprocess.run(
@@ -91,6 +113,7 @@ def hyprctl(*args: str) -> object:
 
 
 def focused_monitor() -> dict:
+    """The monitor with keyboard focus, or the first one if nothing claims it."""
     monitors = hyprctl("monitors")
     if not isinstance(monitors, list) or not monitors:
         raise DesktopError("Hyprland reported no monitors")
@@ -123,6 +146,8 @@ def _grim_args(target: str, monitor: str, region: str) -> list[str]:
         active = hyprctl("activewindow")
         if not isinstance(active, dict) or not active.get("address"):
             raise DesktopError("no window is focused")
+        # Both arrive as two-element lists and are unpacked into a pair of
+        # variables; ``or (0, 0)`` covers the field being absent or null.
         x, y = active.get("at") or (0, 0)
         w, h = active.get("size") or (0, 0)
         if w <= 0 or h <= 0:
@@ -151,6 +176,10 @@ def capture(
 
     # A named temporary rather than grim's stdout: piping straight into
     # ImageMagick hides which of the two failed when something goes wrong.
+    # ``TemporaryDirectory`` used as a context manager: the directory and
+    # everything in it are deleted when the ``with`` block ends, however it ends.
+    # In XDG_RUNTIME_DIR because that is a per-user directory that the system
+    # clears at logout, so a screenshot never lands somewhere shared.
     with tempfile.TemporaryDirectory(dir=os.environ.get("XDG_RUNTIME_DIR") or "/tmp") as tmp:
         raw = os.path.join(tmp, "capture.png")
         _run(["grim", *args, raw], GRIM_TIMEOUT_S, "grim")
@@ -162,11 +191,15 @@ def capture(
             GRIM_TIMEOUT_S,
             "magick",
         )
+        # ``"rb"`` is read-binary: no decoding, no newline translation. The
+        # bytes have to be read before the ``with`` ends and the directory goes.
         png = open(shrunk, "rb").read()
         size = _run(
             ["magick", "identify", "-format", "%w %h", shrunk], GRIM_TIMEOUT_S, "magick identify"
         )
 
+    # ImageMagick printed "1568 882"; ``partition`` splits it into the two
+    # numbers and the space between them, which is discarded as ``_``.
     width, _, height = size.partition(" ")
     return Capture(png=png, width=int(width or 0), height=int(height or 0))
 
@@ -193,6 +226,11 @@ def ocr(*, target: str = "screen", monitor: str = "", region: str = "", lang: st
 
 
 def clipboard_read(*, mime: str = "") -> str:
+    """Whatever text is on the clipboard, or "" when there is none.
+
+    An empty clipboard is an answer rather than a failure -- see the comment on
+    the exit code below.
+    """
     args = ["wl-paste", "--no-newline"]
     if mime:
         args += ["--type", mime]
@@ -237,6 +275,8 @@ def clipboard_write(text: str) -> None:
         proc = subprocess.run(
             ["wl-copy"],
             executable=_exe(["wl-copy"]),
+            # ``input`` writes to the child's stdin and closes it. ``encode``
+            # turns the string into UTF-8 bytes, which is what a pipe carries.
             input=text.encode(),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -251,6 +291,11 @@ def clipboard_write(text: str) -> None:
 
 
 def _run(argv: list[str], timeout_s: int, what: str) -> str:
+    """Run one desktop helper and return its stdout, or raise `DesktopError`.
+
+    ``what`` is the name to use in the message, which is not always ``argv[0]``:
+    "magick identify" is more use to a reader than "magick".
+    """
     try:
         proc = subprocess.run(
             argv, executable=_exe(argv), capture_output=True, text=True, timeout=timeout_s
@@ -276,11 +321,17 @@ def state() -> dict[str, object]:
     clients = hyprctl("clients")
     active = hyprctl("activewindow")
 
+    # One list comprehension doing three things: keep only real dicts from a
+    # reply that might not be a list at all, drop unmapped (not-on-screen)
+    # windows, and cut each record down to the ten fields worth sending.
     windows = [
         {
             "address": c.get("address"),
             "class": c.get("class"),
             "title": c.get("title"),
+            # ``(x or {}).get(...)`` is the safe two-level lookup: if the
+            # workspace field is missing or null, ``.get`` runs on an empty dict
+            # and yields None instead of raising.
             "workspace": (c.get("workspace") or {}).get("name"),
             "monitor": c.get("monitor"),
             "at": c.get("at"),
@@ -325,6 +376,9 @@ def state() -> dict[str, object]:
                 }
                 for w in (workspaces if isinstance(workspaces, list) else [])
             ),
+            # Sorting by a pair puts every workspace with an id first, in id
+            # order, and any without one at the end. Sorting on the id alone
+            # would raise, because None and an int cannot be compared.
             key=lambda w: (w["id"] is None, w["id"]),
         ),
         "windows": windows,

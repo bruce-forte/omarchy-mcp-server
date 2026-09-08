@@ -49,7 +49,15 @@ MEDIA_ACTIONS = (
 
 
 def register(tools: Catalogue, settings: Settings, log, stats: Stats) -> None:
+    """Declare the seven convenience tools in ``tools``.
 
+    Each one is a small ``action`` switch over a handful of registry routes:
+    validate what was asked for, refuse clearly if it makes no sense, otherwise
+    hand the route to `run` below.
+    """
+
+    # A local shorthand for `_shared.run_route`, closing over the four arguments
+    # every call in this module would otherwise repeat.
     async def run(route, args, tool, ctx, **kw):
         # One snapshot per call: a reload between two calls is seen, a reload
         # during one is not.
@@ -82,6 +90,7 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats) -> None:
         ),
     )
     async def omarchy_theme(action: str = "current", name: str = "", ctx: Context = None) -> str:
+        """Read, list, or apply the theme, depending on ``action``."""
         if action == "current":
             return await run("omarchy theme current", [], "omarchy_theme", ctx)
         if action == "list":
@@ -105,6 +114,7 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats) -> None:
         ),
     )
     async def omarchy_background(action: str = "current", path: str = "", ctx: Context = None) -> str:
+        """Read, cycle, or set the desktop background."""
         if action == "current":
             return await run("omarchy theme bg current", [], "omarchy_background", ctx)
         if action == "next":
@@ -134,6 +144,7 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats) -> None:
         ),
     )
     async def omarchy_audio(action: str = "volume", level: str = "raise", ctx: Context = None) -> str:
+        """Volume, mute, microphone mute, or output switching."""
         if action == "volume":
             if level not in ("raise", "lower") and not _is_step(level):
                 return json.dumps(
@@ -169,6 +180,7 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats) -> None:
     async def omarchy_brightness(
         target: str = "display", value: str = "", monitor: str = "", ctx: Context = None
     ) -> str:
+        """Display or keyboard brightness. An empty ``value`` reads it instead."""
         if target == "display":
             args: list[str] = []
             if monitor:
@@ -202,6 +214,12 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats) -> None:
         ),
     )
     async def omarchy_media(action: str = "status") -> str:
+        """Drive the shell's media target directly.
+
+        The one tool here that does not go through `run`: this is an IPC call
+        rather than a registry route, so there is no `Command` for the gate to
+        classify. It is read-mostly playback control on the running shell.
+        """
         if action not in MEDIA_ACTIONS:
             return json.dumps(
                 {"error": f"action must be one of {', '.join(MEDIA_ACTIONS)}"}, indent=2
@@ -239,6 +257,7 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats) -> None:
         ),
     )
     async def omarchy_toggle(feature: str, state: str = "toggle", ctx: Context = None) -> str:
+        """Flip one of the named desktop flags on, off, or over."""
         route = TOGGLES.get(feature)
         if route is None:
             return json.dumps(
@@ -282,6 +301,7 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats) -> None:
         ),
     )
     async def omarchy_launch(what: str, target: str = "", ctx: Context = None) -> str:
+        """Open a browser, editor, terminal, web app, or file manager."""
         routes = {
             "browser": "omarchy launch browser",
             "editor": "omarchy launch editor",
@@ -313,6 +333,9 @@ def accepted_states(route: str) -> set[str]:
     cmd = registry.get(route)
     if cmd is None:
         return set()
+    # ``findall`` returns every match rather than just the first. The pattern is
+    # "a lowercase letter, then any number of lowercase letters or dashes",
+    # which picks the words out of an argument spec like "on|off|toggle".
     return set(re.findall(r"[a-z][a-z-]*", cmd.args))
 
 
@@ -323,6 +346,8 @@ def state_argument(route: str, state: str) -> str | None:
     how it spells "toggle".
     """
     accepted = accepted_states(route)
+    # In preference order, so a route accepting both "off" and "allow-idle"
+    # gets the more obvious of the two.
     for word in STATE_WORDS[state]:
         if word in accepted:
             return word
@@ -333,4 +358,8 @@ def state_argument(route: str, state: str) -> str | None:
 
 
 def _is_step(value: str) -> bool:
+    """Whether ``value`` is a signed step like ``+10`` or ``-5``."""
+    # ``isdigit()`` on the rest is what rejects "+ten" and "+1.5"; the length
+    # check is what stops a bare "+" reaching ``value[1:]`` as an empty string,
+    # which ``isdigit`` calls False anyway but less obviously.
     return len(value) > 1 and value[0] in "+-" and value[1:].isdigit()

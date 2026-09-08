@@ -11,6 +11,12 @@ between them cover every command and every IPC target without putting several
 hundred entries in a listing. Templates resolve when read by URI; note that
 Claude Code does not enumerate them, so the concrete four are the discoverable
 set. See ROADMAP.md finding F8.
+
+Every resource below is a function under one `register` call, decorated with
+``@mcp.resource(uri, ...)``. The decorator hands the function to the SDK, which
+calls it when a client reads that URI; nothing in this module ever calls them.
+A ``{placeholder}`` in the URI becomes an argument of the same name -- that is
+what makes the last three *templates* rather than fixed addresses.
 """
 
 from __future__ import annotations
@@ -25,7 +31,14 @@ from .status import gather
 
 
 def register(mcp, settings: Settings, log) -> None:
+    """Attach every resource to ``mcp``.
+
+    Nested functions rather than top-level ones so each closes over ``settings``
+    and ``log``: they can read them directly instead of taking them as
+    arguments the SDK would have to know how to supply.
+    """
     # ------------------------------------------------------------- concrete
+
 
     @mcp.resource(
         "omarchy://commands",
@@ -37,6 +50,7 @@ def register(mcp, settings: Settings, log) -> None:
         mime_type="application/json",
     )
     def commands_resource() -> str:
+        """Every command, each annotated with what this server would do with it."""
         return json.dumps(_annotated(registry.all_commands().values()), indent=2)
 
     @mcp.resource(
@@ -50,6 +64,9 @@ def register(mcp, settings: Settings, log) -> None:
         mime_type="application/json",
     )
     def permissions_resource() -> str:
+        """The rules in force and what each one covers on this machine."""
+        # ``settings.permissions`` is read here, at call time, so a reload since
+        # registration is reflected rather than a snapshot from startup.
         return json.dumps(
             permissions.explain(settings.permissions, registry.all_commands()), indent=2
         )
@@ -65,9 +82,13 @@ def register(mcp, settings: Settings, log) -> None:
         mime_type="application/json",
     )
     def targets_resource() -> str:
+        """The running shell's whole IPC surface, with signatures."""
         try:
             found = shell.targets()
         except shell.ShellError as exc:
+            # An error as *content* rather than a raised exception: the reader
+            # wanted to know what the shell offers, and "the shell is not
+            # running" is a useful answer to that.
             return json.dumps({"error": str(exc)}, indent=2)
         return json.dumps(
             {"count": len(found), "targets": [shell.as_dict(t) for t in found.values()]},
@@ -81,6 +102,7 @@ def register(mcp, settings: Settings, log) -> None:
         mime_type="application/json",
     )
     def desktop_resource() -> str:
+        """Monitors, workspaces, windows, and what has focus."""
         try:
             return json.dumps(desktop.state(), indent=2)
         except desktop.DesktopError as exc:
@@ -93,6 +115,7 @@ def register(mcp, settings: Settings, log) -> None:
         mime_type="application/json",
     )
     def status_resource() -> str:
+        """The same answer `omarchy_system_status` gives, from the same code."""
         return json.dumps(gather(), indent=2)
 
     # ------------------------------------------------------------- templates
@@ -107,6 +130,7 @@ def register(mcp, settings: Settings, log) -> None:
         mime_type="application/json",
     )
     def command_resource(route: str) -> str:
+        """One command. ``route`` is filled in from the ``{route}`` in the URI."""
         wanted = route.strip()
         if not wanted.startswith("omarchy"):
             wanted = f"omarchy {wanted}"
@@ -132,6 +156,7 @@ def register(mcp, settings: Settings, log) -> None:
         mime_type="application/json",
     )
     def group_resource(group: str) -> str:
+        """Every command in one group, or the list of groups if there is no such one."""
         grouped = registry.groups()
         found = grouped.get(group.strip())
         if found is None:
@@ -147,6 +172,7 @@ def register(mcp, settings: Settings, log) -> None:
         mime_type="application/json",
     )
     def target_resource(name: str) -> str:
+        """One IPC target, or the list of targets if there is no such one."""
         try:
             found = shell.targets()
         except shell.ShellError as exc:
@@ -167,6 +193,9 @@ def register(mcp, settings: Settings, log) -> None:
         """
         perms = settings.permissions
         unreviewed = settings.unreviewed
+        # ``|`` between two dicts merges them into a new one, the right-hand
+        # side winning any shared key: the registry entry, plus this server's
+        # verdict on it.
         rows = [
             registry.as_dict(cmd) | describe(cmd, perms, unreviewed=unreviewed)
             for cmd in sorted(commands, key=lambda c: c.route)

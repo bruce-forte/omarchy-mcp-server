@@ -22,6 +22,16 @@ what the agent asked for, and they are the point. Output is not: OCR text and
 clipboard reads are the screen's contents, and a log of those is a different and
 much worse thing than a log of actions. The file is still `0600` in a `0700`
 directory, because an argument can be text the user copied.
+
+The shape, in Python terms: `Sink` is a *producer/consumer queue*. Any number of
+threads call `Sink.append`, which only puts a dict on a `queue.Queue` -- an
+inherently thread-safe container -- and returns. One background thread sits in
+`Sink._drain` taking items off the other end and writing them. Because that
+thread is the only one that ever touches the file, no file locking is needed
+anywhere. A special ``_STOP`` object put on the queue is what tells it to finish.
+
+The file itself is JSON Lines: one complete JSON object per line, so it can be
+appended to forever and read back a line at a time.
 """
 
 from __future__ import annotations
@@ -60,6 +70,9 @@ QUEUE_DEPTH = 4096
 #: uvicorn's own grace is 3s, so this has to fit in what is left.
 JOIN_TIMEOUT_S = 1.0
 
+#: The sentinel that tells the writer thread to stop. A bare ``object()`` is a
+#: value equal to nothing but itself, so it can never be confused with a real
+#: record -- which is why `_drain` compares with ``is`` rather than ``==``.
 _STOP = object()
 
 
@@ -69,6 +82,7 @@ def _now() -> str:
 
 
 def _elide(text: str, limit: int) -> str:
+    """Cut over-long text, saying how much was cut rather than hiding it."""
     if len(text) <= limit:
         return text
     return f"{text[:limit]}…(+{len(text) - limit})"
@@ -111,6 +125,7 @@ class Record:
 
     @property
     def ok(self) -> bool:
+        """Whether this call counts as a success, for the failure counter."""
         return self.result == "ok"
 
     def as_dict(self) -> dict[str, object]:
@@ -142,9 +157,15 @@ def line_of(body: dict[str, object]) -> str:
     argument is the one field a model supplies, and it may be a document
     somebody copied.
     """
+    # ``ensure_ascii=False`` keeps non-English text readable rather than turning
+    # every accented character into a \uXXXX escape.
     text = json.dumps(body, ensure_ascii=False)
+    # The cap is in bytes, so it is measured on the encoded form; see `cap` in
+    # `execute.py` for the same distinction.
     if len(text.encode()) <= MAX_LINE_B or "args" not in body:
         return text
+    # ``dict(body, args=...)`` copies and overrides one key in one step, leaving
+    # the caller's dict alone.
     body = dict(body, args=[_elide(str(a), HARD_ARG_CHARS) for a in body["args"]])
     return json.dumps(body, ensure_ascii=False)
 
@@ -169,16 +190,24 @@ class Sink:
     """The queue, the writer thread, and the file it appends to."""
 
     def __init__(self, path: Path, max_bytes: int, log) -> None:
+        """Build the sink. Nothing is opened and no thread runs until `start`."""
         self.path = path
         self.max_bytes = max_bytes
         self._log = log
+        #: ``queue.Queue`` is the standard library's thread-safe queue, and
+        #: ``maxsize`` is what makes it *bounded*: full means an event is
+        #: dropped and counted, rather than memory growing without limit.
         self._q: queue.Queue = queue.Queue(maxsize=QUEUE_DEPTH)
         self._thread: threading.Thread | None = None
+        #: Guards the two drop fields, which producer threads write and the
+        #: writer thread reads.
         self._drop_lock = threading.Lock()
         self._dropped = 0
         self._warned = False
         self._told_user = False
         self._closed = False
+        #: The open file handle, and its size in bytes. Touched only by the
+        #: writer thread, which is why neither needs a lock.
         self._fh = None
         self._size = 0
 
@@ -187,6 +216,9 @@ class Sink:
     def append(self, body: dict[str, object]) -> None:
         """Never blocks, never raises. A tool call must not wait for a log."""
         try:
+            # ``put_nowait`` raises immediately when the queue is full, where a
+            # plain ``put`` would block the calling thread -- which is exactly
+            # what a tool call must never do for the sake of a log.
             self._q.put_nowait(body)
         except queue.Full:
             with self._drop_lock:
@@ -199,11 +231,16 @@ class Sink:
                 )
 
     def event(self, name: str, **fields: object) -> None:
+        """Queue something that is not a tool call: started, stopped, a grant."""
         self.append({"ts": _now(), "event": name, **fields})
 
     # -- lifecycle ------------------------------------------------------------
 
     def start(self) -> None:
+        """Start the one writer thread."""
+        # ``daemon=True`` means this thread does not hold the process open: if
+        # everything else has finished, Python exits rather than waiting here.
+        # The orderly shutdown is `stop`; this is the backstop.
         self._thread = threading.Thread(target=self._drain, name="activity", daemon=True)
         self._thread.start()
 
@@ -250,8 +287,13 @@ class Sink:
     # -- consumer side: the writer thread, and the only thing touching the file
 
     def _drain(self) -> None:
+        """The writer thread's whole life: take an item, write it, repeat."""
         while True:
+            # ``get`` blocks until something arrives, which costs nothing -- a
+            # parked thread uses no CPU.
             body = self._q.get()
+            # ``is``, not ``==``: this is an identity check against the one
+            # sentinel object, and cannot be satisfied by any real record.
             if body is _STOP:
                 self._close()
                 return
@@ -259,7 +301,12 @@ class Sink:
             self._write(body)
 
     def _flush_drops(self) -> None:
+        """Write a line accounting for anything the queue had to drop."""
         with self._drop_lock:
+            # Read and reset in one statement. The right-hand side is evaluated
+            # first, so this takes the old count and zeroes the field -- under
+            # the lock, so a producer incrementing at the same moment is not
+            # lost.
             dropped, self._dropped = self._dropped, 0
             if dropped:
                 self._warned = False
@@ -267,6 +314,7 @@ class Sink:
             self._write({"ts": _now(), "event": "dropped", "n": dropped})
 
     def _write(self, body: dict[str, object]) -> None:
+        """Append one record, opening or rotating the file as needed."""
         try:
             if self._fh is None:
                 self._open()
@@ -282,6 +330,7 @@ class Sink:
             self._failed(exc)
 
     def _open(self) -> None:
+        """Open the log for appending, creating it 0600 in a 0700 directory."""
         self.path.parent.mkdir(parents=True, exist_ok=True)
         os.chmod(self.path.parent, 0o700)
         fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
@@ -293,10 +342,13 @@ class Sink:
         """One generation kept. A tailer re-opens on the rename; see N6."""
         self._fh.close()
         self._fh = None
+        # ``os.replace`` is an atomic rename: there is no instant where neither
+        # name exists, and it overwrites any previous generation.
         os.replace(self.path, rotated(self.path))
         self._open()
 
     def _close(self) -> None:
+        """Close the file handle if one is open. Safe to call twice."""
         if self._fh is not None:
             try:
                 self._fh.close()
@@ -322,6 +374,7 @@ class Sink:
 
 
 def rotated(path: Path) -> Path:
+    """Where the previous generation lives: ``activity.jsonl.1``."""
     return path.with_name(path.name + ".1")
 
 
@@ -368,6 +421,9 @@ def writer(config, log):
         yield None
         return
 
+    # ``global`` is required to *assign* to a module-level name from inside a
+    # function; without it, the assignment below would create a local variable
+    # and the module's ``_current`` would never change.
     global _current
 
     sink = Sink(path_for(config), config.activity_max_bytes, log)
@@ -392,14 +448,19 @@ class Closing:
     """
 
     def __init__(self, app, sink: Sink) -> None:
+        """Wrap ``app``, closing ``sink`` when it finishes shutting down."""
         self.app = app
         self._sink = sink
 
     async def __call__(self, scope, receive, send):
+        """The ASGI entry point; see `auth.BearerAuth` for what that means."""
         if scope["type"] != "lifespan":
             await self.app(scope, receive, send)
             return
 
+        # A stand-in for ASGI's ``send``, closed over the real one. Everything
+        # passes through unchanged; the only addition is noticing the one
+        # message that says the application has finished shutting down.
         async def watched(message):
             # Before the completion is reported, not after: once uvicorn has
             # its answer it is free to re-raise and end the process.
@@ -443,6 +504,9 @@ def mark_unclosed(records: list[dict]) -> list[dict]:
     the last `started` is the session that is probably still running, and
     calling that one unclosed would be a lie in the other direction.
     """
+    # Walked backwards, because the question about each `started` is whether
+    # another one appears *after* it -- which going backwards means "have I
+    # already seen one".
     later = False
     for body in reversed(records):
         if body.get("event") not in _LIFECYCLE:
@@ -467,6 +531,8 @@ def tail(n: int = 20, path: Path | None = None) -> list[dict]:
             continue
 
     out: list[dict] = []
+    # ``lines[-n:]`` is the last n entries. Guarded because ``[-0:]`` is the
+    # whole list rather than nothing, which would make ``n=0`` mean "everything".
     for raw in lines[-n:] if n > 0 else lines:
         try:
             body = json.loads(raw)
@@ -516,6 +582,8 @@ def level(body: dict) -> str:
 
 def render(body: dict) -> str:
     """One record as a line a person reads, for ``omarchy-mcpd --tail``."""
+    # An ISO timestamp is "2026-09-08T14:05:33+02:00"; characters 11 to 19 are
+    # the "14:05:33" in the middle of it.
     when = str(body.get("ts", ""))[11:19]
     if "event" in body:
         extra = " ".join(

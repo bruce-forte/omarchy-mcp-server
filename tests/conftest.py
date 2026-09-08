@@ -1,13 +1,41 @@
+"""Shared test setup, and the guards that keep the suite off this machine.
+
+``conftest.py`` is pytest's magic filename: everything in it is available to
+every test in this directory without being imported. Two things live here.
+
+**Fixtures.** A ``@pytest.fixture`` function provides a value to any test that
+names it as a parameter -- a test written ``def test_x(commands):`` gets the
+``commands`` fixture below, built by pytest and passed in. ``scope="session"``
+means it is built once for the whole run rather than per test.
+
+**The guards.** A fixture marked ``autouse=True`` runs for *every* test whether
+or not it is asked for, which is what makes the four ``_pin_*`` / ``_no_*``
+fixtures below enforceable rather than advisory. Each uses ``monkeypatch``,
+pytest's built-in fixture for replacing an attribute for the length of one test
+and putting it back afterwards -- so the suite reads committed snapshots instead
+of the installed Omarchy, writes into a temporary directory instead of the
+user's state directory, and cannot spawn a desktop command or raise a real
+notification. See `test_conftest_guards.py`, which tests the guards themselves,
+and the `CLAUDE.md` section on why they exist.
+"""
+
 import json
 import pathlib
 import sys
 
 import pytest
 
+# The package lives under ``src/`` and is not installed into the environment, so
+# its parent directory is put at the front of the import path before the import
+# below. ``parents[1]`` is the repository root: one level up from ``tests/``.
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 
+# ``noqa`` silences the linter's "imports go at the top of the file" rule, with
+# the reason on the line: this import cannot run until the path insert above has.
 from omarchy_mcp import execute, prompt  # noqa: E402  -- after the path insert
 
+#: The committed snapshots. ``__file__`` is this file's own path, so this
+#: resolves the same from any working directory.
 FIXTURES = pathlib.Path(__file__).parent / "fixtures"
 
 
@@ -23,6 +51,11 @@ def registry_payload() -> str:
 
 @pytest.fixture(scope="session")
 def commands(registry_payload):
+    """The snapshot parsed into `Command` objects, keyed by route.
+
+    Taking ``registry_payload`` as a parameter is how one fixture depends on
+    another: pytest builds that one first and passes the result in.
+    """
     from omarchy_mcp.registry import _parse
 
     return _parse(registry_payload)
@@ -30,6 +63,7 @@ def commands(registry_payload):
 
 @pytest.fixture(scope="session")
 def ipc_listing() -> str:
+    """A snapshot of ``qs ipc show`` from a running shell."""
     return (FIXTURES / "ipc-show.txt").read_text()
 
 
@@ -44,6 +78,9 @@ def _pin_registry(monkeypatch, commands):
     """
     import omarchy_mcp.registry as reg
 
+    # ``setattr`` replaces the function on the module for the length of this
+    # test and restores it afterwards; the ``lambda`` ignores its arguments and
+    # hands back the snapshot. Nothing is spawned.
     monkeypatch.setattr(reg, "all_commands", lambda: commands)
 
 
@@ -91,9 +128,14 @@ def _pin_state_dir(monkeypatch, tmp_path_factory):
     """
     import importlib
 
+    # A fresh temporary directory, cleaned up by pytest afterwards.
     root = tmp_path_factory.mktemp("state")
     for module_name, attribute, leaf in WRITTEN_PATHS:
+        # ``import_module`` imports by name at runtime, which is what lets the
+        # table above be a list of strings rather than a list of imports.
         module = importlib.import_module(module_name)
+        # A binding that has since been renamed is skipped rather than raising;
+        # `test_conftest_guards.py` is what notices a *missing* one.
         if not hasattr(module, attribute):
             continue
         monkeypatch.setattr(module, attribute, root / leaf)
@@ -134,11 +176,15 @@ def _no_real_omarchy(monkeypatch, request):
     `test_execute.py` and `test_binaries.py` keep spawning `echo`, `sleep` and
     their own fakes, which is what they are for.
     """
+    # ``request`` is pytest's handle on the test currently running, and a marker
+    # is the ``@pytest.mark.needs_omarchy`` decorator on it.
     if request.node.get_closest_marker("needs_omarchy") is not None:
         # Declared drift checks against the installed Omarchy. They read; they
         # are skipped in CI; and the marker is the opt-in.
         return
 
+    # The real function, kept before it is replaced, so the stand-in below can
+    # still call it once it is satisfied the argv is safe.
     real_run = execute.run
 
     def guarded(argv, **kwargs):
@@ -199,9 +245,12 @@ def _pin_resolver_sources(monkeypatch, themes, monitors):
 
 @pytest.fixture
 def live_registry_groups(registry_payload):
+    """Every group name in the snapshot, for the tests that check classification."""
     return {c["group"] for c in json.loads(registry_payload)["commands"]}
 
 
+# A pytest hook: a function with this exact name is called once at startup.
+# Declaring the marker here is what stops pytest warning about an unknown one.
 def pytest_configure(config):
     config.addinivalue_line("markers", "needs_omarchy: reads the installed Omarchy, not the fixture")
 
