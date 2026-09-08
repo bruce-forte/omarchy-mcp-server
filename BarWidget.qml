@@ -424,10 +424,15 @@ Panel {
   }
 
   function stepTab(direction) {
-    var i = tabs.indexOf(tab)
+    // `root.` qualified throughout: an `id` inside this component wins over a
+    // property of the root object with the same name, so an unqualified `tabs`
+    // here resolved to the ButtonGroup and `indexOf` threw. The strip's id is
+    // `tabStrip` now, and this says which `tabs` it means regardless.
+    var names = root.tabs
+    var i = names.indexOf(root.tab)
     if (i < 0)
       i = 0
-    tab = tabs[(i + direction + tabs.length) % tabs.length]
+    root.tab = names[(i + direction + names.length) % names.length]
   }
 
   //: The cursor lands somewhere sensible whenever the ring changes shape: on
@@ -770,7 +775,7 @@ Panel {
           spacing: Style.spacing.sm
 
           ButtonGroup {
-            id: tabs
+            id: tabStrip
             options: root.tabOptions
             value: root.tab
             focusable: false
