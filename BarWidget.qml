@@ -1546,7 +1546,11 @@ Panel {
 
                       Text {
                         id: arrivalNote
-                        text: modelData.unclassified ? "new group · runs" : "held · asks once"
+                        // "new group" is no longer a warning that something ran:
+                        // since N17 an unclassified group is guarded, so it asks
+                        // on every call. Still urgent-coloured, because only the
+                        // user can end that by allowing the routes.
+                        text: modelData.unclassified ? "new group · asks" : "held · asks once"
                         color: modelData.unclassified ? Color.urgent
                                                       : Qt.darker(Color.foreground, 1.4)
                         font.family: Style.font.family

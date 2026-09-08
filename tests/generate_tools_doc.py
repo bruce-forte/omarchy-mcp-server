@@ -14,7 +14,7 @@ from mcp.server.mcpserver import MCPServer
 
 from omarchy_mcp import __version__, resources
 from omarchy_mcp.config import Config
-from omarchy_mcp.policy import GUARDED_GROUPS, GUARDED_ROUTES
+from omarchy_mcp.policy import GUARDED_GROUPS, GUARDED_ROUTES, SAFE_GROUPS
 from omarchy_mcp.settings import Settings
 from omarchy_mcp.stats import Stats
 from omarchy_mcp.tools import control, desktop, feedback, generic, system
@@ -133,6 +133,13 @@ async def render() -> str:
         "Every command is classified from `omarchy commands --json`. "
         "`omarchy_search_commands` reports the tier of each result.\n"
     )
+    out.append(
+        "**`safe` is an allowlist.** A command is safe only if its group is named "
+        "below; a group in neither list is `guarded`, so a command group Omarchy "
+        "adds after this release of the server is asked about rather than assumed "
+        "harmless. If a route you expected to be safe is being asked about, that is "
+        "why, and an `allow` rule in `permissions.json` settles it.\n"
+    )
     out.append("| Tier | Rule | Behaviour |")
     out.append("|------|------|-----------|")
     out.append(
@@ -140,12 +147,13 @@ async def render() -> str:
         "terminal, so a password prompt could never be answered. Not overridable |"
     )
     out.append(
-        "| `guarded` | destructive | Asked about on the desktop, unless "
-        "`~/.config/omarchy/mcp/permissions.json` says otherwise |"
+        "| `guarded` | destructive, **or in no classified group** | Asked about on "
+        "the desktop, unless `~/.config/omarchy/mcp/permissions.json` says otherwise |"
     )
-    out.append("| `safe` | everything else | Runs |")
+    out.append("| `safe` | in a group classified safe | Runs |")
     out.append("")
     out.append("Guarded groups: " + ", ".join(f"`{g}`" for g in sorted(GUARDED_GROUPS)) + ".\n")
+    out.append("Safe groups: " + ", ".join(f"`{g}`" for g in sorted(SAFE_GROUPS)) + ".\n")
     out.append(
         "Individually guarded routes: "
         + ", ".join(f"`{r}`" for r in sorted(GUARDED_ROUTES))

@@ -80,8 +80,8 @@ this server draws is **what is hard to undo**, not what writes: switching a
 theme is reversed by one more sentence to the agent, so it is `safe` and it
 runs. Wallpapers, volume, brightness, launching an app and moving a window are
 all the same. What asks is the `guarded` tier — installs, removals, migrations,
-reboots, shell plugins — and what is never allowed at all is anything needing
-sudo.
+reboots, shell plugins, **and anything in a command group this server has not
+classified** — and what is never allowed at all is anything needing sudo.
 
 If that is where you want the line, you are done; skip to
 [What to do next](#what-to-do-next). The next two steps move it, which is also
@@ -503,11 +503,20 @@ See [`SECURITY.md`](SECURITY.md).
 Commands are classified automatically from the registry, so the policy does not
 rot when Omarchy adds commands:
 
-| Tier      | Rule                                                | Behaviour                                                                                                             |
-| --------- | --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| `blocked` | needs sudo                                          | Refused always. The daemon has no controlling terminal, so a password prompt could never be answered. Not overridable |
-| `guarded` | installs, removes, migrates, reboots, shell plugins | Refused unless allowed in your config, or approved by you at the time                                                 |
-| `safe`    | everything else                                     | Runs                                                                                                                  |
+| Tier      | Rule                                                            | Behaviour                                                                                                            |
+| --------- | --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `blocked` | needs sudo                                                      | Refused always. The daemon has no controlling terminal, so a password prompt could never be answered. Not overridable |
+| `guarded` | installs, removes, migrates, reboots, shell plugins — **or a group this server has not classified** | Refused unless allowed in your config, or approved by you at the time                                                |
+| `safe`    | in a command group this server classifies as safe               | Runs                                                                                                                 |
+
+**`safe` is an allowlist, and that is the security part.** A command is safe only
+if its group is on a list somebody wrote down. Anything in neither list is
+guarded, so a group Omarchy invents after this server's last release asks rather
+than running — the classification fails towards the prompt, not towards the
+command. The price is that a perfectly harmless new group also asks until the
+group is classified or you allow the routes; the server tells you which, in the
+prompt and in the bar panel. Both lists are in [`TOOLS.md`](TOOLS.md), generated
+from the code.
 
 **The line is what is hard to undo, not what writes.** This surprises people, so
 it is worth being explicit: switching your theme, setting a wallpaper, changing
@@ -516,7 +525,8 @@ notification are all `safe`, and an agent does them **without asking you**.
 Undoing any of them is one more sentence to the agent. What is `guarded` is the
 `install`, `remove`, `migrate`, `update`, `dev`, `plugin` and `snapshot` groups,
 plus a handful of individually destructive routes — `omarchy system reboot`,
-`omarchy theme remove` and `omarchy restart shell` among them.
+`omarchy theme remove` and `omarchy restart shell` among them — plus anything in
+a group this server has never classified.
 
 If you want the line drawn somewhere else, draw it: an `ask` rule puts a route
 behind a prompt even though it derives as safe, and a `deny` rule refuses it
@@ -924,6 +934,7 @@ to read them in.
 | The server will not start, and the panel blames `permissions.json` | Run `omarchy-mcpd --check-permissions`, or press **Check permissions** in the panel. It names the rule and the two legal matcher forms. Fix it, then press **Start** |
 | An approval notification appears more often than you want          | Press **Always** on it, write an `allow` rule, or set `"guardedDefault": "deny"` to have guarded commands refused instead of asked about                             |
 | A rule you wrote does nothing                                      | The **Rules** tab flags it `void`, `shadowed` or `redundant` and names the rule that got there first                                                                 |
+| After an `omarchy update`, something that used to run now asks     | Its command group is newer than this server's safe list, so it is guarded rather than assumed harmless. The refusal names the group. Allow the routes you want, or update the plugin |
 
 ## Uninstall
 

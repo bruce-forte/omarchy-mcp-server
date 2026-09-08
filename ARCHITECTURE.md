@@ -292,6 +292,48 @@ A call passes these gates, in this order:
   execute.run          argv, no shell, bounded               -> Result
 ```
 
+### `safe` is the tier you have to be named into
+
+`base_tier` reads as four lines and the fourth is the one that matters:
+
+```
+  requires_sudo                     -> BLOCKED
+  GUARDED_GROUPS or GUARDED_ROUTES  -> GUARDED
+  SAFE_GROUPS                       -> SAFE
+  otherwise                         -> GUARDED
+```
+
+`GUARDED_GROUPS` on its own is a blocklist, and a blocklist is wrong by default
+the day upstream adds anything. Falling through to `SAFE` meant that a group
+Omarchy shipped after this plugin's last release — it is hand-written, so
+whatever arrives tomorrow is not in it — derived safe and **ran on the first
+call with nothing on screen**. The registry cache is keyed on Omarchy's version,
+so that took effect the moment `omarchy update` finished: no restart, no prompt.
+See ROADMAP N17.
+
+So the classification is an allowlist. `SAFE_GROUPS` is the groups somebody
+looked at and left alone, and anything in neither list is guarded. Three
+consequences worth designing around:
+
+- **The trade only goes one way.** A harmless new group also asks, until
+  somebody adds it. That is one prompt and one line of code against a
+  destructive command running unattended.
+- **It needs no snapshot and no reload.** This was the argument against the
+  alternative, which was to quarantine unclassified arrivals through N10's
+  `unreviewed` set: that makes a security property depend on the review being
+  current, and `Reloader.recompute_review` runs on a permissions edit and on
+  acknowledgement, never on a registry change. A tier is true the moment the
+  registry is re-read.
+- **Two facts wear the same tier, so there are two reasons.**
+  `permissions._why_guarded` branches on the group, because the approval prompt
+  quotes that sentence. Telling somebody that a group nobody has looked at is
+  destructive would assert something nobody checked.
+
+`test_policy.test_every_group_omarchy_ships_is_classified` is what keeps the
+allowlist honest: refreshing `tests/fixtures/commands.json` from a newer Omarchy
+fails until every new group is put in one list or the other, so the decision is
+made at a keyboard rather than by a command running unasked.
+
 `resolve.py` is the middle one. It exists because an unchecked argument fails
 inside a subprocess, where the failure arrives as somebody else's stderr — and
 because a call is put in front of a person for approval, where *"an agent wants
@@ -705,7 +747,9 @@ other clients may list them.
 
 `policy.py`, `permissions.py`, `auth.py`, `execute.py`, `gate.py` and `prompt.py`
 are the security boundary, and the existing tests are its specification — every
-sudo command classifies `blocked` and no rule can promote it, `deny` beats `ask`
+sudo command classifies `blocked` and no rule can promote it, a command group in
+neither `SAFE_GROUPS` nor `GUARDED_GROUPS` classifies `guarded` and every group
+Omarchy ships is in one of them, `deny` beats `ask`
 beats `allow` with specificity never reordering it, a route whose argument is a
 command line is never granted, any defect at all refuses the permissions
 document, `argv` never reaches a shell, a foreign `Origin` gets 403 and a
