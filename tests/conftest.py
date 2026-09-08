@@ -16,7 +16,7 @@ and putting it back afterwards -- so the suite reads committed snapshots instead
 of the installed Omarchy, writes into a temporary directory instead of the
 user's state directory, and cannot spawn a desktop command or raise a real
 notification. See `test_conftest_guards.py`, which tests the guards themselves,
-and the `CLAUDE.md` section on why they exist.
+and the `CONTRIBUTING.md` section on why they exist.
 """
 
 import json

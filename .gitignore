@@ -6,3 +6,23 @@ __pycache__/
 # Generated per machine by `make lsp`: it carries an absolute path to the dev
 # virtualenv, which is not the same one on anybody else's disk.
 pyrightconfig.json
+
+# Agent-control files never ship. `omarchy plugin add` clones this repository
+# into a directory a coding agent may later work in or under, so a CLAUDE.md,
+# an AGENTS.md or a SKILL.md committed here becomes an instruction channel into
+# somebody else's agent — one that has nothing to do with the reviewed daemon,
+# and that this plugin, of all plugins, must not open. Keep whatever your own
+# tooling writes; git just never carries it. `make agents` enforces this.
+.agentfiles/
+.claude/
+.codex/
+.cursor/
+.windsurf/
+.gemini/
+.aider*
+.clinerules
+.cursorrules
+.windsurfrules
+AGENTS.md
+CLAUDE.md
+GEMINI.md

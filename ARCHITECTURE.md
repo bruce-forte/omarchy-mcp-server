@@ -22,7 +22,7 @@ panel a person uses to answer, read and change any of it.
 | Get oriented at all | [The constraint everything follows from](#the-constraint-everything-follows-from) → [The pieces](#the-pieces) → [Reading the source](#reading-the-source) |
 | Add or change a tool | [Why the tool surface is small](#why-the-tool-surface-is-small) → `tools/_shared.py` → [Asking at call time](#asking-at-call-time) |
 | Touch anything that decides whether a command runs | [`SECURITY.md`](SECURITY.md) first, then [Resolution](#resolution-naming-the-target-before-doing-anything) → [Consent](#consent-and-what-silence-means) → [Asking at call time](#asking-at-call-time) → [What the tests pin](#what-the-tests-pin) |
-| Work on the bar widget or the panel | [The pieces](#the-pieces) → [Three traps worth knowing about](#three-traps-worth-knowing-about) → [`CLAUDE.md`](CLAUDE.md)'s plugin conventions |
+| Work on the bar widget or the panel | [The pieces](#the-pieces) → [Three traps worth knowing about](#three-traps-worth-knowing-about) → [`CONTRIBUTING.md`](CONTRIBUTING.md)'s plugin conventions |
 | Work out where a file may be written | [Where things are written](#where-things-are-written) |
 | Understand why a test is shaped oddly | [What the tests pin](#what-the-tests-pin) |
 

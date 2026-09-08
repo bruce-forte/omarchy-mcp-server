@@ -208,7 +208,7 @@ For the reasoning behind each of those, read [`ARCHITECTURE.md`](ARCHITECTURE.md
 | [`ARCHITECTURE.md`](ARCHITECTURE.md)                   | How it works. Start here to read the source                 |
 | [`SECURITY.md`](SECURITY.md)                           | What an agent can and cannot do, and why                    |
 | [`ROADMAP.md`](ROADMAP.md)                             | What is done, what is left, what was decided against        |
-| [`CLAUDE.md`](CLAUDE.md)                               | Working agreement, and Omarchy plugin conventions           |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md)                   | Working agreement, and Omarchy plugin conventions           |
 | [`examples/elicit_client.py`](examples/elicit_client.py) | Answer an approval over MCP elicitation — `make elicit`      |
 | [`permissions.example.json`](permissions.example.json) | A starting point for your own rules                         |
 | [`permissions.schema.json`](permissions.schema.json)   | The schema your editor validates them against               |
