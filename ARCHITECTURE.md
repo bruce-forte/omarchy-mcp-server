@@ -440,6 +440,23 @@ make elicit                     # declines, so nothing runs
 make elicit ARGS='--accept'     # says yes
 ```
 
+It shows both kinds of elicitation, which are worth telling apart. `gate.py`
+uses it to ask **may this run** -- a schema with nothing required, where any
+accept will do. `tools/control.py` uses it to ask **which one did you mean**:
+`omarchy_theme(action="set")` with no name builds a one-field model whose field
+is a `Literal` of the installed themes, which renders as a JSON Schema `enum`
+and so arrives at the client as a picker rather than a text box. That is form
+mode doing the thing it exists for, and `consent.Answer.data` has carried the
+typed reply since N3 precisely so that it could.
+
+**Choosing is not consenting.** The picked name is handed back to the same
+`run_route` an explicitly-named theme would have taken, so the tier, the rules,
+the resolver and the approval prompt all still apply to it -- a form and a
+consent question appear one after the other, and the second can still refuse.
+The picker decides nothing and must never become a second door into the
+executor; `tests/test_tools_control.py` asserts on what it *returns* rather than
+on what runs, for that reason.
+
 It is worth running once before changing anything in `consent.py` or `gate.py`,
 because it exercises the half of `gate._ask` that a desktop notification never
 reaches: `can_elicit` returning true, `ctx.elicit` being awaited, and

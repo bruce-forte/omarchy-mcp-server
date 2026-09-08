@@ -379,6 +379,30 @@ class TestWhichAskerIsUsed:
     def test_a_client_declaring_nothing_cannot_elicit(self):
         assert gate.can_elicit(Ctx(can_send_request=True, caps=None)) is False
 
+    def test_a_context_with_no_request_in_flight_cannot_elicit(self):
+        """The SDK's `Context.session` is a *property* that raises.
+
+        `ValueError: Context is not available outside of a request` -- and
+        `getattr(ctx, "session", None)` does not swallow an exception raised by
+        the property it just called. A context that cannot answer the question
+        is one that cannot carry a question, so it has to read as False rather
+        than take the tool call down with it.
+        """
+
+        class NoRequest:
+            @property
+            def session(self):
+                raise ValueError("Context is not available outside of a request")
+
+            @property
+            def client_capabilities(self):
+                raise ValueError("Context is not available outside of a request")
+
+        assert gate.can_elicit(NoRequest()) is False
+
+    def test_a_context_missing_the_attributes_entirely_cannot_elicit(self):
+        assert gate.can_elicit(object()) is False
+
     @pytest.mark.anyio
     async def test_a_client_that_cannot_elicit_gets_a_clickable_notification(
         self, commands, quiet_notifications, consent_dir
