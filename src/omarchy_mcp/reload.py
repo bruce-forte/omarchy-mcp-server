@@ -45,6 +45,16 @@ The trigger is a poll rather than a file watch because the process that reacts
 should own it: a reload works when the shell is mid-restart, and when the daemon
 is run by hand outside the shell entirely. `SIGHUP` short-circuits the wait, so
 `omarchy-shell <id> reloadConfig` is immediate for someone typing it.
+
+The shape of `Reloader`, since it is the biggest class here: `run` is an endless
+loop that waits up to `POLL_S` and then calls `poll` once. `poll` calls five
+small `_poll_*` methods, each of which answers one question -- did the config
+change, did the permissions change, did somebody press Acknowledge, Prune or
+Remove -- and each returns "nothing happened" cheaply. Everything a *person*
+pressed arrives the same way: as a file under the consent directory naming a
+token this daemon minted and published only on the frame the shell reads. The
+panel writes those files through `bin/omarchy-mcp-consent`; nothing an agent can
+reach ever learns a token.
 """
 
 from __future__ import annotations
@@ -79,13 +89,19 @@ from .tools.catalogue import Catalogue, Change
 POLL_S = 2.0
 
 def _describe(before: Permissions, after: Permissions) -> str:
-    """What changed about the rules, in the words of the document."""
+    """What changed about the rules, in the words of the document.
+
+    Returns "" when nothing an agent could tell apart moved, which is what the
+    caller tests to decide whether to say anything at all.
+    """
     parts = []
+    # Sets of (effect, matcher) pairs, so the two documents can be compared with
+    # set arithmetic rather than by walking one list against the other.
     was = {(r.effect.value, r.matcher) for r in before.rules}
     now = {(r.effect.value, r.matcher) for r in after.rules}
-    for effect, matcher in sorted(now - was):
+    for effect, matcher in sorted(now - was):  # in the new, not in the old
         parts.append(f"+{effect}: {matcher}")
-    for effect, matcher in sorted(was - now):
+    for effect, matcher in sorted(was - now):  # in the old, not in the new
         parts.append(f"-{effect}: {matcher}")
     if before.guarded_default is not after.guarded_default:
         parts.append(f"guardedDefault: {after.guarded_default.value}")
@@ -115,6 +131,11 @@ class Reloaded:
     revoked: int = 0
 
     def __bool__(self) -> bool:
+        """Whether anything happened that anyone should be told about.
+
+        `rejected` is deliberately absent: a rejection means the daemon is
+        running exactly what it was, which is the definition of nothing new.
+        """
         return (
             bool(self.tools)
             or self.policy_changed
@@ -144,6 +165,8 @@ class Reloader:
         on_change: Callable[[Reloaded], None] | None = None,
         announce: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
+        """Wire up the reloader. Every path is an argument so tests can redirect
+        them at a temporary directory; the defaults are the real ones."""
         self._settings = settings
         self._catalogue = catalogue
         self._mcp = mcp
@@ -249,6 +272,7 @@ class Reloader:
 
     @property
     def prune_token(self) -> str:
+        """The token the panel prunes with, or "" if pruning is not on offer."""
         return self._prune_token
 
     def offer_prune(self, token: str) -> None:
@@ -300,6 +324,7 @@ class Reloader:
 
     @property
     def revoke_token(self) -> str:
+        """The token the panel removes grants with, or "" if none is on offer."""
         return self._revoke_token
 
     def offer_revoke(self, token: str) -> None:
@@ -327,6 +352,10 @@ class Reloader:
         if not self._revoke_token:
             return 0
 
+        # ``glob`` lists files matching a shell-style pattern -- here every
+        # press. Sorted by modification time in nanoseconds, with the name as a
+        # tie-break so two files written in the same nanosecond still have one
+        # definite order.
         markers = sorted(
             self._consent_dir.glob(f"revoke-{self._revoke_token}.*"),
             key=lambda p: (p.stat().st_mtime_ns, p.name),
@@ -338,11 +367,16 @@ class Reloader:
             except OSError:
                 continue
             finally:
+                # ``finally`` on a loop body runs before ``continue`` as well as
+                # on the way out, so the file is removed on every path -- read,
+                # unreadable, or rejected below.
                 try:
                     marker.unlink()
                 except OSError:
                     pass
 
+            # "<token> revoke <effect> <matcher>", taken apart one word at a
+            # time so that a matcher containing spaces stays intact.
             token, _, rest = body.partition(" ")
             verb, _, subject = rest.partition(" ")
             effect, _, matcher = subject.partition(" ")
@@ -393,7 +427,10 @@ class Reloader:
         self._settings.swap_unreviewed(self._review.quarantined)
 
     def poll(self) -> Reloaded | None:
-        """Look once. Returns None when there was nothing to do."""
+        """Look once. Returns None when there was nothing to do.
+
+        Blocking -- it reads files -- so `run` calls it on a worker thread.
+        """
         result = self._poll_config()
         permissions = self._poll_permissions()
         acknowledged = self._poll_acknowledgement()
@@ -408,6 +445,8 @@ class Reloader:
         if permissions is not None:
             changed, rejected = permissions
             base = result if result is not None else Reloaded(config=self._settings.current)
+            # `Reloaded` is frozen, so fields are added by building a copy;
+            # ``replace`` is the dataclass helper for that.
             result = replace(
                 base, permissions_changed=changed, permissions_rejected=rejected
             )
@@ -497,11 +536,15 @@ class Reloader:
             return False
         if len(previous) != len(raw):
             return False
+        # ``zip`` walks the two tuples in step, pairing them up; ``enumerate``
+        # adds the position, which is what lets the daemon's own file be skipped.
+        # So this asks: did anything *other* than our file move?
         if any(a != b for position, (a, b) in enumerate(zip(previous, raw)) if position != index):
             return False
         return permissions_module.wrote_ourselves(raw[index])
 
     def _poll_config(self) -> Reloaded | None:
+        """Re-read `config.toml` if its bytes moved. None means nothing to do."""
         raw = self._read()
 
         if raw is None:
@@ -537,6 +580,7 @@ class Reloader:
         return Reloaded(config=self._settings.current, rejected=True)
 
     def _accept(self, config: Config) -> Reloaded:
+        """Put a config that parsed into force, and register the tools it asks for."""
         for problem in config.problems:
             self._log.warning("%s: %s", self._path, problem)
 
@@ -595,12 +639,20 @@ class Reloader:
 
     async def run(self) -> None:
         """Poll until cancelled."""
+        # An ``Event`` is a flag one task waits on and another sets. `nudge`
+        # sets it, which is how SIGHUP cuts the wait short.
         self._wake = anyio.Event()
+        # A task group runs tasks concurrently and does not leave the ``async
+        # with`` until all of them are done -- so the signal watcher cannot
+        # outlive this loop.
         async with anyio.create_task_group() as tg:
             tg.start_soon(self._signals)
             while True:
+                # Wait for a nudge, but no longer than POLL_S: the timeout is
+                # the ordinary path and the event is the shortcut.
                 with anyio.move_on_after(POLL_S):
                     await self._wake.wait()
+                # An event cannot be un-set, so each round gets a fresh one.
                 self._wake = anyio.Event()
                 try:
                     result = await anyio.to_thread.run_sync(self.poll)
@@ -613,6 +665,8 @@ class Reloader:
                 except Exception:
                     # A reload must not be able to end the daemon. Whatever went
                     # wrong, the config in force is still a valid one.
+                    # ``log.exception`` logs the message *and* the traceback,
+                    # which is what makes this survivable rather than silent.
                     self._log.exception("reload failed; keeping the running configuration")
 
 
@@ -629,8 +683,12 @@ def lifespan_for(reloader: Reloader):
         async with anyio.create_task_group() as tg:
             tg.start_soon(reloader.run)
             try:
+                # Everything before the yield is startup, everything after is
+                # shutdown; the server runs for the length of the yield.
                 yield {}
             finally:
+                # `run` loops forever, so the only way out is to cancel it.
+                # Without this the task group would wait here for good.
                 tg.cancel_scope.cancel()
 
     return lifespan

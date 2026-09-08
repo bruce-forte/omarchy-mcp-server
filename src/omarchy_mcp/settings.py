@@ -24,6 +24,11 @@ Swapping is an attribute assignment, which is atomic under the GIL: a reader is
 never handed a half-built config, whichever thread it runs on. There is no lock
 because there is nothing to serialise -- readers take one reference and are done
 with it.
+
+The GIL is CPython's global interpreter lock, which lets only one thread run
+Python bytecode at a time. It is usually discussed as a limitation; the useful
+consequence here is that a single assignment cannot be observed half-done, so
+``self._current = config`` needs no locking of its own.
 """
 
 from __future__ import annotations
@@ -36,10 +41,20 @@ class Settings:
     """Holds what the daemon is currently running under."""
 
     def __init__(self, config: Config, permissions: Permissions | None = None) -> None:
+        """Start out pointing at ``config``, and at ``permissions`` if given.
+
+        ``Permissions | None`` means "either, and ``None`` is allowed"; the
+        default is spelled ``None`` rather than ``Permissions()`` because a
+        mutable-looking default is evaluated once at import and shared forever.
+        An empty ``Permissions()`` grants nothing, which is the safe start.
+        """
         self._current = config
         self._permissions = permissions if permissions is not None else Permissions()
         self._unreviewed: frozenset[str] = frozenset()
 
+    # ``@property`` makes the method read like an attribute -- ``settings.current``
+    # rather than ``settings.current()``. There is no matching setter, so the
+    # only way to change it is the explicit ``swap`` below.
     @property
     def current(self) -> Config:
         """The configuration in force. Take one snapshot per call, not per read."""
@@ -73,10 +88,14 @@ class Settings:
         return self._unreviewed
 
     def swap_unreviewed(self, routes: frozenset[str]) -> frozenset[str]:
+        """Replace the unreviewed set. Returns the one it replaced."""
         previous = self._unreviewed
         self._unreviewed = routes
         return previous
 
+    # A ``@classmethod`` receives the class itself as ``cls`` rather than an
+    # instance, which is how Python spells an alternative constructor:
+    # ``Settings.of(x)`` is called without there being a ``Settings`` yet.
     @classmethod
     def of(cls, config: Config | "Settings") -> "Settings":
         """Accept either, so a caller that never reloads can pass a `Config`.

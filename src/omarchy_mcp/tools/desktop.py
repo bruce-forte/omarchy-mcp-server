@@ -22,6 +22,11 @@ TARGETS = "screen (the focused monitor), window (the focused window), monitor, o
 
 
 def register(tools: Catalogue, settings: Settings, log, stats: Stats) -> None:
+    """Declare the five desktop tools in ``tools``.
+
+    See `tools/generic.py` for the shape every one of these follows.
+    """
+
     @tools.tool(
         name="omarchy_screenshot",
         title="Look at the screen",
@@ -44,6 +49,12 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats) -> None:
         region: str = "",
         max_width: int = desktop.DEFAULT_MAX_WIDTH,
     ) -> list:
+        """Grab pixels and hand them back as an image plus a line of context.
+
+        Returns a *list* of content blocks rather than a string: that is how the
+        MCP SDK carries an image, and it is the reason this tool cannot be
+        expressed as an `omarchy_run` call.
+        """
         with stats.call("omarchy_screenshot") as rec:
             rec.route = target
             max_width = max(64, min(max_width, 3840))
@@ -97,6 +108,7 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats) -> None:
     )
     @threaded
     def omarchy_desktop_state() -> str:
+        """Monitors, workspaces, windows and focus, from Hyprland."""
         with stats.call("omarchy_desktop_state") as rec:
             try:
                 return json.dumps(desktop.state(), indent=2)
@@ -121,6 +133,7 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats) -> None:
     def omarchy_screen_text(
         target: str = "screen", monitor: str = "", region: str = "", lang: str = ""
     ) -> str:
+        """OCR whatever is on screen. The text itself is never logged."""
         with stats.call("omarchy_screen_text") as rec:
             rec.route = target
             try:
@@ -163,6 +176,7 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats) -> None:
     )
     @threaded
     def omarchy_clipboard_read(mime: str = "") -> str:
+        """Whatever text the clipboard holds. Never logged, for the same reason."""
         with stats.call("omarchy_clipboard_read") as rec:
             try:
                 text = desktop.clipboard_read(mime=mime)
@@ -192,6 +206,7 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats) -> None:
     )
     @threaded
     def omarchy_clipboard_write(text: str) -> str:
+        """Replace the clipboard. This one *is* logged -- see the comment below."""
         with stats.call("omarchy_clipboard_write") as rec:
             # Logged, truncated: this one *is* the action. What the agent
             # put on the clipboard is the thing a user would come back to
@@ -220,6 +235,11 @@ def _monitor(target: str, monitor: str) -> resolve.Target | None:
 
 
 def _cap(text: str, limit: int) -> tuple[str, bool]:
+    """Truncate over-long output, reusing the executor's own capping.
+
+    A one-line wrapper so this module does not import `execute` at load time;
+    the import happens on the first call instead.
+    """
     from ..execute import cap
 
     return cap(text, limit)

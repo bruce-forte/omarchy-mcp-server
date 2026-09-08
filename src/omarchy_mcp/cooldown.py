@@ -63,13 +63,18 @@ BURST_WINDOW_S = 600
 
 
 def _plural(seconds: float) -> str:
+    """Seconds as "1 minute" or "7 minutes", never "0 minutes"."""
     minutes = max(1, round(seconds / 60))
     return f"{minutes} minute" + ("" if minutes == 1 else "s")
 
 
 @dataclass
 class _Route:
+    """One route's nag state. Private to this module -- hence the underscore."""
+
+    #: How many times in a row the question was put without a yes.
     refusals: int = 0
+    #: The clock reading before which this route must not be asked about again.
     until: float = 0.0
 
 
@@ -82,11 +87,20 @@ class Cooldowns:
     this measures elapsed time and must not care what the wall clock does.
     """
 
+    #: The function used to read the clock. Storing the function itself, not a
+    #: reading from it -- note there are no brackets after ``time.monotonic``.
+    #: A test passes its own callable and can then move time by hand.
     clock: object = time.monotonic
+    #: Route -> its cooldown. ``default_factory=dict`` gives each instance its
+    #: own empty dict; a plain ``= {}`` default would be shared by all of them.
     _routes: dict[str, _Route] = field(default_factory=dict)
+    #: Clock readings of the prompts raised recently, oldest first. A ``deque``
+    #: is a list that is also cheap to remove from the *front*, which is what
+    #: dropping prompts that have aged out of the window does.
     _asked: deque = field(default_factory=deque)
 
     def _now(self) -> float:
+        """The current reading from whichever clock this instance was given."""
         return self.clock()
 
     def refusal(self, route: str) -> str | None:
@@ -113,6 +127,8 @@ class Cooldowns:
             )
 
         if len(self._asked) >= BURST_LIMIT:
+            # ``_asked[0]`` is the oldest prompt still in the window, so its
+            # expiry is the soonest moment the limit could stop applying.
             left = _plural(self._asked[0] + BURST_WINDOW_S - now)
             return (
                 f"{len(self._asked)} approval prompts have been put on the user's "
@@ -125,7 +141,12 @@ class Cooldowns:
         return None
 
     def asked(self, route: str) -> None:
-        """A prompt went up. Counted whatever the answer turns out to be."""
+        """A prompt went up. Counted whatever the answer turns out to be.
+
+        ``route`` is unused: habituation is about volume, not about which route
+        caused it. It stays in the signature because every caller has it and a
+        future rule might want it.
+        """
         self._asked.append(self._now())
 
     def answered(self, route: str, *, accepted: bool) -> None:
@@ -134,18 +155,26 @@ class Cooldowns:
         if accepted:
             # An engaged user is the opposite of a habituated one, and the
             # route they just approved is not one they are being nagged about.
+            # ``pop(key, None)`` removes it if present and does nothing if not;
+            # without the second argument it would raise on a missing key.
             self._routes.pop(route, None)
             return
 
         entry = self._routes.setdefault(route, _Route())
         entry.refusals += 1
+        # ``**`` is exponentiation, so this doubles per refusal: 300s, 600s,
+        # 1200s... and ``min`` caps it at an hour.
         wait = min(FIRST_COOLDOWN_S * (2 ** (entry.refusals - 1)), MAX_COOLDOWN_S)
         entry.until = now + wait
 
     def _forget(self, now: float) -> None:
         """Drop prompts that have left the window, and cooldowns that expired."""
+        # Oldest first, so the moment one is still inside the window every one
+        # behind it is too, and the loop can stop.
         while self._asked and self._asked[0] + BURST_WINDOW_S <= now:
             self._asked.popleft()
+        # The expired routes are collected into a list *first*, because deleting
+        # from a dict while iterating over it raises.
         for route in [r for r, e in self._routes.items() if e.until <= now]:
             del self._routes[route]
 

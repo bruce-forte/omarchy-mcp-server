@@ -15,6 +15,12 @@ record is written when it leaves -- including when it leaves by exception. That
 is what makes the two long-standing bugs unrepresentable: `omarchy_run` used to
 count before the gate ran, so a refusal was recorded as a success, and the
 desktop tools recorded once per branch.
+
+The seam is a *context manager*, used as ``with stats.call("tool") as rec:``.
+A context manager is any object with "set up" and "tear down" halves that
+``with`` runs around a block; the point is that the tear-down half runs no
+matter how the block ends -- normal return, ``return`` from the middle, or an
+exception on the way through. That is the guarantee this module is built on.
 """
 
 from __future__ import annotations
@@ -30,6 +36,18 @@ from .activity import Record
 
 @dataclass
 class Stats:
+    """Live counters for the whole daemon. One instance, shared by every tool.
+
+    ``@dataclass`` turns the annotated names below into constructor arguments
+    with these defaults, so ``Stats()`` is a fresh zeroed counter set.
+    """
+
+    #: ``default_factory`` rather than ``= time.monotonic()``: a plain default is
+    #: evaluated once, when the class is defined, and every instance would then
+    #: share the import-time clock reading. A factory is called per instance.
+    #:
+    #: ``monotonic`` rather than wall-clock time: it only ever moves forward, so
+    #: an NTP correction cannot make an uptime negative.
     started_at: float = field(default_factory=time.monotonic)
     calls: int = 0
     failures: int = 0
@@ -45,15 +63,30 @@ class Stats:
     #: `log.activity`: turning the log off should not blind the bar.
     on_call: Callable[[Record], None] | None = None
 
+    #: Tool bodies run on worker threads, so two can reach the counters at once
+    #: and ``self.calls += 1`` is not one indivisible step -- it is a read, an
+    #: add and a write, and two threads interleaving them lose a count. A lock
+    #: lets only one thread inside at a time. ``repr=False`` keeps it out of the
+    #: generated ``__repr__``, where it would be noise.
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     @contextmanager
     def call(self, tool: str) -> Iterator[Record]:
-        """One tool call. Times it, and records it once however it ends."""
+        """One tool call. Times it, and records it once however it ends.
+
+        ``@contextmanager`` turns a generator into something usable with
+        ``with``: everything before the ``yield`` is the set-up, the yielded
+        value is what ``as rec`` binds, and everything after it is the tear-down.
+        """
         rec = Record(tool=tool)
         started = time.monotonic()
         try:
+            # Control leaves here and runs the caller's ``with`` block. It comes
+            # back on the way out -- returning normally, or raising through.
             yield rec
+        # ``BaseException`` rather than ``Exception``: the latter deliberately
+        # excludes cancellation and Ctrl-C, and a cancelled call still needs its
+        # record written.
         except BaseException:
             # The tool raised, or the call was cancelled under it. Either way
             # nothing completed, and that is a fault in this daemon rather than
@@ -61,12 +94,21 @@ class Stats:
             # reactions, so they get different outcomes.
             if not rec.outcome:
                 rec.outcome = "error"
+            # Re-raise the exception unchanged: this clause is here to label the
+            # record, not to swallow the failure.
             raise
+        # ``finally`` runs on every path out of the ``try`` -- success, handled
+        # exception, re-raised exception. This is the "exactly once" the module
+        # docstring promises.
         finally:
             rec.ms = round((time.monotonic() - started) * 1000)
             self._finish(rec)
 
     def _finish(self, rec: Record) -> None:
+        """Count the call, then hand the record to whoever else wants it."""
+        # Only the counters need the lock. The sink and the frame writer do their
+        # own synchronisation, and holding a lock across them would make every
+        # tool call wait on a disk write.
         with self._lock:
             self.calls += 1
             if not rec.ok:
@@ -79,6 +121,10 @@ class Stats:
             self.on_call(rec)
 
     def snapshot(self) -> dict[str, object]:
+        """A consistent copy of the counters, for `/health`.
+
+        Under the lock so the five values describe one moment rather than five.
+        """
         with self._lock:
             return {
                 "uptime_s": round(time.monotonic() - self.started_at),

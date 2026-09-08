@@ -35,6 +35,12 @@ only saves the client from finding out at its next `tools/list`.
 The register holds **weak** references. A session outlives no more than its
 connection, and this must not be the thing that keeps a disconnected client's
 objects alive for the life of the daemon.
+
+Python frees an object once nothing refers to it any more. A *weak* reference
+does not count: a ``WeakSet`` can see its members while something else holds
+them, and they vanish from it by themselves once that something else lets go.
+Holding connections in an ordinary set would mean every client that ever
+attached stayed in memory until the daemon exited.
 """
 
 from __future__ import annotations
@@ -46,6 +52,7 @@ class Clients:
     """The sessions currently attached, and how to tell them something changed."""
 
     def __init__(self, log) -> None:
+        """Start with nothing attached. ``log`` is the daemon's logger."""
         self._log = log
         self._connections: weakref.WeakSet = weakref.WeakSet()
 
@@ -56,6 +63,10 @@ class Clients:
         before the handshake gate, so a client is registered from its very first
         message rather than from its first tool call.
         """
+        # ``getattr(obj, name, default)`` reads an attribute without raising when
+        # it is absent. Nested twice because either half may be missing on an
+        # SDK object this code does not own, and a middleware that raised would
+        # take the request down with it.
         connection = getattr(getattr(ctx, "session", None), "_connection", None)
         if connection is not None:
             self._connections.add(connection)
@@ -74,6 +85,8 @@ class Clients:
         interrupt a reload: the configuration has already been applied, and the
         client will see the new list when it next asks.
         """
+        # ``list(...)`` copies first: the loop discards from the set as it goes,
+        # and mutating a collection while iterating it raises.
         for connection in list(self._connections):
             if not getattr(connection, "has_standalone_channel", True):
                 # A client that never opened the back-channel cannot be told.

@@ -22,6 +22,9 @@ from . import execute
 TIMEOUT_MS = 5_000
 
 
+# The bare ``*`` marks the end of the positional arguments: ``urgency`` and
+# ``log`` must be passed by name, so a third loose string cannot silently become
+# the urgency.
 def send(headline: str, body: str, *, urgency: str = "normal", log=None) -> None:
     """Raise a notification. Never raises: this is the reporting path.
 
@@ -37,4 +40,7 @@ def send(headline: str, body: str, *, urgency: str = "normal", log=None) -> None
         )
     except Exception as exc:  # reporting path: never let it become the failure
         if log is not None:
+            # ``%s`` placeholders with the values as extra arguments, rather than
+            # an f-string: the logging module only formats the message if
+            # something is actually listening at this level.
             log.warning("could not send a notification (%s): %s", exc, headline)

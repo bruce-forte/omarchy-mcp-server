@@ -17,10 +17,18 @@ from ..stats import Stats
 from ._shared import run_route
 from .catalogue import Catalogue
 
+#: The only three values `urgency` may take, checked below rather than trusted.
 URGENCIES = ("low", "normal", "critical")
 
 
 def register(tools: Catalogue, settings: Settings, log, stats: Stats) -> None:
+    """Declare the two tools that put something in front of the person.
+
+    Both are ``async def`` because they end in ``await run_route(...)``: they go
+    through the same gate and the same executor as `omarchy_run`, which is what
+    `_shared.run_route` is.
+    """
+
     @tools.tool(
         name="omarchy_notify",
         title="Send a desktop notification",
@@ -43,6 +51,7 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats) -> None:
         timeout_ms: int = 0,
         ctx: Context = None,
     ) -> str:
+        """Raise a desktop notification through `omarchy notification send`."""
         if urgency not in URGENCIES:
             return json.dumps(
                 {"error": f"urgency must be one of {', '.join(URGENCIES)}"}, indent=2
@@ -86,11 +95,18 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats) -> None:
         duration_ms: int = 0,
         ctx: Context = None,
     ) -> str:
+        """Flash an on-screen display through `omarchy osd`.
+
+        Arguments are built up as flags only for the values actually given, so
+        the command is asked for exactly what the caller asked for.
+        """
         args: list[str] = []
         if message:
             args += ["-m", message]
         if icon:
             args += ["-i", icon]
+        # ``-1`` is the default and means "no progress bar", so the range check
+        # doubles as the presence check.
         if 0 <= progress <= 100:
             args += ["-p", str(progress)]
         if duration_ms > 0:

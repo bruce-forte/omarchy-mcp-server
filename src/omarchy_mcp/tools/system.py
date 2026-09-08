@@ -17,6 +17,8 @@ __all__ = ["register"]
 
 
 def register(tools: Catalogue, settings: Settings, log, stats: Stats) -> None:
+    """Declare the one system tool in ``tools``."""
+
     @tools.tool(
         name="omarchy_system_status",
         title="How is this machine doing",
@@ -34,5 +36,8 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats) -> None:
     )
     @threaded
     def omarchy_system_status() -> str:
+        """Every cheap read-only probe at once. See `status.gather`."""
+        # ``with`` without ``as``: this tool learns nothing about itself worth
+        # recording, so the record is opened for its timing and its count alone.
         with stats.call("omarchy_system_status"):
             return json.dumps(gather(), indent=2)

@@ -8,6 +8,15 @@ dispatch are separated instead: search to find out what exists, run to do it.
 Everything the curated tools do can also be done here. The curated tools exist
 where a round trip through search would be wasteful, or where the result is not
 text.
+
+How a tool module is shaped, since all five follow the same pattern: one
+``register`` function holding the tool bodies as nested functions, each carrying
+two decorators. ``@tools.tool(...)`` declares it in the catalogue -- the
+``description`` there is what the model reads, which is why it is written as
+prose. ``@threaded`` (from `_shared.py`) is for the sync bodies and moves them
+onto a worker thread; a body that needs to ``await`` is written ``async def``
+and skips it. The parameters of the function *are* the tool's schema: the SDK
+reads their names, type hints and defaults, so renaming one changes the API.
 """
 
 from __future__ import annotations
@@ -28,7 +37,9 @@ from .catalogue import Catalogue
 
 
 def register(tools: Catalogue, settings: Settings, log, stats: Stats | None = None) -> None:
+    """Declare the four generic tools in ``tools``."""
     stats = stats or Stats()
+
     @tools.tool(
         name="omarchy_search_commands",
         title="Search Omarchy commands",
@@ -48,12 +59,15 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats | None = No
         limit: int = 20,
         include_hidden: bool = False,
     ) -> str:
+        """Find commands matching ``query``, with this server's verdict on each."""
         with stats.call("omarchy_search_commands") as rec:
             # One snapshot per call: what this reports about a route -- its tier,
             # whether it is runnable -- is a claim about the config in force now.
             perms = settings.permissions
             unreviewed = settings.unreviewed
             rec.args = (query,) if query else ()
+            # Clamped rather than validated: the caller is a model, and a limit
+            # of 0 or 10000 is a slip worth correcting rather than refusing.
             limit = max(1, min(limit, 100))
             hits = registry.search(query, limit=limit, include_hidden=include_hidden)
             rows = []
@@ -84,8 +98,14 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats | None = No
         args: list[str] | None = None,
         timeout_ms: int | None = None,
         detach: bool | None = None,
+        # ``ctx`` is supplied by the SDK, not by the model: it is recognised by
+        # its type hint and does not appear in the tool's schema. It is how the
+        # gate reaches the client session to ask a question.
         ctx: Context = None,
     ) -> str:
+        """Run one registry route, after the gate has decided it may."""
+        # ``args or []`` covers both "not given" and "given as null"; ``list``
+        # then copies it, so nothing here mutates the caller's list.
         args = list(args or [])
         with stats.call("omarchy_run") as rec:
             # The whole call -- gate, resolve, execute -- runs under one config.
@@ -118,6 +138,8 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats | None = No
                 log=log,
                 offload=offload,
             )
+            # `gate.authorize` returns one of two types rather than raising, so
+            # the refusal has to be checked for explicitly.
             if isinstance(decision, gate.Refused):
                 rec.outcome = "refused"
                 rec.tier = decision.tier
@@ -128,10 +150,13 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats | None = No
             call = decision.call
             rec.tier = decision.outcome.tier.value
             rec.consent = decision.consent
+            # The *resolved* arguments: what actually ran, not what was asked for.
             rec.args = tuple(call.args)
             if call.target is not None:
                 rec.target = call.target.label
 
+            # ``None`` means "decide for me"; ``False`` from the model means
+            # "wait for it", which is why this is not a plain truth test.
             if detach is None:
                 detach = execute.should_detach(cmd.group, cmd.route)
 
@@ -161,6 +186,8 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats | None = No
                 result.detached,
                 result.timed_out,
             )
+            # ``**result.as_dict()`` spreads the result's fields into the same
+            # object as the command line, so the agent gets one flat answer.
             payload: dict[str, object] = {"command": execute.quote(argv), **result.as_dict()}
             if call.target is not None:
                 payload["target"] = call.target.label
@@ -181,6 +208,7 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats | None = No
     )
     @threaded
     def omarchy_shell_targets(target: str = "", refresh: bool = False) -> str:
+        """Every IPC target the shell offers, or just the one named."""
         with stats.call("omarchy_shell_targets") as rec:
             rec.args = (target,) if target else ()
             try:
@@ -223,6 +251,7 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats | None = No
         args: list[str] | None = None,
         timeout_ms: int | None = None,
     ) -> str:
+        """Call one method on one IPC target, having checked it exists."""
         args = list(args or [])
         with stats.call("omarchy_shell_call") as rec:
             config = settings.current
@@ -238,6 +267,8 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats | None = No
                 return json.dumps(
                     {"error": f"no such target: {target!r}", "targets": sorted(known)}, indent=2
                 )
+            # A set comprehension of the method names, so this is a membership
+            # test rather than a scan.
             if method not in {m.name for m in found.methods}:
                 return json.dumps(
                     {

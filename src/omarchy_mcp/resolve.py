@@ -23,6 +23,12 @@ with a better one; a compositor that is not answering is not. The agent is told
 which it is, because they imply different next moves.
 
 *Refuse rather than guess.* This is the property N4 depends on.
+
+The module reads in three layers, marked by the banner comments below: the
+*sources* that produce a listing, the *matching* that turns a name into a
+`Target`, and the *route table* that says which resolver each command's
+arguments go through. A resolver either returns a `Call` or raises
+`Unresolvable`; there is no third outcome and no "probably fine".
 """
 
 from __future__ import annotations
@@ -52,8 +58,12 @@ URL_SCHEMES = ("http://", "https://")
 class Target:
     """A resolved identifier: what runs, and what to call it in front of a person."""
 
+    #: What sort of thing this is: ``"theme"``, ``"monitor"``, ``"url"``...
     kind: str
+    #: Exactly what the command will receive as an argument.
     value: str
+    #: How it is described to a human in the approval prompt, which may be
+    #: friendlier than the value -- a monitor's label carries its description.
     label: str
 
 
@@ -76,6 +86,8 @@ class Unresolvable(Exception):
         near: tuple[str, ...] = (),
         source_unavailable: bool = False,
     ) -> None:
+        """``near`` are spelling suggestions; ``source_unavailable`` separates
+        "there is no such theme" from "the theme list could not be read"."""
         super().__init__(message)
         self.kind = kind
         self.message = message
@@ -83,6 +95,7 @@ class Unresolvable(Exception):
         self.source_unavailable = source_unavailable
 
     def as_dict(self) -> dict[str, object]:
+        """The JSON the agent receives instead of a command being run."""
         payload: dict[str, object] = {
             "error": self.message,
             "unresolved": self.kind,
@@ -151,17 +164,29 @@ def slug(name: str) -> str:
     other way would let this module accept a name the command then rejects, or
     the reverse.
     """
+    # ``re.sub(pattern, "", name)`` deletes every match. Read left to right:
+    # drop ``<...>`` placeholders, trim the ends, lowercase, dashes for spaces.
     return re.sub(r"<[^>]+>", "", name).strip().lower().replace(" ", "-")
 
 
 def _near(needle: str, candidates: dict[str, str]) -> tuple[str, ...]:
-    """Display names close enough to be worth offering back."""
+    """Display names close enough to be worth offering back.
+
+    ``candidates`` maps the form being matched on to the form worth showing --
+    slug to display name for themes -- so the comparison stays consistent while
+    the suggestion stays readable.
+    """
+    # ``difflib`` is the standard library's fuzzy string matching. ``cutoff`` is
+    # a similarity from 0 to 1; 0.6 offers a typo back without offering an
+    # unrelated theme, and no suggestion at all is better than a misleading one.
     hits = difflib.get_close_matches(needle, list(candidates), n=3, cutoff=0.6)
     return tuple(candidates[h] for h in hits)
 
 
 def theme(name: str) -> Target:
     """Resolve a theme name to the one Omarchy will accept."""
+    # Keyed by slug so the lookup matches the way Omarchy matches; the value is
+    # the display name, which is what a person should be shown.
     by_slug = {slug(t): t for t in _themes()}
     found = by_slug.get(slug(name))
     if found is None:
@@ -199,6 +224,9 @@ def _absolute(path: str, kind: str) -> Path:
     relative path is refused rather than resolved: it would be relative to the
     daemon's working directory, which is nowhere the user is standing.
     """
+    # ``expanduser`` turns a leading ``~`` into the home directory. It is a
+    # string operation on the path, not a shell expansion -- nothing here runs a
+    # shell, which is exactly why the tilde would otherwise survive.
     resolved = Path(path).expanduser()
     if not resolved.is_absolute():
         raise Unresolvable(
@@ -234,6 +262,7 @@ def writable_path(path: str, kind: str = "path") -> Target:
 
 def url(value: str) -> Target:
     """A URL a browser may be pointed at."""
+    # ``startswith`` accepts a tuple and is True if any of them matches.
     if not value.startswith(URL_SCHEMES):
         raise Unresolvable(
             "url",
@@ -252,15 +281,19 @@ def url(value: str) -> Target:
 
 
 def _theme_arg(args: list[str]) -> Call:
+    """The theme is the first argument: `omarchy theme set <name>`."""
     # `omarchy theme remove` with no name opens a picker, and a picker is the
     # user choosing for themselves. Nothing to resolve, nothing to refuse.
     if not args or not args[0]:
         return Call(list(args))
     target = theme(args[0])
+    # The resolved value replaces the one the agent gave; ``*args[1:]`` unpacks
+    # every remaining argument after it, untouched.
     return Call([target.value, *args[1:]], target)
 
 
 def _background(args: list[str]) -> Call:
+    """The wallpaper is the first argument, and it has to exist."""
     if not args or not args[0]:
         return Call(list(args))
     target = existing_file(args[0], "image")
@@ -269,8 +302,11 @@ def _background(args: list[str]) -> Call:
 
 def _monitor_flag(args: list[str]) -> Call:
     """`omarchy brightness display [--monitor name] ...`"""
+    # A copy, so a resolver never edits the caller's list in place.
     out = list(args)
     try:
+        # ``index`` raises ValueError when the flag is absent, which here just
+        # means there is no monitor to resolve.
         at = out.index("--monitor")
     except ValueError:
         return Call(out)
@@ -284,6 +320,9 @@ def _monitor_flag(args: list[str]) -> Call:
 def _editor_path(args: list[str]) -> Call:
     """`omarchy launch editor [--inline] <path>` -- the path is the last word."""
     out = list(args)
+    # ``enumerate`` yields (index, value) pairs, so this collects the positions
+    # of the non-flag arguments rather than the arguments themselves -- the
+    # position is what is needed to write the resolved value back.
     positional = [i for i, a in enumerate(out) if not a.startswith("-")]
     if not positional:
         return Call(out)
@@ -294,6 +333,8 @@ def _editor_path(args: list[str]) -> Call:
 
 
 def _url_arg(args: list[str], *, optional: bool) -> Call:
+    """The URL is the first argument. ``optional`` is for `launch browser`,
+    which opens the home page when given nothing."""
     if not args or not args[0]:
         if optional:
             return Call(list(args))
@@ -313,6 +354,8 @@ RESOLVERS = {
     "omarchy brightness display": _monitor_flag,
     "omarchy launch editor": _editor_path,
     "omarchy launch config editor": _editor_path,
+    # Every entry is a function taking one argument. ``_url_arg`` takes two, so
+    # a ``lambda`` fixes the second and leaves a one-argument function behind.
     "omarchy launch webapp": lambda args: _url_arg(args, optional=False),
     "omarchy launch browser": lambda args: _url_arg(args, optional=True),
 }
@@ -324,6 +367,8 @@ def resolve_call(route: str, args: list[str]) -> Call:
     The single gate both `omarchy_run` and the curated tools pass through, so
     that reaching a command by the generic route cannot skip the check.
     """
+    # Looking the function up in a dict and then calling it: functions are
+    # ordinary values in Python and can be stored in one like anything else.
     resolver = RESOLVERS.get(route)
     if resolver is None:
         return Call(list(args))

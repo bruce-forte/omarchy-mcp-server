@@ -20,6 +20,9 @@ REGISTRY_TIMEOUT_S = 20
 
 @dataclass(frozen=True)
 class Command:
+    """One row of ``omarchy commands --json``, e.g. ``omarchy theme set``."""
+
+    #: The full command line without its arguments: ``"omarchy theme set"``.
     route: str
     binary: str
     group: str
@@ -36,7 +39,11 @@ class Command:
 
 
 class RegistryError(RuntimeError):
-    pass
+    """The command listing could not be read or made sense of.
+
+    ``pass`` is the empty body: the class needs no behaviour of its own, only a
+    distinct name so callers can catch this and nothing else.
+    """
 
 
 def _omarchy_version() -> str:
@@ -48,15 +55,21 @@ def _omarchy_version() -> str:
 
 
 def _parse(payload: str) -> dict[str, Command]:
+    """Turn the JSON listing into `Command` objects keyed by route."""
     try:
         raw = json.loads(payload)
     except json.JSONDecodeError as exc:
+        # ``raise ... from exc`` keeps the original as the cause, so a traceback
+        # shows both what failed and what this module made of it.
         raise RegistryError(f"omarchy commands --json returned invalid JSON: {exc}") from exc
 
     commands: dict[str, Command] = {}
     for row in raw.get("commands") or []:
         route = row.get("route")
         if not route:
+            # A row with no route is not addressable, so there is nothing this
+            # server could do with it. Skip rather than fail: one odd row must
+            # not cost the whole registry.
             continue
         commands[route] = Command(
             route=route,
@@ -73,10 +86,20 @@ def _parse(payload: str) -> dict[str, Command]:
     return commands
 
 
+# ``@lru_cache`` remembers the result per argument value, so this spawns
+# ``omarchy commands`` once and every later call with the same version is a dict
+# lookup. The version is an argument *only* so that it is part of the cache key:
+# an ``omarchy update`` changes it, which misses the cache and re-reads the
+# listing. Hence the leading underscore -- the body never looks at it.
 @lru_cache(maxsize=4)
 def _load_for_version(_version: str) -> dict[str, Command]:
+    """Spawn ``omarchy commands --all --json`` and parse it."""
     # --all so that hidden commands are classified by policy too. They are
     # filtered out of search results unless explicitly asked for.
+    #
+    # Imported inside the function rather than at the top of the file:
+    # ``execute`` imports from here, and two modules importing each other at
+    # import time is a circular import. By the time this runs, both exist.
     from .execute import NotInstalled, resolve_binary
 
     argv = ["omarchy", "commands", "--all", "--json"]
@@ -109,12 +132,17 @@ def all_commands() -> dict[str, Command]:
 
 
 def get(route: str) -> Command | None:
+    """The command with this exact route, or ``None`` if there is no such route."""
     return all_commands().get(route)
 
 
 def groups() -> dict[str, list[Command]]:
+    """Every command, bucketed by its group."""
     out: dict[str, list[Command]] = {}
     for cmd in all_commands().values():
+        # ``setdefault`` returns the list for this group, inserting an empty one
+        # first if the group has not been seen yet -- the one-line form of
+        # "create the bucket if missing, then append".
         out.setdefault(cmd.group, []).append(cmd)
     return out
 
@@ -126,6 +154,7 @@ def search(query: str, *, limit: int = 20, include_hidden: bool = False) -> list
     registry is small and the caller is a language model that can re-query.
     """
     q = query.strip().lower()
+    # (score, command) pairs, where a *lower* score is a better match.
     scored: list[tuple[int, Command]] = []
     for cmd in all_commands().values():
         if cmd.hidden and not include_hidden:
@@ -148,7 +177,13 @@ def search(query: str, *, limit: int = 20, include_hidden: bool = False) -> list
             continue
         scored.append((score, cmd))
 
+    # ``key`` says what to sort by: a ``lambda`` is a one-expression function
+    # written inline. Sorting by the pair (score, route) puts better matches
+    # first and breaks ties alphabetically, so the order is stable rather than
+    # dependent on how the registry happened to be laid out.
     scored.sort(key=lambda pair: (pair[0], pair[1].route))
+    # Take the best ``limit`` and drop the scores; ``_score`` is named with an
+    # underscore to say it is deliberately unused.
     return [cmd for _score, cmd in scored[:limit]]
 
 
@@ -162,7 +197,12 @@ def suggest(route: str, *, limit: int = 5) -> list[Command]:
     if hits:
         return hits
 
+    # Words of three letters or more; "omarchy" itself matches everything and so
+    # tells the caller nothing.
     words = [w for w in route.lower().replace("omarchy", "").split() if len(w) > 2]
+    # A dict keyed by route deduplicates commands that several words all found,
+    # and keeps them in the order they were first seen -- Python dicts preserve
+    # insertion order, so the best word's hits stay at the front.
     seen: dict[str, Command] = {}
     for word in words:
         for cmd in search(word, limit=limit):
@@ -171,6 +211,7 @@ def suggest(route: str, *, limit: int = 5) -> list[Command]:
 
 
 def as_dict(cmd: Command) -> dict[str, object]:
+    """The JSON shape a command takes in a tool result or a resource."""
     return {
         "route": cmd.route,
         "group": cmd.group,

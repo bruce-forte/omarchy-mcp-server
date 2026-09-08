@@ -3,6 +3,13 @@
 Every curated tool still goes through the same policy check and the same
 executor as `omarchy_run`. A curated tool is a better-shaped door onto the same
 room, never a way around the lock.
+
+Two of the three things here are about threads. The daemon serves every client
+from one *event loop* thread: while a coroutine is awaiting, that thread runs
+somebody else's request. A blocking call -- spawning a process, reading a file --
+does not await, it simply occupies the thread, and everything else stops for as
+long as it takes. `offload` and `threaded` are the two ways of getting such work
+onto a worker thread instead.
 """
 
 from __future__ import annotations
@@ -30,7 +37,10 @@ UNTRUSTED = (
 
 
 async def offload(fn, *args, **kwargs):
-    """Run a blocking call on a worker thread.
+    """Run a blocking call on a worker thread, awaiting its result.
+
+    Used as ``await offload(execute.run, argv, timeout_ms=...)`` -- the function
+    is passed, not called, and this calls it elsewhere.
 
     Every tool is `async` now, so nothing gets the SDK's free worker thread any
     more: `func_metadata` only threads a tool it finds to be *sync*. An OCR pass
@@ -38,6 +48,9 @@ async def offload(fn, *args, **kwargs):
     every other client for its whole duration -- including one parked on an
     approval prompt, which is the concurrency decision 1 rests on.
     """
+    # ``run_sync`` takes a function and positional arguments only, so
+    # ``functools.partial`` is what carries the keyword arguments across: it
+    # builds a new function with those arguments already filled in.
     return await anyio.to_thread.run_sync(functools.partial(fn, *args, **kwargs))
 
 
@@ -50,6 +63,10 @@ def threaded(fn):
     `functools.wraps` and so still builds the schema from the real parameters.
     """
 
+    # ``functools.wraps`` copies the wrapped function's name, docstring and
+    # signature onto the wrapper. That is not cosmetic here: the SDK builds the
+    # tool's JSON schema by inspecting the signature, and without this every
+    # threaded tool would advertise ``(*args, **kwargs)``.
     @functools.wraps(fn)
     async def wrapper(*args, **kwargs):
         return await offload(fn, *args, **kwargs)
@@ -71,7 +88,14 @@ async def run_route(
     detach: bool | None = None,
     timeout_ms: int | None = None,
 ) -> str:
-    """Run an Omarchy route on behalf of a curated tool."""
+    """Run an Omarchy route on behalf of a curated tool.
+
+    The same three steps `omarchy_run` takes, in the same order: look the route
+    up, put it through `gate.authorize`, and execute it only if that came back
+    `Allowed`. Returns a JSON string either way -- a refusal is a result, not an
+    exception.
+    """
+    # One record for the whole call, however it ends. See `stats.py`.
     with stats.call(tool) as rec:
         rec.route = route
         rec.args = tuple(args)

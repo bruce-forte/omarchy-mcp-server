@@ -25,6 +25,12 @@ Three rules this must never lose:
 - **A question that has been put enough times is not put again.** A reflexive
   click is not consent, so `cooldown.py` refuses before a prompt is assembled --
   see the `not_asked_again` outcome.
+
+`authorize` is the one function worth reading end to end: it is the whole
+decision in order, and every early ``return Refused(...)`` in it is one of the
+rules above. It returns one of two types rather than raising, so a caller has to
+look at what came back -- ``isinstance(decision, gate.Refused)`` -- instead of
+being able to forget a ``try``.
 """
 
 from __future__ import annotations
@@ -65,6 +71,9 @@ class Refused:
     payload: dict | None = None
 
     def as_dict(self) -> dict:
+        """The JSON the agent gets instead of a result."""
+        # A resolver's payload is already the right shape and carries the near
+        # misses, so it is used whole rather than rebuilt.
         if self.payload is not None:
             return self.payload
         body: dict[str, object] = {"error": self.reason, "tier": self.tier}
@@ -85,6 +94,8 @@ def can_elicit(ctx) -> bool:
     nothing of the sort happened.
     """
     session = getattr(ctx, "session", None)
+    # Note the default is ``False``: an SDK object without this attribute is
+    # treated as unable to carry the question, which fails closed.
     if session is None or not getattr(session, "can_send_request", False):
         return False
     return consent.supports_asking(getattr(ctx, "client_capabilities", None))
@@ -107,6 +118,11 @@ _cooldowns = cooldown.Cooldowns()
 #:
 #: The session object is the value, not just the key, so it cannot be collected
 #: and have its `id` handed to something else while a question is still open.
+#:
+#: ``id(x)`` is the object's identity as an integer. It is unique only among
+#: objects that are alive at the same time, which is precisely why the object
+#: itself is kept as the value: holding a reference keeps it alive, and keeping
+#: it alive keeps the id from being reused.
 _pending: dict[int, object] = {}
 
 
@@ -131,7 +147,15 @@ async def authorize(
     log,
     offload,
 ) -> Allowed | Refused:
-    """Decide whether ``cmd`` runs, asking the user if that is what is called for."""
+    """Decide whether ``cmd`` runs, asking the user if that is what is called for.
+
+    Returns `Allowed` or `Refused` -- never raises for an ordinary refusal, and
+    never runs anything itself.
+
+    ``offload`` is passed in rather than imported: it is what puts a blocking
+    call on a worker thread, and taking it as an argument is what lets the tests
+    drive this function without an event loop's worth of machinery.
+    """
     # Before the tier, because this is not one. `omarchy shell` and
     # `omarchy plugin remove` are ordinary routes whose *arguments* decide
     # whether the call would silence this daemon, and an agent that can do that
@@ -206,6 +230,8 @@ def _wants_always(answer: consent.Answer) -> bool:
     this daemon's own panel sets is a plain accept, which is the safe reading.
     """
     data = answer.data
+    # ``is True`` rather than a truth test: the string "no" and the number 1 are
+    # both truthy, and neither is this flag.
     return isinstance(data, dict) and data.get("always") is True
 
 
@@ -223,6 +249,11 @@ def _write_grant(route: str, perms: Permissions, log) -> None:
 
 
 async def _ask(cmd, call, *, perms, ctx, log, offload) -> consent.Answer:
+    """Put the question on whichever surface can carry it, and wait for an answer.
+
+    One question per session at a time, the notification held up for as long as
+    it is open, and the cooldown told both that it was asked and how it ended.
+    """
     label = f"{cmd.route}" + (f" — {call.target.label}" if call.target else "")
     # A ctx with no session still gets a slot of its own, so two such calls
     # cannot be mistaken for one client asking twice.
@@ -256,6 +287,10 @@ async def _ask(cmd, call, *, perms, ctx, log, offload) -> consent.Answer:
                     call.target.label if call.target else None,
                     marker,
                 )
+            # A ``lambda`` either way, so nothing is called yet: `consent.ask`
+            # needs something it can invoke *inside* its own deadline, not a
+            # result already waited for. Which surface asked is the only
+            # difference the rule never sees.
             asker = (
                 (lambda: ctx.elicit(body, Approval))
                 if elicits
@@ -280,9 +315,12 @@ async def _ask(cmd, call, *, perms, ctx, log, offload) -> consent.Answer:
                 frames.answered(marker, answer.outcome.value)
             return answer
     finally:
+        # However the question ended, this session may ask again.
         _pending.pop(key, None)
 
 
+# ``BaseModel`` is pydantic's: a class whose fields describe a data shape, from
+# which the SDK generates the JSON schema the client renders as a form.
 class Approval(BaseModel):
     """What an eliciting client is asked for.
 

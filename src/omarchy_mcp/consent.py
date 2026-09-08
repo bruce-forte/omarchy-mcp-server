@@ -39,6 +39,8 @@ DEFAULT_TIMEOUT_S = 60
 
 
 class Outcome(str, Enum):
+    """The six ways a question can end. Only ``ACCEPTED`` runs anything."""
+
     ACCEPTED = "accepted"
     DECLINED = "declined"
     CANCELLED = "cancelled"
@@ -60,6 +62,12 @@ class Answer:
 
     @property
     def accepted(self) -> bool:
+        """The one question worth asking of an answer, in one place.
+
+        ``is`` rather than ``==``: enum members are singletons, so identity is
+        the exact comparison, and it cannot be satisfied by a bare string that
+        happens to read "accepted".
+        """
         return self.outcome is Outcome.ACCEPTED
 
 
@@ -77,6 +85,9 @@ def _reason(outcome: Outcome, *, timeout_s: float, what: str, clicked: bool = Fa
             f"{timeout_s}s. That may mean the user refused it or that they were "
             f"not there. Nothing ran. Ask them directly rather than repeating it."
         )
+    # A dict used as a switch: build the mapping, then index it with the
+    # outcome. Every member has an entry, so a missing one raises a KeyError
+    # here rather than returning an empty explanation to the agent.
     return {
         Outcome.ACCEPTED: "",
         Outcome.DECLINED: f"The user refused this call ({what}).",
@@ -112,6 +123,8 @@ def supports_asking(capabilities) -> bool:
     not consent either. Note this says nothing about whether the *transport*
     can carry the question; see `gate.can_elicit`.
     """
+    # ``getattr`` with a default all the way down, because every level of this
+    # may be absent depending on what the client declared.
     elicitation = getattr(capabilities, "elicitation", None)
     if elicitation is None:
         return False
@@ -146,9 +159,17 @@ async def ask(
     on it would run a command minutes after the user's attention moved on.
     """
     result: object | None = None
+    # ``move_on_after`` is a *cancel scope*: if the block inside has not
+    # finished within the timeout, whatever it is awaiting is cancelled and
+    # execution continues after the ``with``. The scope then reports that it
+    # did so through ``cancelled_caught``, checked below.
     with anyio.move_on_after(timeout_s) as scope:
         try:
+            # ``asker`` is a function that returns something awaitable, so it is
+            # called *and* awaited: the brackets run it, the ``await`` waits.
             result = await asker()
+        # Deliberately broad. ``noqa`` switches off the linter rule that
+        # objects to it (BLE001, "blind except"), with the reason on the line.
         except Exception as exc:  # noqa: BLE001 -- a broken prompt is an answer, not a crash
             if log is not None:
                 log.info("consent unreachable (%s): %s", type(exc).__name__, exc)
@@ -176,6 +197,9 @@ def _interpret(result: object, *, timeout_s: float, what: str) -> Answer:
     `isinstance` miss. Anything unrecognised is treated as no consent: only the
     word "accept" runs anything.
     """
+    # ``result`` is typed ``object`` because it comes from the SDK and this
+    # module deliberately knows nothing about its classes -- only about the one
+    # attribute it reads.
     action = getattr(result, "action", None)
     if action == "accept":
         return Answer(Outcome.ACCEPTED, "", getattr(result, "data", None))
