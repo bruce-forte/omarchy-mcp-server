@@ -137,6 +137,11 @@ async def main() -> int:
     accept, port, route, args = _parse(sys.argv[1:])
     url = f"http://127.0.0.1:{port or _port()}/mcp"
 
+    #: Whether the server asked us anything at all. A one-element list rather
+    #: than a plain name because a nested function assigning to a name would
+    #: make it local; `nonlocal` would work too, and this is the smaller change.
+    asked: list[bool] = []
+
     async def on_elicit(_ctx, params):
         """Called by the SDK when the server asks this client a question.
 
@@ -150,6 +155,7 @@ async def main() -> int:
         enum of the themes installed on this machine -- and an accept has to
         fill it in or the SDK rejects the reply before it is sent.
         """
+        asked.append(True)
         print("\n--- the server is asking -------------------------------------")
         print(params.message)
         options = _choices(params)
@@ -195,8 +201,26 @@ async def main() -> int:
                         "omarchy_run", {"route": route, "args": args}
                     )
                 print("\n--- what the agent would have been told ----------------------")
-                for block in result.content:
-                    print(getattr(block, "text", block))
+                text = "\n".join(str(getattr(b, "text", b)) for b in result.content)
+                print(text)
+
+                if route is None and not asked and "needs a theme name" in text:
+                    # The server had every reason to ask -- this client declares
+                    # elicitation and negotiated an era that can carry the
+                    # question -- and did not. Overwhelmingly the daemon is
+                    # older than the checkout, which is what `make elicit`
+                    # spawning its own daemon exists to avoid.
+                    print(
+                        "\nThe server did not ask, which means it is a build "
+                        "without the form.\n"
+                        "`make elicit` starts a daemon from this checkout; if "
+                        "you pointed this at\n"
+                        "an installed plugin, update it:\n"
+                        "  omarchy plugin update io.github.bruce-forte.mcp-server\n"
+                        "  omarchy-shell io.github.bruce-forte.mcp-server restart",
+                        file=sys.stderr,
+                    )
+                    return 1
     return 0
 
 
