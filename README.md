@@ -7,10 +7,10 @@ Runs as an **Omarchy plugin**, so there is no systemd unit to enable, no second
 install step, and no separate package. The plugin supervises a small daemon; the
 daemon starts with your session and stops with it.
 
-> **Status: Phase 6.** Nineteen tools, seven resources, a supervised daemon, a
+> **Status: Phase 6.** Nineteen tools, eight resources, a supervised daemon, a
 > bar widget that says whether it is serving, approval prompts that reach the
-> desktop, and an activity log of everything an agent did. What is left is the
-> surfaces that read it; see [`ROADMAP.md`](ROADMAP.md).
+> desktop, permissions you can read and edit from the bar, and an activity log
+> of everything an agent did. See [`ROADMAP.md`](ROADMAP.md).
 
 ## Documentation
 
@@ -213,18 +213,37 @@ running — a wedged HTTP loop still has a live process, so the plugin probes
 
 The plug icon in the bar says whether the server is serving, and blinks when an
 agent makes a call — the only thing on the desktop that marks the moment
-something acted on it. Click it for a panel with the last few calls, and the
-controls:
+something acted on it. Click it for a panel with three tabs:
+
+| Tab | Shows |
+|-----|-------|
+| **Summary** | whether it is serving and on which port, how many tools are offered, whether either config file failed to load, anything the server has stopped asking about, and a button that opens `config.toml` in your editor |
+| **Log** | the last 30 records, newest first, each with a severity icon and how long ago it happened |
+| **Rules** | every rule in force and what it covers, flagged when it is not doing what it looks like it does — with **Remove** on the grants this daemon wrote and **Edit** on each file |
+
+Two things are not in a tab, because they must not be behind one. A question
+waiting for an answer sits **above** the tabs, and these buttons sit **below**
+them, on every tab:
 
 | Button | Does |
 |--------|------|
 | **Stop** / **Start** | Switches the daemon off, or back on. A Stop lasts across a shell restart and a logout, until you start it again |
-| **Restart** | What to press after editing `config.toml` |
+| **Restart** | Bounces the daemon. Needed after changing `server.port` or the `[log]` settings; every other key re-reads itself within two seconds |
+| **Check permissions** | Says whether `permissions.json` would let the daemon start — the one control that is useful precisely when it will not |
+| **Reload config** | Re-reads `config.toml` now rather than within two seconds |
 | **Copy client config** | Puts the `claude mcp add …` line on your clipboard. It carries the bearer token, so it is never shown on screen |
 
-The panel reads the activity log directly, so it still lists what happened when
-the daemon is stopped or has crashed. Arguments are not shown there — see
-[Seeing what it did](#seeing-what-it-did).
+**It is keyboard-driven.** `[` and `]` move between tabs; `j`/`k` or the arrows
+walk the controls and `h`/`l` move within a row; `Enter` presses what is lit and
+`Esc` closes. On the Log, where there is nothing to press, `j`/`k` scroll
+instead. A dim line under the buttons lists whatever applies where you are.
+`Tab` is untouched and still moves to the next panel on the bar, as it does
+everywhere else in Omarchy.
+
+The panel reads the activity log and the rules from the files, so it still
+answers when the daemon is stopped or is refusing to start — which is when the
+**Edit** and **Check permissions** buttons matter most. Arguments are not shown
+there — see [Seeing what it did](#seeing-what-it-did).
 
 It opens from a keybind or a terminal too:
 
@@ -287,9 +306,8 @@ rot when Omarchy adds commands:
 `omarchy_search_commands` reports the tier of every result, so an agent can see
 what it may do before trying.
 
-**An agent cannot switch this server off.** Its own IPC target answers `status`,
-`recent`, `review`, `pending` and `permissions` — all read-only; every other verb
-is refused, as is any command that would disable,
+**An agent cannot switch this server off.** Its own IPC target answers `status`
+and `recent` to an agent — both read-only — and refuses every other verb, as is any command that would disable,
 remove or replace this plugin. The refusal points at the bar panel, which is
 where you press Stop, Restart or Reload config. See [`SECURITY.md`](SECURITY.md).
 
@@ -379,7 +397,8 @@ each file's **Edit** button opens.
 
 From a terminal, `omarchy-mcpd --permissions` prints the same thing, and
 `omarchy-shell io.github.bruce-forte.mcp-server permissions` says how many rules
-need attention.
+need attention. That verb, like `review` and `pending`, answers **you** — an
+agent asking this plugin's own target gets only `status` and `recent`.
 
 Copy [`permissions.example.json`](permissions.example.json) to start, and check
 your edits before restarting anything:

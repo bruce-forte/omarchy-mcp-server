@@ -235,6 +235,11 @@ knowing the plugin has an IPC target at all, and it can ask a question a
 notification cannot: a notification carries one action (F25), a panel carries
 as many buttons as the decision needs.
 
+The panel is tabbed — Summary, Log, Rules — with a parked question above the
+strip and the daemon's buttons below it on every tab. So a new control goes in
+the tab it belongs to, and only something that must never be missed earns a
+place in one of the two permanent bands.
+
 Add the IPC verb too, and name it for the caller — the `qs ipc show` listing is
 how a script or an agent discovers the same capability. But the panel is the
 surface a person gets.
@@ -291,9 +296,14 @@ N10 did exactly this: the pending question and the delta review both live on the
 service object, and the panel reads them from there. **Read-only IPC verbs
 only** — an agent can reach this plugin's own target, so a verb that granted a
 permission or acknowledged a review would let it permit itself. `status`,
-`recent`, `pending` and `review` report; answering, acknowledging and pruning go
-through `bin/omarchy-mcp-consent`, each with a token the daemon publishes only on
-the frame the shell reads. Keep new verbs on that side of the line.
+`recent`, `pending`, `review` and `permissions` report; answering, acknowledging,
+pruning and removing a grant go through `bin/omarchy-mcp-consent`, each with a
+token the daemon publishes only on the frame the shell reads. Keep new verbs on
+that side of the line.
+
+Note only `status` and `recent` are answered to an *agent* — `policy.py`'s
+`SELF_READ_VERBS` — so a new read verb is for a person at a terminal, and the
+list above is what `qs ipc show` offers, not what an agent may call.
 
 ### Reload rules
 
