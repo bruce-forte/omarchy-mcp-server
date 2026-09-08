@@ -189,8 +189,10 @@ async def authorize(
         return Refused(quiet, outcome.tier.value, outcome="not_asked_again")
 
     # Resolution comes *before* the question, and only on this path. A prompt
-    # reading "set theme Tokyo Night" is consent; one reading "run omarchy theme
-    # set" is not, because the user cannot tell what it would do (N2). And a
+    # reading "remove theme Tokyo Night" is consent; one reading "run omarchy
+    # theme remove" is not, because the user cannot tell what it would do (N2).
+    # (`theme remove` is the guarded one; `theme set` is safe and never reaches
+    # this path at all.) And a
     # question answered yes and then refused as unresolvable has spent the
     # user's attention for nothing. A refusal that will never ask still does not
     # pay for a resolver subprocess.
