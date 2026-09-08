@@ -23,6 +23,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from starlette.responses import JSONResponse
 
 from . import __version__, frames, gate
+from .delta import Review
 from .auth import BearerAuth
 from .clients import Clients
 from .config import Config
@@ -92,7 +93,7 @@ def build(
     *,
     stats: Stats | None = None,
     reload_from: Path | None = None,
-    review: object | None = None,
+    review: Review | None = None,
     prune_token: str = "",
     revoke_token: str = "",
 ):
@@ -125,7 +126,9 @@ def build(
         # `reloader` is built after the server it reloads, so this reads it at
         # call time rather than closing over the None it is now. A closure reads
         # the variable when it runs, not when it is defined, which is exactly
-        # what makes this work.
+        # what makes this work -- and by the time the ASGI server runs a
+        # lifespan, `apply` below has long since assigned it.
+        assert reloader is not None
         return lifespan_for(reloader)(server)
 
     mcp = MCPServer(

@@ -91,10 +91,15 @@ def parse_targets(listing: str) -> dict[str, Target]:
     for line in listing.splitlines():
         target_match = _TARGET_RE.match(line)
         if target_match:
-            current = target_match.group("name")
+            # ``group`` is typed as possibly absent, because in general a group
+            # need not have participated in the match. This one is not optional
+            # in the pattern, so the name is bound to a local first and the
+            # checker carries that through.
+            name = target_match.group("name")
+            current = name
             # Register it even if it turns out to have no methods, so a target
             # that exists but offers nothing is still reported as existing.
-            targets.setdefault(current, [])
+            targets.setdefault(name, [])
             continue
 
         func_match = _FUNC_RE.match(line)

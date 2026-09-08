@@ -29,7 +29,9 @@ def test_sets_pycache_prefix_outside_the_plugin(wrapper):
     write to -- so without a cache prefix the daemon makes the shell reload
     itself simply by starting."""
     assert "PYTHONPYCACHEPREFIX=" in wrapper
-    prefix = re.search(r'PYTHONPYCACHEPREFIX="([^"]+)"', wrapper).group(1)
+    found = re.search(r'PYTHONPYCACHEPREFIX="([^"]+)"', wrapper)
+    assert found is not None
+    prefix = found.group(1)
     assert "$STATE_DIR" in prefix
     assert "PLUGIN_DIR" not in prefix
 

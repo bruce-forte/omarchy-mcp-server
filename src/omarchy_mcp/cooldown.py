@@ -42,7 +42,9 @@ from __future__ import annotations
 
 import time
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Any
 
 #: How long a route waits after one refusal before it may be asked about again.
 #: Long enough that an agent's next attempt is a different conversation, short
@@ -90,7 +92,7 @@ class Cooldowns:
     #: The function used to read the clock. Storing the function itself, not a
     #: reading from it -- note there are no brackets after ``time.monotonic``.
     #: A test passes its own callable and can then move time by hand.
-    clock: object = time.monotonic
+    clock: Callable[[], float] = time.monotonic
     #: Route -> its cooldown. ``default_factory=dict`` gives each instance its
     #: own empty dict; a plain ``= {}`` default would be shared by all of them.
     _routes: dict[str, _Route] = field(default_factory=dict)
@@ -178,7 +180,7 @@ class Cooldowns:
         for route in [r for r, e in self._routes.items() if e.until <= now]:
             del self._routes[route]
 
-    def state(self) -> dict[str, object]:
+    def state(self) -> dict[str, Any]:
         """What the panel shows, so a suppressed call is never a mystery."""
         now = self._now()
         self._forget(now)

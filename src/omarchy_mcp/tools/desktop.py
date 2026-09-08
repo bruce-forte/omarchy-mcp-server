@@ -38,8 +38,8 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats) -> None:
             "nothing is saved to disk and the clipboard is not touched." + UNTRUSTED
         ),
         annotations=ToolAnnotations(
-            readOnlyHint=True, destructiveHint=False, idempotentHint=False,
-            openWorldHint=False,
+            read_only_hint=True, destructive_hint=False, idempotent_hint=False,
+            open_world_hint=False,
         ),
     )
     @threaded
@@ -84,7 +84,7 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats) -> None:
                 shot.height,
             )
             return [
-                ImageContent(type="image", data=shot.as_base64(), mimeType="image/png"),
+                ImageContent(type="image", data=shot.as_base64(), mime_type="image/png"),
                 TextContent(
                     type="text",
                     text=f"{shot.width}x{shot.height}, target={target}{where}",
@@ -102,8 +102,8 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats) -> None:
             "'the other monitor'." + UNTRUSTED
         ),
         annotations=ToolAnnotations(
-            readOnlyHint=True, destructiveHint=False, idempotentHint=True,
-            openWorldHint=False,
+            read_only_hint=True, destructive_hint=False, idempotent_hint=True,
+            open_world_hint=False,
         ),
     )
     @threaded
@@ -125,8 +125,8 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats) -> None:
             f"and terminals. `target` is one of: {TARGETS}." + UNTRUSTED
         ),
         annotations=ToolAnnotations(
-            readOnlyHint=True, destructiveHint=False, idempotentHint=False,
-            openWorldHint=False,
+            read_only_hint=True, destructive_hint=False, idempotent_hint=False,
+            open_world_hint=False,
         ),
     )
     @threaded
@@ -170,8 +170,8 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats) -> None:
             "An empty clipboard returns an empty string rather than an error." + UNTRUSTED
         ),
         annotations=ToolAnnotations(
-            readOnlyHint=True, destructiveHint=False, idempotentHint=True,
-            openWorldHint=False,
+            read_only_hint=True, destructive_hint=False, idempotent_hint=True,
+            open_world_hint=False,
         ),
     )
     @threaded
@@ -200,8 +200,8 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats) -> None:
         # Not read-only, and destructive in the sense that matters: it
         # discards something the user put there deliberately.
         annotations=ToolAnnotations(
-            readOnlyHint=False, destructiveHint=True, idempotentHint=True,
-            openWorldHint=False,
+            read_only_hint=False, destructive_hint=True, idempotent_hint=True,
+            open_world_hint=False,
         ),
     )
     @threaded

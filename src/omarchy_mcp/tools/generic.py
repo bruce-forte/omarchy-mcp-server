@@ -50,7 +50,7 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats | None = No
             "An empty query lists commands from the start of the registry."
         ),
         annotations=ToolAnnotations(
-            readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False
+            read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False
         ),
     )
     @threaded
@@ -90,7 +90,7 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats | None = No
             "and return immediately." + UNTRUSTED
         ),
         annotations=ToolAnnotations(
-            readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=True
+            read_only_hint=False, destructive_hint=True, idempotent_hint=False, open_world_hint=True
         ),
     )
     async def omarchy_run(
@@ -101,7 +101,7 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats | None = No
         # ``ctx`` is supplied by the SDK, not by the model: it is recognised by
         # its type hint and does not appear in the tool's schema. It is how the
         # gate reaches the client session to ask a question.
-        ctx: Context = None,
+        ctx: Context | None = None,
     ) -> str:
         """Run one registry route, after the gate has decided it may."""
         # ``args or []`` covers both "not given" and "given as null"; ``list``
@@ -203,7 +203,7 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats | None = No
             "does not cover. Pass `target` to get just one."
         ),
         annotations=ToolAnnotations(
-            readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False
+            read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False
         ),
     )
     @threaded
@@ -241,7 +241,8 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats | None = No
             "this connection and the record of what it did, so an agent cannot stop it."
         ),
         annotations=ToolAnnotations(
-            readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True
+            read_only_hint=False, destructive_hint=False, idempotent_hint=False,
+            open_world_hint=True,
         ),
     )
     @threaded

@@ -17,6 +17,7 @@ import os
 import subprocess
 import tempfile
 from dataclasses import dataclass
+from typing import Any
 
 HYPRCTL_TIMEOUT_S = 5
 GRIM_TIMEOUT_S = 15
@@ -309,7 +310,7 @@ def _run(argv: list[str], timeout_s: int, what: str) -> str:
     return proc.stdout
 
 
-def state() -> dict[str, object]:
+def state() -> dict[str, Any]:
     """What is on screen, compactly.
 
     hyprctl's own client records carry three dozen fields each, most of which a

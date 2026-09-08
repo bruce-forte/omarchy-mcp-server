@@ -39,8 +39,8 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats) -> None:
             "so keep it for things that genuinely cannot wait."
         ),
         annotations=ToolAnnotations(
-            readOnlyHint=False, destructiveHint=False, idempotentHint=False,
-            openWorldHint=False,
+            read_only_hint=False, destructive_hint=False, idempotent_hint=False,
+            open_world_hint=False,
         ),
     )
     async def omarchy_notify(
@@ -49,7 +49,7 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats) -> None:
         urgency: str = "normal",
         glyph: str = "",
         timeout_ms: int = 0,
-        ctx: Context = None,
+        ctx: Context | None = None,
     ) -> str:
         """Raise a desktop notification through `omarchy notification send`."""
         if urgency not in URGENCIES:
@@ -84,8 +84,8 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats) -> None:
             "it suits progress and acknowledgements that are not worth keeping."
         ),
         annotations=ToolAnnotations(
-            readOnlyHint=False, destructiveHint=False, idempotentHint=False,
-            openWorldHint=False,
+            read_only_hint=False, destructive_hint=False, idempotent_hint=False,
+            open_world_hint=False,
         ),
     )
     async def omarchy_osd(
@@ -93,7 +93,7 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats) -> None:
         icon: str = "",
         progress: int = -1,
         duration_ms: int = 0,
-        ctx: Context = None,
+        ctx: Context | None = None,
     ) -> str:
         """Flash an on-screen display through `omarchy osd`.
 

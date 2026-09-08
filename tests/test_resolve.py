@@ -153,7 +153,7 @@ class TestRouteTable:
     def test_a_theme_route_rewrites_the_argument_to_the_installed_name(self):
         call = resolve.resolve_call("omarchy theme set", ["tokyo night"])
         assert call.args == ["Tokyo Night"]
-        assert call.target.kind == "theme"
+        assert call.target is not None and call.target.kind == "theme"
 
     def test_theme_remove_with_no_name_still_opens_the_picker(self):
         """A picker is the user choosing, which is what consent is for."""
@@ -162,7 +162,7 @@ class TestRouteTable:
     def test_the_monitor_flag_is_found_wherever_it_sits(self):
         call = resolve.resolve_call("omarchy brightness display", ["--monitor", "DP-1", "+10%"])
         assert call.args == ["--monitor", "DP-1", "+10%"]
-        assert call.target.value == "DP-1"
+        assert call.target is not None and call.target.value == "DP-1"
 
     def test_a_wrong_monitor_flag_refuses_the_whole_call(self):
         with pytest.raises(resolve.Unresolvable):

@@ -44,6 +44,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from typing import IO, Any
 
 from . import __version__, execute
 from .paths import ACTIVITY_FILE, STATE_DIR
@@ -128,9 +129,9 @@ class Record:
         """Whether this call counts as a success, for the failure counter."""
         return self.result == "ok"
 
-    def as_dict(self) -> dict[str, object]:
+    def as_dict(self) -> dict[str, Any]:
         """The line. Absent fields are omitted rather than null."""
-        body: dict[str, object] = {"ts": self.ts, "tool": self.tool}
+        body: dict[str, Any] = {"ts": self.ts, "tool": self.tool}
         if self.route:
             body["route"] = self.route
         if self.args:
@@ -149,8 +150,8 @@ class Record:
         return body
 
 
-def line_of(body: dict[str, object]) -> str:
-    """Serialise one record, eliding harder if it does not fit.
+def line_of(body: dict[str, Any]) -> str:
+    """Serialize one record, eliding harder if it does not fit.
 
     Only the arguments are cut, because everything else in a line is bounded by
     construction -- a tool name, a route, a resolved label, an exit code. An
@@ -208,12 +209,12 @@ class Sink:
         self._closed = False
         #: The open file handle, and its size in bytes. Touched only by the
         #: writer thread, which is why neither needs a lock.
-        self._fh = None
+        self._fh: IO[bytes] | None = None
         self._size = 0
 
     # -- producer side: called from the event loop and from worker threads ----
 
-    def append(self, body: dict[str, object]) -> None:
+    def append(self, body: dict[str, Any]) -> None:
         """Never blocks, never raises. A tool call must not wait for a log."""
         try:
             # ``put_nowait`` raises immediately when the queue is full, where a
@@ -313,39 +314,47 @@ class Sink:
         if dropped:
             self._write({"ts": _now(), "event": "dropped", "n": dropped})
 
-    def _write(self, body: dict[str, object]) -> None:
+    def _write(self, body: dict[str, Any]) -> None:
         """Append one record, opening or rotating the file as needed."""
         try:
-            if self._fh is None:
-                self._open()
+            # ``or`` returns the left side when it is truthy, so this is "the
+            # open handle, or a freshly opened one". Held in a local because
+            # `_rotate` swaps the attribute out from under it.
+            fh = self._fh or self._open()
             line = (line_of(body) + "\n").encode()
             # Rotate *before* the write that would cross the cap, so the file
             # is never over it and a record is never split across generations.
             if self._size and self._size + len(line) > self.max_bytes:
-                self._rotate()
-            self._fh.write(line)
-            self._fh.flush()
+                fh = self._rotate()
+            fh.write(line)
+            fh.flush()
             self._size += len(line)
         except OSError as exc:
             self._failed(exc)
 
-    def _open(self) -> None:
-        """Open the log for appending, creating it 0600 in a 0700 directory."""
+    def _open(self) -> IO[bytes]:
+        """Open the log for appending, creating it 0600 in a 0700 directory.
+
+        Returns the handle as well as storing it, so a caller that has just
+        opened one does not have to prove to itself that it is not ``None``.
+        """
         self.path.parent.mkdir(parents=True, exist_ok=True)
         os.chmod(self.path.parent, 0o700)
         fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
         # Binary, so one line is one write of a known length.
         self._fh = os.fdopen(fd, "ab")
         self._size = self.path.stat().st_size
+        return self._fh
 
-    def _rotate(self) -> None:
+    def _rotate(self) -> IO[bytes]:
         """One generation kept. A tailer re-opens on the rename; see N6."""
-        self._fh.close()
-        self._fh = None
+        if self._fh is not None:
+            self._fh.close()
+            self._fh = None
         # ``os.replace`` is an atomic rename: there is no instant where neither
         # name exists, and it overwrites any previous generation.
         os.replace(self.path, rotated(self.path))
-        self._open()
+        return self._open()
 
     def _close(self) -> None:
         """Close the file handle if one is open. Safe to call twice."""
@@ -384,7 +393,7 @@ def rotated(path: Path) -> Path:
 #: want it are not tool calls and have no `Stats` to hang off. `stats.call(...)`
 #: stays the only way a *call* is recorded -- one record per call, on every exit
 #: path -- and this is for the handful of things that are not calls.
-_current: object | None = None
+_current: Sink | None = None
 
 
 def note(name: str, **fields: object) -> None:
