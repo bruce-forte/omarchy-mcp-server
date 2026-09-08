@@ -210,6 +210,12 @@ Panel {
   readonly property bool bodyHasControls: tab !== "Log"
 
   readonly property var recent: service ? service.recent : []
+
+  //: The Log reads newest first. `activity.tail` hands them over oldest first,
+  //: which is right for a terminal -- `--tail` is read like `tail(1)` -- and
+  //: wrong for a panel somebody opens to find out what just happened. Reversed
+  //: here rather than in the daemon, so the two surfaces keep their own habits.
+  readonly property var logRecords: recent.slice().reverse()
   readonly property bool recentLoading: service ? service.recentLoading : false
   readonly property bool activityLogged: service ? service.activityLogged : true
 
@@ -467,14 +473,42 @@ Panel {
     return Qt.formatDateTime(new Date(then), "MMM d hh:mm")
   }
 
-  // The level column. Derived in `activity.py` so the terminal and this cannot
-  // disagree about what counts as wrong; this only chooses the colour.
+  //: Severity colours. Two of them are literals because the palette has no
+  //: token for them -- it carries foreground, background, accent, urgent and
+  //: muted, and nothing that means "warning". Deliberately muted rather than
+  //: signal-bright: this is a log, and a wall of vivid rows says everything is
+  //: on fire when nothing is.
+  //:
+  //: The error case is the exception and keeps the *theme's* red, because that
+  //: token exists and is already what every other urgent thing in this panel
+  //: uses.
+  readonly property color infoColor: "#8fa3b8"
+  readonly property color warnColor: "#c8a45c"
+
+  // The level column. Which level a record is comes from `activity.py`, so the
+  // terminal and this cannot disagree about what counts as wrong; this chooses
+  // only how it looks.
   function levelColor(level) {
     if (level === "e")
       return Color.urgent
     if (level === "w")
-      return Color.accent
-    return Qt.darker(Color.foreground, 1.8)
+      return root.warnColor
+    return root.infoColor
+  }
+
+  // Nerd Font, which the bar icon on this same widget already depends on:
+  // exclamation-circle, warning triangle, info-circle.
+  //
+  // Written as escapes rather than as the characters themselves. They live in
+  // the private use area, so in a diff, a review, or a terminal without the
+  // font they are an invisible box -- and a glyph nobody can see is one nobody
+  // can check.
+  function levelIcon(level) {
+    if (level === "e")
+      return "\uF06A"
+    if (level === "w")
+      return "\uF071"
+    return "\uF05A"
   }
 
   // Which finding a row carries, worst first. A rule has at most one: an error
@@ -1019,7 +1053,7 @@ Panel {
                 }
 
                 Repeater {
-                  model: root.recent
+                  model: root.logRecords
 
                   // Four columns at fixed widths rather than a Row of natural
                   // ones: a log is read down a column, and text that starts at
@@ -1034,8 +1068,8 @@ Panel {
                     Text {
                       id: levelCell
                       anchors.left: parent.left
-                      width: Style.space(10)
-                      text: String(logRow.modelData.level || "i")
+                      width: Style.space(14)
+                      text: root.levelIcon(logRow.modelData.level)
                       color: root.levelColor(logRow.modelData.level)
                       font.family: Style.font.family
                       font.pixelSize: Style.font.bodySmall
@@ -1063,7 +1097,11 @@ Panel {
                       // The bullet was a list marker; in a table the level
                       // column is the marker.
                       text: String(root.rowLabel(logRow.modelData)).replace(/^· /, "")
-                      color: root.rowColor(logRow.modelData)
+                      // Tinted by severity like the glyph, so a warning reads
+                      // as one across the row rather than in one column of it.
+                      color: logRow.modelData.level === "i"
+                        ? Qt.darker(Color.foreground, 1.4)
+                        : root.levelColor(logRow.modelData.level)
                       font.family: Style.font.family
                       font.pixelSize: Style.font.bodySmall
                     }
