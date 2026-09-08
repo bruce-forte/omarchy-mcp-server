@@ -2119,6 +2119,26 @@ row above the one I meant* is expensive here in a way it is not on a volume
 slider. It also makes the cursor legible, since `Up`/`Down` then walks a visible
 column.
 
+#### The Log reads like a log
+
+Newest first, which is the opposite of `activity.tail` and deliberately so: a
+terminal reading `--tail` expects `tail(1)` order, and a person opening a bar
+popup is asking *what just happened*. The reversal is in the panel, so the two
+surfaces keep their own habits.
+
+Level is a Nerd Font glyph rather than a letter, and the row is tinted by it:
+pale blue for information, amber for a warning, and the theme's own `urgent` for
+an error — that last one because it is the only severity the palette actually
+has a token for, and it is what every other urgent thing in this panel already
+uses. The other two are literals, muted rather than signal-bright: a wall of
+vivid rows says everything is on fire when nothing is.
+
+The glyphs are written as `\uF06A` escapes rather than as themselves. They live
+in the private use area, so in a diff, in a review, or in a terminal without the
+font they are an invisible box — and a glyph nobody can see is one nobody can
+check. Building this, the literal characters were silently dropped in transit
+and the column rendered empty.
+
 #### A key legend, which this shell does not have
 
 Nothing in `qs.Ui` draws one and no shipped panel renders one; `dev-gallery`
