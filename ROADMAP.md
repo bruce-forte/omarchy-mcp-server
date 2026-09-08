@@ -3,6 +3,33 @@
 What is decided, what is built, what was rejected. Check here before proposing
 a feature — several things below were considered and deliberately dropped.
 
+## Start here
+
+This file is long, and it is a **record rather than a plan**: every phase and
+every numbered item below is finished. It is here so that a change proposed
+tomorrow can be checked against the reasoning of the thing it would undo.
+
+Read it by looking things up, not front to back:
+
+| If you want to… | Go to |
+|---|---|
+| Know whether an idea was already considered | [Rejected](#rejected) and [Deferred](#deferred) — check both **before** proposing a feature |
+| Know why something is shaped the way it is | [Decisions](#decisions) — eighteen rows, each naming the thing that forced it |
+| Know what is built | [Phases](#phases) — all seven are done |
+| Read the reasoning behind one feature | The `N` items under [Phase 6 in detail](#phase-6-in-detail) — N1 to N16, each with its own argument |
+| Know what went wrong and what it cost | The findings sections at the end — F1 to F31. These are the expensive ones |
+
+**The findings are the part worth reading even if you skip everything else.**
+They record things that were believed, shipped, and turned out to be false: that
+elicitation would reach the client (F23), that a `finally` runs on shutdown
+(F28), that a notification shows a button (F31), that a test suite naming
+`omarchy system reboot` could not reboot anything (F29 — it did). Each names the
+consequence and what was changed.
+
+For how the thing actually works, read [`ARCHITECTURE.md`](ARCHITECTURE.md). For
+what it will and will not allow, [`SECURITY.md`](SECURITY.md). For using it,
+[`README.md`](README.md).
+
 ## Decisions
 
 Settled during design. Each row names the thing that forced it, because the
@@ -18,7 +45,7 @@ reasons matter more than the choices when something needs revisiting.
 | 6 | **Python + venv + official `mcp` SDK** | Spec compliance tracked upstream. `/usr/bin/python3` is guaranteed on Omarchy; node and luajit are not |
 | 7 | **Self-healing bash wrapper** builds the venv, then `exec`s | `omarchy plugin add` runs no build and no install hook, by design. Bootstrap has to be lazy, and QML is the wrong place for it |
 | 8 | **`kinds: ["service", "bar-widget"]`** | A daemon whose only client is an agent fails silently and invisibly. The bar icon is the cheapest compliance with "never fail silently" |
-| 9 | **7 IPC functions**, health probed not assumed | `qs ipc show` is the discovery mechanism, so the names are documentation. A wedged HTTP loop still shows a live pid, so liveness needs a real probe |
+| 9 | **IPC functions named for the caller**, health probed not assumed (7 at the time; 13 now — N6, N10 and N15 each added read verbs) | `qs ipc show` is the discovery mechanism, so the names are documentation. A wedged HTTP loop still shows a live pid, so liveness needs a real probe |
 | 10 | **Concrete resources + URI templates** (4 + 3 at the time; `omarchy://permissions` made it 5 + 3 in N10 c) | Covers all 356 commands and ~20 IPC targets. 356 concrete resources would bloat `resources/list` and blow up in any client that injects the list into context |
 | 11 | **Optional TOML config, every key commented out** | Live keys freeze v1 defaults forever. Commented keys let upstream defaults flow through |
 | 12 | **Daemon health notifies; request failures do not** | The agent already receives tool errors in the response. Toasting them would fire constantly on a wrong `omarchy_run` |
@@ -46,29 +73,30 @@ reasons matter more than the choices when something needs revisiting.
       unlock what `run` structurally cannot do. Then Tier 2 (9).
 - [x] **4 — Resources.** Done. The 7 from decision 10, shaped by what Phase 0 found.
 - [x] **5 — Hardening.** Done. Generated `TOOLS.md`, CI, `SECURITY.md`.
-- [x] **6 — Consent and visibility.** Done, N1–N14. The user can see what an
+- [x] **6 — Consent and visibility.** Done, N1–N16. The user can see what an
       agent did, answer for the calls that warrant it, decide once and have it
       written down, be told what an update changed under those decisions, tidy
-      up after it, and stop the thing — and cannot be worn down into approving
-      by reflex. N10 grew into the phase's largest item: five commits and its
-      own permissions document, with N13 and N14 coming out of it.
-      See [Next steps](#next-steps).
+      up after it, edit the rules without leaving the bar, and stop the thing —
+      and cannot be worn down into approving by reflex. N10 grew into the
+      phase's largest item: five commits and its own permissions document, with
+      N13 and N14 coming out of it, and N15 and N16 following from the panel it
+      needed. See [Phase 6 in detail](#phase-6-in-detail).
 
 Tests are not a phase. `policy.py` and the auth checks are tested in the phase
 that creates them — they are the security boundary, and tests retrofitted to a
 security boundary only assert whatever the code already does.
 
-## Next steps
+## Phase 6 in detail
 
-Phase 6 in detail, and **it is finished**: N1–N14. N13 and N14 came out of N10
-without being part of it, and closed with it. The theme was that the person the
-daemon acts on behalf of could not see what it did, could not answer for a call
-in flight, and could not stop it without a terminal. Decision 12 covers *daemon*
-faults; none of this covered what an *agent* does, which is the part with
-consequences.
+**Finished**: N1–N16. The theme was that the person the daemon acts on behalf of
+could not see what it did, could not answer for a call in flight, and could not
+stop it without a terminal. Decision 12 covers *daemon* faults; none of this
+covered what an *agent* does, which is the part with consequences.
 
 Ordered by what unblocked what. N1–N3 stand alone and are cheap. N4 depends on
-N2 and N3. N6 depended on N5's log. N11 came out of N6, N12 out of N7.
+N2 and N3. N6 depended on N5's log. N11 came out of N6, N12 out of N7. N13 and
+N14 came out of N10 without being part of it; N15 and N16 followed from the
+panel N10 needed, and are the last two.
 
 N10 depends on all of them and on N12, which is **done**. It needs N4 for the
 question, N6's panel for the two answers a notification cannot carry, and N7's

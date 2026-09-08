@@ -12,6 +12,11 @@ Read these first, in this order:
 | [`ROADMAP.md`](ROADMAP.md) | Decisions with their reasons, phases, and what was rejected — check before proposing a feature |
 | `README.md` | The user-facing side |
 
+Each of those opens with a **Start here** section that says what it covers and
+routes to the rest of it. Keep them accurate: a claim in a document nobody has
+re-read is worse than no document, and the counts in them (nineteen tools, eight
+resources, thirteen IPC verbs) are the ones that rot first.
+
 This file is the working agreement.
 
 ## Conventions for this repo
@@ -32,6 +37,11 @@ This file is the working agreement.
   schema, or annotations change, and `permissions.schema.json` with
   `make schema` whenever `permissions.py`'s models change. Both are generated;
   never edit either by hand, and `make check` fails if either is stale.
+- **A pydantic model's docstring is published.** It becomes the object's
+  `description` in `permissions.schema.json`, so adding one to a `BaseModel` in
+  `permissions.py` makes the schema stale on a purely editorial change. Document
+  those classes with a comment *above* the class instead. Field descriptions are
+  the opposite case: they are written for the schema, and belong in `Field(...)`.
 - Tests read committed snapshots in `tests/fixtures/`, never the installed
   Omarchy: `commands.json` (`omarchy commands --all --json`), `themes.txt`
   (`omarchy theme list`), `monitors.json` (`hyprctl -j monitors`, trimmed by
@@ -101,6 +111,26 @@ would reach nobody. A module that starts writing somewhere new goes in that
 list; `test_every_written_path_is_pinned` fails until it does. This has gone
 wrong twice, with the activity log and with `registry-seen.json`, and the guard
 then found that the suite could rotate the user's bearer token.
+
+## How the source is documented
+
+The audience is somebody who has not written much Python, and the two halves are
+kept apart on purpose:
+
+- **A module docstring says why the module exists**, what it may not do, and
+  which finding or decision forced its shape. That is the half that cannot be
+  recovered by reading the code.
+- **An inline comment explains the Python** wherever the language is the hard
+  part rather than the domain: what a context manager guarantees, why `argv` is
+  a list, what a decorator is deferring, why a comparison uses `is`.
+
+`src/omarchy_mcp/__init__.py` carries the package's own primer — a reading order
+and the idioms that recur everywhere — so an individual module never has to
+re-explain `from __future__ import annotations`.
+
+Match that when you add code. A `#:` comment documents the constant on the next
+line, and a function whose name does not already say what it returns gets a
+docstring saying it.
 
 ## Never fail silently
 

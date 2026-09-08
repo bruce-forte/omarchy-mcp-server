@@ -2,7 +2,49 @@
 
 For someone opening this repository knowing nothing about it. `README.md` says
 what it does for a user; this says how it works and why it is shaped this way.
-`ROADMAP.md` says what was decided and what is still to come.
+`ROADMAP.md` says what was decided, what was rejected, and why.
+
+## Start here
+
+**In one paragraph:** a Python daemon serves MCP over HTTP on loopback, behind a
+bearer token. It reads Omarchy's own command registry live, so it needs no
+catalogue of its own. When an agent calls a tool, four things happen in order --
+what kind of command is this, what do the user's rules say, what do its
+arguments actually name on this machine, and does the user say yes -- and only
+then is a process spawned, as an argument list, never through a shell. Two QML
+files hosted by `omarchy-shell` supervise that daemon and draw the bar icon and
+panel a person uses to answer, read and change any of it.
+
+**A reading path**, if you are about to change something:
+
+| If you are here to… | Read, in this order |
+|---|---|
+| Get oriented at all | [The constraint everything follows from](#the-constraint-everything-follows-from) → [The pieces](#the-pieces) → [Reading the source](#reading-the-source) |
+| Add or change a tool | [Why the tool surface is small](#why-the-tool-surface-is-small) → `tools/_shared.py` → [Asking at call time](#asking-at-call-time) |
+| Touch anything that decides whether a command runs | [`SECURITY.md`](SECURITY.md) first, then [Resolution](#resolution-naming-the-target-before-doing-anything) → [Consent](#consent-and-what-silence-means) → [Asking at call time](#asking-at-call-time) → [What the tests pin](#what-the-tests-pin) |
+| Work on the bar widget or the panel | [The pieces](#the-pieces) → [Three traps worth knowing about](#three-traps-worth-knowing-about) → [`CLAUDE.md`](CLAUDE.md)'s plugin conventions |
+| Work out where a file may be written | [Where things are written](#where-things-are-written) |
+| Understand why a test is shaped oddly | [What the tests pin](#what-the-tests-pin) |
+
+**The source is documented in place.** Every module opens with a docstring
+saying why it exists and what it may not do, and
+`src/omarchy_mcp/__init__.py` carries a short primer -- a reading order for the
+package and the handful of Python idioms it leans on -- for anyone whose Python
+is rusty. This file is the map; the modules are the territory, and they explain
+themselves.
+
+**Four rules that are not obvious and are load-bearing.** Each has its own
+section below, and each has a test that fails if it is broken:
+
+1. Nothing is ever written inside the plugin directory. Omarchy reloads the
+   shell on any write there. → [Where things are written](#where-things-are-written)
+2. `argv` never passes through a shell, and `argv[0]` is resolved against a
+   fixed list of directories. → [Which binary actually runs](#which-binary-actually-runs)
+3. Every path to running a command goes through `gate.py`. A check one path
+   applies and another skips is worse than no check.
+   → [Asking at call time](#asking-at-call-time)
+4. Nothing in the test suite may reach, or write to, the machine it runs on.
+   → [Nothing in the suite reaches the machine it runs on](#nothing-in-the-suite-reaches-the-machine-it-runs-on)
 
 ## The constraint everything follows from
 
@@ -190,6 +232,7 @@ In dependency order, shallowest first:
 
 | Module | Holds |
 |--------|-------|
+| `__init__.py` | The version, and a primer: a reading order for the package and the Python idioms it uses throughout |
 | `paths.py` | Every filesystem location, in one place, so the rules above are enforced by construction |
 | `config.py` | TOML loading. Never raises: a broken file yields defaults plus a list of problems, and a `parsed` flag saying which it is |
 | `settings.py` | The holder that says which `Config` is in force, so a reload is one assignment rather than a walk over every closure |
@@ -216,6 +259,7 @@ In dependency order, shallowest first:
 | `clients.py` | The connections currently attached, and the two ways to tell them the tool list moved |
 | `reload.py` | Re-reads `config.toml` and the permissions files while serving, and refuses to when either does not parse. See below |
 | `server.py` | Assembles the MCP server, transport security, `/health` |
+| `__main__.py` | The command line. Every reporting flag returns before a daemon is built; what is left is the startup, in order |
 
 The tools are a package, split by what they are for:
 
@@ -366,7 +410,7 @@ They are distinct because each implies a different next move. An agent that
 cannot tell *the user said no* from *nobody was there* will either give up on a
 call the user would have allowed, or keep re-asking an empty room.
 
-Two properties are load-bearing, and neither should be relaxed when N4 lands:
+Two properties are load-bearing, and neither may be relaxed:
 
 - **The deadline is the decision.** At `askTimeoutSeconds` (60s by default,
   bounded 5–600) the awaitable is cancelled and its result is never read. A
@@ -547,9 +591,16 @@ Three pieces:
   `SubscriptionBus` for 2026-07-28 clients, and per connection for everyone
   else, from a register a server middleware fills in.
 
-What is live: `tools.disabled`, everything under `[policy]`, `server.timeout_ms`
-and `server.max_output_b`. What is not: `server.port`, because the socket is
-bound, and the activity log's settings, because the sink is open.
+What is live: `tools.disabled`, `server.timeout_ms`, `server.max_output_b`, and
+everything in both permissions files. What is not: `server.port`, because the
+socket is bound, and the `[log]` activity settings, because the sink is open.
+
+There is no `[policy]` table any more. What an agent may run moved to
+`permissions.json`, because two files that both decide it is a second source of
+truth and because the rules wanted a shape TOML arrays could not carry. A
+`[policy]` key left behind in an old `config.toml` is **named as dead** rather
+than ignored -- an unknown TOML key is dropped silently, which is how somebody
+comes to believe they still have a `deny` list.
 
 **A file that does not parse changes nothing.** `config.load` answers a broken
 file with defaults, which is right at startup — a daemon that refuses to start
