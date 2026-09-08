@@ -2008,6 +2008,151 @@ error, and no assertion in 721 tests could have caught either.
   the moment somebody writes one wildcard in `permissions.json`.** That is the
   feature working, but the first time it fires it will look like a bug report.
 
+### N16 — A tab-based panel — planned
+
+N15 put a rules viewer into a column that already held a parked question, the
+daemon's health, a cooldown, dead rules, a delta review and the activity log. It
+fit, in the sense that it scrolled. What it stopped being is a surface anybody
+can read at a glance: everything is equally present, so nothing is prominent,
+and the fix for the overflow — N15's `Flickable` — made the column able to grow
+without bound rather than making it shorter.
+
+Three tabs, two bands that are not tabs, and a keyboard.
+
+| Band | Where |
+|---|---|
+| APPROVAL NEEDED | above the strip, on every tab |
+| **Summary** | serving/port, tool counts, config and permissions health, the last Check verdict, NOT ASKING, `Edit config.toml` |
+| **Log** | the activity records |
+| **Rules** | RULES, DEAD RULES + Prune, the delta review + Acknowledge |
+| Stop · Restart · Check permissions · Reload config | below the body, on every tab |
+
+#### `Tab` was already taken, and the convention won
+
+The obvious binding is the one that cannot be had. `PanelKeyCatcher` maps
+Tab and Shift+Tab to `tabRequested`, and every first-party panel — ours
+included — wires that to `Panel.switchPanel`, which moves to the **next panel on
+the bar**. Taking it for a focus ring would make this the one panel in the shell
+where a keystroke everybody's fingers already know does something else.
+
+So: **`[` and `]` move between tabs**, arriving on `textKey`, which nothing here
+used. They wrap, and with three tabs that means every tab is at most one
+keystroke away in one direction or the other — which is also why there are no
+`1`/`2`/`3` shortcuts. A second mechanism that can never beat the first is
+weight without reach.
+
+Arrows and `h`/`j`/`k`/`l` drive a cursor, the way `GalleryPanel` and the other
+keyboard-driven panels do it: `focusSection` plus `selectedIndex`, crossing
+bands vertically and walking rows horizontally, with `ensureCursorVisible`
+moving the view to follow. `Enter` activates. The strip is **not** a stop in that
+ring — it has its own keys, and every stop in the ring should do something on
+`Enter`.
+
+**One rule falls out of arrows belonging to the cursor**: on a tab whose body
+has no controls, `Up`/`Down` scroll it instead. The Log is that tab, and it is
+the one certain to overflow; a Log you cannot scroll from the keyboard is not a
+Log tab.
+
+`x` stays unbound. The kit maps it to `deleteRequested` and the clipboard panel
+deletes with it, but here the deletable thing is a permission: `Remove` is one
+`Enter` away when the cursor is on it, and an unlabelled destructive key would
+have to be advertised to be usable, which is an invitation to press it.
+
+#### What tabs take away, and what gives it back
+
+Everything visible at once was the old panel's one virtue. Behind a tab, a
+person sitting on Summary sees neither the four flagged rules nor the delta
+review N10 raised a **critical** notification about. Two things answer that:
+
+- **a dot on a tab that has something** — the review unacknowledged, any rule
+  flagged, anything prunable. A dot, not a count: the question a marker answers
+  is *is there anything over there*, and a number is ambiguous the moment two
+  kinds of thing can be counted.
+- **a pointer line on Summary**, in words, when Rules needs attention. Summary
+  is always the tab that opens, so the one thing that must not be missed is
+  stated on the surface that is always in front of you.
+
+**The panel always opens on Summary**, never on "whichever tab has something"
+and never on the last one used. The strip is navigated by feel; a card that
+sometimes opens in the middle of its own strip makes every keystroke after it
+land somewhere unpredicted. And a bar surface exists once per screen, so tab
+state is per widget instance and resets on open — nothing to coordinate.
+
+#### The approval band is not a tab
+
+A parked call has a deadline and the panel is the only surface carrying *Deny*
+(F31: the notification's click is navigation, not an answer). Inside a tab, a
+person on Log never sees the question their agent is waiting on. So it renders
+above the strip on every tab, bracketing the body with the action row below.
+
+The cursor lands on it **on open**, which is the F31 flow — the notification is
+what brought you here. It does **not** take the cursor when a question arrives
+under an already-open panel: moving the cursor under somebody's fingers is how a
+call gets approved by an `Enter` meant for something else.
+
+With no question up, the cursor starts on the action row: those four are what a
+person opens this panel to press, and they are the only band on every tab.
+
+#### Fixed height, a real width, and a gutter
+
+**One height for all three tabs**, each body scrolling inside it. A popup
+anchored under a bar icon grows downward, so a card fitted per tab moves the
+action row up and down under the cursor while tabbing — and the action row is
+the thing that is meant to stay where it was. The cost is a short tab looking
+empty, which is cheaper than furniture that moves.
+
+**`Reload config` overflowed before any of this.** Four buttons are ~407px of
+row inside `fittedContentWidth(Style.space(420))` less the card's insets, and
+the labels are sized by the user's font and space scale, which this plugin does
+not control. So the card widens to `Style.space(520)` **and** the row becomes a
+`Flow`: the width makes it fit, the wrap makes the failure mode two tidy rows
+instead of a button sliced off at the frame. 520 is wider than every first-party
+panel (agents is 380), which is a visible break from the bar's rhythm and is
+earned by a four-button footer.
+
+**Every row action moves to a right-hand gutter** — `Edit` on a file header,
+`Remove` on a grant, `Prune` on the dead-rules header — with the text on the
+left eliding rather than pushing. Today those buttons sit at as many
+x-positions as there are matcher lengths. A gutter is only a gutter if it is a
+straight line, and these particular buttons remove permissions: *I pressed the
+row above the one I meant* is expensive here in a way it is not on a volume
+slider. It also makes the cursor legible, since `Up`/`Down` then walks a visible
+column.
+
+#### A key legend, which this shell does not have
+
+Nothing in `qs.Ui` draws one and no shipped panel renders one; `dev-gallery`
+puts its keys in a prose paragraph, and it is a developer reference. This is an
+invention rather than an adoption, and it is worth it: six bindings with nothing
+saying so is folklore.
+
+One dim line under the action row, **contextual** — it lists what applies where
+the cursor is, so Log does not advertise `h l` when nothing there is horizontal.
+It replaces the `[ ]` hint that was going in the strip: two hint mechanisms for
+one keyboard is worse than either.
+
+#### Four commits
+
+| | Contents | Verified by |
+|---|---|---|
+| **a** | `activity.py`: a `level` per record, derived from its kind beside `render`; the panel reads 30 rows | pytest |
+| **b** | The frame: strip, three bodies, fixed height, per-tab scroll, approval above, `Flow` action row below, card at 520 | `qmllint`, then eyes |
+| **c** | The keyboard: `[`/`]`, the focus ring, `ensureCursorVisible`, arrows-scroll on Log, cursor to the approval band on open | eyes |
+| **d** | The gutter and the legend | eyes |
+
+**b is a rewrite of the layout, not an edit**, and will read as one however it is
+written — which is exactly why the keyboard and the gutter land after it rather
+than inside it.
+
+#### Watch for
+
+- **This panel is now the most keyboard-driven surface in the shell**, and none
+  of it is covered by a test that renders a pixel. N15 shipped two defects
+  invisible to 721 passing tests; this item has more surface of that kind than
+  any before it, and the only verification is opening it.
+- **The dot is a promise.** A marker that fails to appear is worse than no
+  marker, because it is read as *nothing over there*. Whatever conditions it
+  covers, they have to be the same ones the Rules tab actually shows.
 ## Deferred
 
 Wanted, but not phase 6.
