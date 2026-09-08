@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.bruce-forte.mcp-server",
   "name": "MCP Server",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "author": "bruce-forte",
   "license": "Apache-2.0",
   "description": "Exposes Omarchy's commands and shell IPC to local AI agents over MCP",
