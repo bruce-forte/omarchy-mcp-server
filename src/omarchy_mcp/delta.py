@@ -60,7 +60,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .permissions import Effect, Permissions
-from .policy import GUARDED_GROUPS, GUARDED_ROUTES, Tier, base_tier
+
+# Aliased on import because `message` below binds a local named `unclassified`
+# for the arrivals it is about to render, and a module-level name it shadows is
+# a trap rather than a convenience.
+#
+# The question this asks used to be about the *snapshot* -- is the group new
+# since the last acknowledgement -- because an unclassified group derived `safe`
+# and ran, so "new" was the only signal that anything had happened. Since N17 it
+# is guarded whether it arrived today or has been unclassified for a year, so
+# the honest question is the static one and `policy` is where it belongs.
+from .policy import base_tier, unclassified as policy_unclassified
 from .registry import Command
 
 #: Enough to be unguessable, short enough to fit a filename and an argv. Same
@@ -85,10 +95,10 @@ class Arrival:
     #: Held at `ask` because only an `allow` rule covers it, and grants do not
     #: extend forward. Clears on acknowledgement.
     quarantined: bool = False
-    #: Its group is one this plugin has never classified, so it derives as
-    #: `safe` and runs. Reported loudly because that is what decision 4 does not
-    #: cover -- `GUARDED_GROUPS` is hand-written, and a group Omarchy invents
-    #: tomorrow is not in it.
+    #: Its group is one this plugin has never classified. It is guarded, so it
+    #: is asked about rather than run, but it is reported anyway: the person is
+    #: the only one who can decide whether the group belongs in `SAFE_GROUPS` or
+    #: in `GUARDED_GROUPS`, and until they do every call costs a prompt.
     unclassified: bool = False
 
 
@@ -240,11 +250,6 @@ def compute(
 
     from .permissions import evaluate  # local: permissions does not import this
 
-    # Groups are exactly the second token of a route, so the snapshot carries
-    # them without having stored them. ``"omarchy theme set".split()[1]`` is
-    # "theme".
-    known_groups = frozenset(r.split()[1] for r in seen if len(r.split()) > 1)
-
     arrivals = []
     # ``set(commands)`` is the set of its *keys* -- the routes -- and ``-`` is
     # set difference, so this is "routes that exist now and did not before".
@@ -270,7 +275,7 @@ def compute(
                 rule=outcome.rule.matcher if outcome.rule else "",
                 source=outcome.rule.source if outcome.rule else "",
                 quarantined=quarantined,
-                unclassified=_unclassified(cmd, tier, known_groups),
+                unclassified=policy_unclassified(cmd),
             )
         )
 
@@ -314,26 +319,6 @@ def _with_token(review: Review) -> Review:
         first_run=review.first_run,
         token=new_token(),
     )
-
-
-def _unclassified(cmd: Command, tier: Tier, known_groups: frozenset[str]) -> bool:
-    """Whether this route is safe only because nobody has classified its group.
-
-    `GUARDED_GROUPS` is a hand-written frozenset, so a destructive group Omarchy
-    invents tomorrow derives as `safe` and runs on arrival. That is the honest
-    limit of decision 4, and this is where it is said out loud rather than left
-    for somebody to discover.
-
-    The test is whether the *group is new*, not whether it is absent from
-    `GUARDED_GROUPS` -- every safe route's group is absent from that set, which
-    is why it is safe. A group that was here last time and was left alone is a
-    decision, however implicit; one that has never been seen is not.
-    """
-    if tier is not Tier.SAFE:
-        return False
-    if cmd.group in GUARDED_GROUPS or cmd.route in GUARDED_ROUTES:
-        return False
-    return cmd.group not in known_groups
 
 
 def as_dict(review: Review) -> dict[str, object]:
@@ -397,7 +382,9 @@ def message(review: Review) -> str:
         more = len(unclassified) - NAMED_IN_NOTIFICATION
         lines.append(
             f"{len(unclassified)} command{_s(unclassified)} arrived in a group this "
-            f"plugin has never classified, so they run without being asked about: "
+            f"plugin has never classified. They are guarded, so nothing runs "
+            f"unasked, but every call costs a prompt until the group is classified "
+            f"or you allow the routes: "
             f"{shown}" + (f" and {more} more" if more > 0 else "") + "."
         )
     for rule in review.dead[:NAMED_IN_NOTIFICATION]:

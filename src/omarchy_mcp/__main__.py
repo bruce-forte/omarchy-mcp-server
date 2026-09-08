@@ -124,9 +124,15 @@ def _review(perms: permissions_module.Permissions, log: logging.Logger):
     """What has changed under the rules since anybody last looked.
 
     Computed once at startup and held; `reload.py` recomputes it when the
-    registry or the document moves. A fresh install has no snapshot, so it is
-    baselined here and silently: every route is "new" on day one, and reviewing
-    four hundred of them is the catalogue this feature exists to avoid.
+    permissions document moves or somebody acknowledges, and **not** when the
+    registry does -- an `omarchy update` mid-session is not noticed until the
+    next start. That is a staleness in the *report*, not in what runs: since
+    N17 an unclassified group is guarded by derivation, so nothing depends on
+    this being current.
+
+    A fresh install has no snapshot, so it is baselined here and silently: every
+    route is "new" on day one, and reviewing four hundred of them is the
+    catalogue this feature exists to avoid.
     """
     try:
         commands = registry.all_commands()

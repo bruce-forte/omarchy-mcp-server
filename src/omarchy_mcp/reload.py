@@ -414,7 +414,14 @@ class Reloader:
         return gone
 
     def recompute_review(self) -> None:
-        """Read the delta again, because the rules or the registry moved.
+        """Read the delta again, because the rules moved.
+
+        Called on a permissions edit and on acknowledgement. Not on a registry
+        change: nothing here watches Omarchy's version, so a mid-session
+        `omarchy update` is reported at the next start rather than at once. It
+        is the report that lags, never the gate -- an unclassified group is
+        guarded by derivation (N17), and a rule applies to a new route the poll
+        after the file changes.
 
         Deliberately does **not** advance the snapshot. Only acknowledgement
         does that; recomputing on a reload would let an edit quietly consume a

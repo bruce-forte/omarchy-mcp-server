@@ -17,9 +17,14 @@ arguments rather than its route -- see `self_refusal`.
 ``GUARDED``
     Destructive but perfectly runnable. What happens to it is decided by the
     permissions document: asked about by default, denied or allowed by a rule.
+    Also where a command lands when nobody here has classified its group --
+    see `SAFE_GROUPS`, and note that the classification is an *allowlist*: a
+    group Omarchy invents tomorrow is guarded until somebody says otherwise.
 
 ``SAFE``
-    Everything else. Runs, unless a `deny` rule says otherwise.
+    A command in a group this project has looked at and left alone, and not one
+    of the individual routes named in `GUARDED_ROUTES`. Runs, unless a `deny`
+    rule says otherwise.
 
 This module is the security boundary. It is pure, takes the registry as an
 argument, and is tested against every route Omarchy ships.
@@ -66,6 +71,37 @@ GUARDED_GROUPS = frozenset(
         # runs it in its own process. `disable` and `remove` are how an agent
         # would silence this plugin without ever touching the daemon.
         "plugin",
+    }
+)
+
+#: Groups this project has looked at and decided are not, in themselves,
+#: destructive. **The allowlist is the point**: a group in neither this set nor
+#: `GUARDED_GROUPS` derives ``GUARDED``, not ``SAFE``.
+#:
+#: The inverse -- a blocklist alone -- fails the day Omarchy invents a group.
+#: `GUARDED_GROUPS` is hand-written, so anything upstream adds tomorrow is
+#: absent from it, and "absent from the blocklist" used to mean "runs, unasked,
+#: on arrival". Absent from *both* lists now means nobody here has classified
+#: it, and an unclassified command is asked about rather than assumed harmless.
+#:
+#: The cost is real and deliberate: a genuinely harmless group Omarchy adds also
+#: asks until somebody adds it here. That is one prompt and one line of code
+#: against a destructive group running unattended, and the trade only goes one
+#: way.
+#:
+#: Destructive *routes* inside these groups are named in `GUARDED_ROUTES` below;
+#: a group being safe is a statement about the group, not about every route in
+#: it.
+SAFE_GROUPS = frozenset(
+    {
+        "agent", "audio", "bar", "battery", "bluetooth", "branding", "brightness",
+        "capture", "chromium", "clipboard", "cmd", "crash", "default", "disk",
+        "display", "dns", "done", "file", "font", "games", "git", "hook",
+        "hw", "hyprland", "installed", "launch", "menu", "mise", "monitor",
+        "network", "notification", "osd", "plymouth", "power", "powerprofiles",
+        "refresh", "reminder", "restart", "screensaver", "share", "shell",
+        "show", "state", "sudo", "system", "tailscale", "theme", "toggle",
+        "transcode", "tui", "version", "voxtype", "weather", "webapp", "windows",
     }
 )
 
@@ -198,14 +234,40 @@ def self_refusal(route: str, args: Sequence[str]) -> str | None:
     return None
 
 
+def unclassified(cmd: Command) -> bool:
+    """Whether this command is guarded only because nobody classified its group.
+
+    Not the same question as "is it guarded". A command in `GUARDED_GROUPS` is
+    guarded because somebody looked at the group and said so; this one is
+    guarded because nobody has looked at all, and the two deserve different
+    words in front of the person being asked to approve it.
+
+    Sudo first, for the same reason `base_tier` checks it first: a sudo command
+    is refused whatever its group is, so its group is not the interesting fact
+    about it.
+    """
+    if cmd.requires_sudo:
+        return False
+    if cmd.group in GUARDED_GROUPS or cmd.route in GUARDED_ROUTES:
+        return False
+    return cmd.group not in SAFE_GROUPS
+
+
 def base_tier(cmd: Command) -> Tier:
     """The tier before any user configuration is applied.
 
-    Order matters: sudo is checked first, so a sudo command in a guarded group
-    still comes back ``BLOCKED``, which is the tier no rule can promote.
+    Order matters twice. Sudo is checked first, so a sudo command in a guarded
+    group still comes back ``BLOCKED``, which is the tier no rule can promote.
+    And ``SAFE`` is reached only by being *named* in `SAFE_GROUPS`: falling off
+    the end of this function means the group is in neither list, which is not a
+    statement that it is harmless -- only that nobody here has said either way.
     """
     if cmd.requires_sudo:
         return Tier.BLOCKED
     if cmd.group in GUARDED_GROUPS or cmd.route in GUARDED_ROUTES:
         return Tier.GUARDED
-    return Tier.SAFE
+    if cmd.group in SAFE_GROUPS:
+        return Tier.SAFE
+    # Neither list names it. Guarded, so it is asked about rather than assumed
+    # harmless; `SAFE_GROUPS` says why this is an allowlist.
+    return Tier.GUARDED

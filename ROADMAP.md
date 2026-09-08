@@ -40,7 +40,7 @@ reasons matter more than the choices when something needs revisiting.
 | 1 | **HTTP transport on loopback**, not stdio | Clients are local agents and other plugins, which speak standard MCP HTTP. A stdio server could not be a daemon, and the daemon is the point |
 | 2 | **19 tools**: 4 generic + 15 curated | 356 commands as 356 tools is ~30k tokens of client context before the agent does anything. Discovery + dispatch scales; per-command tools do not |
 | 3 | **Bearer token + Origin validation**, loopback bind | `omarchy_run` is arbitrary command execution. Loopback alone does not stop browser DNS rebinding — a hostile page's `fetch` originates from your own machine |
-| 4 | **Three policy tiers derived from registry metadata** | `omarchy commands --json` already carries `requires_sudo` and `group`. Derived policy does not rot on Omarchy upgrades; a hand-written allowlist does |
+| 4 | **Three policy tiers derived from registry metadata** | `omarchy commands --json` already carries `requires_sudo` and `group`. Derived policy does not rot on Omarchy upgrades; a hand-written allowlist does. **Amended in N17**: the derivation is right, but `safe` cannot be the fall-through. `GUARDED_GROUPS` alone was a blocklist, so a group Omarchy invented after the last release of this plugin derived `safe` and ran unasked. `SAFE_GROUPS` is now the allowlist and the fall-through is `guarded` |
 | 5 | **Timeout + detach, defaulted per route** | Many commands block on the user by design (`theme switcher`, `menu select`, `capture region`). A blocked HTTP request means a client timeout and a leaked child |
 | 6 | **Python + venv + official `mcp` SDK** | Spec compliance tracked upstream. `/usr/bin/python3` is guaranteed on Omarchy; node and luajit are not |
 | 7 | **Self-healing bash wrapper** builds the venv, then `exec`s | `omarchy plugin add` runs no build and no install hook, by design. Bootstrap has to be lazy, and QML is the wrong place for it |
@@ -2232,6 +2232,80 @@ of the desk; it needs a person to click the bar icon first.
 - **The dot is a promise.** A marker that fails to appear is worse than no
   marker, because it is read as *nothing over there*. Whatever conditions it
   covers, they have to be the same ones the Rules tab actually shows.
+
+### N17 — An unclassified group is guarded, not safe — done
+
+`GUARDED_GROUPS` was a blocklist, and a blocklist is wrong by default the day
+upstream adds anything. `policy.base_tier` fell through to `SAFE`, so a group
+Omarchy shipped after the last release of this plugin — `omarchy backup wipe`,
+say — was absent from the hand-written set, derived `safe`, and **ran on the
+first call with nothing on screen**. The registry cache is keyed on Omarchy's
+version, so this took effect the moment `omarchy update` finished; no restart
+needed and no prompt raised.
+
+N10 already noticed the hole and reported it: *commands in a group this plugin
+has never classified* was a `critical` notification, and its own wording said
+"so they run without being asked about". That is an honest warning about a thing
+that has already happened, which is the wrong end of the problem.
+
+**The fix is to invert the classification.** `SAFE_GROUPS` is now an allowlist —
+the 55 groups somebody looked at and left alone — and `base_tier` reaches `SAFE`
+only by being named in it:
+
+```
+requires_sudo                      -> BLOCKED
+GUARDED_GROUPS or GUARDED_ROUTES   -> GUARDED
+SAFE_GROUPS                        -> SAFE
+otherwise                          -> GUARDED   # nobody classified it
+```
+
+Nothing in the committed registry changes tier: the allowlist is a faithful
+transcription of what the derivation already produced, and all 750 tests passed
+before a single new one was written. What changes is the *next* Omarchy.
+
+**Why not quarantine it instead.** The alternative was to reuse N10's
+`unreviewed` set: mark unclassified arrivals quarantined, hold them at `ask`
+until the panel's Acknowledge is pressed. Rejected on two counts. Acknowledge is
+a bulk "I saw the list" action, not "these may run unasked", and the user's
+requirement was explicit allowing. And it makes a security property depend on
+the review being current — which it is not: `Reloader.recompute_review` is
+called on a permissions edit and on acknowledgement, never on a registry change,
+so the quarantine set would have been stale for exactly the window that matters.
+The tier needs no snapshot, no acknowledgement and no reload.
+
+**The cost, stated plainly.** A harmless new group also asks, until somebody adds
+it to `SAFE_GROUPS`. That is one prompt and one line of code against a
+destructive command running unattended, and the trade only goes one way.
+`test_every_group_omarchy_ships_is_classified` is what makes it maintainable:
+refreshing `tests/fixtures/commands.json` fails until each new group is put in
+one list or the other, so the decision is made at a keyboard.
+
+**Two reasons, not one.** `permissions._why_guarded` branches: a route in
+`GUARDED_GROUPS` still reads "can change the system in ways that are hard to
+undo", and an unclassified one reads that its group is newer than this server's
+list. The approval prompt quotes that sentence, and asserting a brand-new group
+is destructive would be claiming something nobody checked.
+
+`delta._unclassified` became static in the same commit. It used to ask whether
+the *group was new since the last acknowledgement*, because "new" was the only
+signal that something had started running; now that unclassified is guarded
+whether it arrived today or a year ago, the honest question is the static one.
+The review still reports it — only a person can decide which list it belongs in.
+
+#### Watch for
+
+- **`SAFE_GROUPS` is now a thing that rots.** Both group lists have a staleness
+  test against the fixture, but the fixture is refreshed by hand. A long gap
+  between refreshes means real users meeting prompts for groups that are fine.
+- **Several routes in safe groups look like they want `GUARDED_ROUTES`** and did
+  not get it here, because reclassifying today's routes is a separate decision
+  with user-visible effect: `omarchy webapp install|remove|remove all`,
+  `omarchy tui install|remove|remove all`, `omarchy hook install`,
+  `omarchy mise install`, `omarchy games retro install`,
+  `omarchy default browser|editor|terminal|agent`, and the `omarchy hw *` family
+  that rewrites hardware config — `omarchy toggle hybrid gpu` is already guarded
+  while `omarchy hw hybrid gpu` is not.
+
 ## Deferred
 
 Wanted, but not phase 6.

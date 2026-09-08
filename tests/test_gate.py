@@ -22,6 +22,7 @@ from omarchy_mcp import consent, gate, permissions, prompt
 from omarchy_mcp.paths import PLUGIN_ID
 from omarchy_mcp.permissions import Effect, Permissions, Rule, decide
 from omarchy_mcp.policy import Tier, base_tier
+from omarchy_mcp.registry import Command
 
 LOG = logging.getLogger("test")
 
@@ -142,6 +143,106 @@ def asking() -> Permissions:
 
 def allowing(route: str) -> Permissions:
     return rules((Effect.ALLOW, route))
+
+
+def unclassified(route: str = "omarchy backup wipe") -> Command:
+    """A command in a group `policy.py` has never classified.
+
+    Built rather than taken from the fixture: every group Omarchy ships today is
+    named in one list or the other, and `test_policy.py` has the gate that keeps
+    it that way. This is the group that arrives tomorrow.
+    """
+    return Command(
+        route=route,
+        binary="omarchy",
+        group=route.split()[1],
+        summary="",
+        args="",
+        examples=(),
+        requires_sudo=False,
+        hidden=False,
+    )
+
+
+class TestAnUnclassifiedGroupReachesAPerson:
+    """The acceptance test for the allowlist: an agent calling into a group
+    nobody has classified gets a question, not a result.
+
+    Before `SAFE_GROUPS` this ran. `GUARDED_GROUPS` was a blocklist, so a group
+    Omarchy added after the last release of this plugin was absent from it,
+    derived `safe`, and executed on the first call with nothing on screen.
+    """
+
+    @pytest.mark.anyio
+    async def test_it_asks_instead_of_running(self, commands, quiet_notifications):
+        cmd = unclassified()
+        assert base_tier(cmd) is Tier.GUARDED
+        ctx = Ctx(
+            can_send_request=True,
+            caps=Caps(Elicitation(form=object())),
+            reply=Reply("accept"),
+        )
+
+        decision = await gate.authorize(
+            cmd, [], perms=asking(), ctx=ctx, log=LOG, offload=offload
+        )
+
+        assert ctx.elicited, "the person was asked"
+        assert isinstance(decision, gate.Allowed), "and said yes, so it runs"
+
+    @pytest.mark.anyio
+    async def test_a_decline_refuses_it(self, commands, quiet_notifications):
+        ctx = Ctx(
+            can_send_request=True,
+            caps=Caps(Elicitation(form=object())),
+            reply=Reply("decline"),
+        )
+
+        decision = await gate.authorize(
+            unclassified(), [], perms=asking(), ctx=ctx, log=LOG, offload=offload
+        )
+
+        assert isinstance(decision, gate.Refused)
+
+    @pytest.mark.anyio
+    async def test_a_client_that_cannot_be_asked_gets_the_desktop_prompt(
+        self, commands, quiet_notifications, consent_dir
+    ):
+        """The panel is the surface for the client this project exists for.
+
+        Claude Code negotiates an era with no back-channel (F23), so the
+        question goes to the desktop instead -- a notification and the panel's
+        parked question. It must reach one of the two, never neither.
+        """
+        sent, _ = quiet_notifications
+        ctx = Ctx(can_send_request=False)
+
+        decision = await gate.authorize(
+            unclassified(), [], perms=asking(), ctx=ctx, log=LOG, offload=offload
+        )
+
+        assert sent, "a question the client cannot carry still reaches the desk"
+        assert isinstance(decision, gate.Refused), "nobody answered, so nothing ran"
+
+    @pytest.mark.anyio
+    async def test_an_allow_rule_is_the_way_out(self, commands, quiet_notifications):
+        """What "the user explicitly allowed it" looks like on disk. Answering
+        "always" at the prompt writes this rule; so does editing the file."""
+        sent, _ = quiet_notifications
+        ctx = Ctx(reply=Reply("accept"))
+
+        decision = await gate.authorize(
+            unclassified(),
+            [],
+            perms=allowing("omarchy backup wipe"),
+            ctx=ctx,
+            log=LOG,
+            offload=offload,
+        )
+
+        assert isinstance(decision, gate.Allowed)
+        assert ctx.elicited == [], "an allow rule is not a question"
+        assert sent == []
 
 
 class TestWhatIsNeverAsked:
