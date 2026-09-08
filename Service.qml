@@ -715,9 +715,14 @@ Item {
       // this target (N12), so a verb that removed a rule -- or added one --
       // would let it edit its own permissions. Removing is the panel's and the
       // helper's.
-      if (!root.rulesRead)
-        return "not read yet; open the bar panel, or run:\n"
+      if (!root.rulesRead) {
+        // Reads them rather than telling a caller to go and press something.
+        // The listing is the discovery mechanism, so a verb whose only answer
+        // is "open the panel" is one that discovered nothing.
+        root.refreshRules()
+        return "reading the rules; ask again in a moment, or run:\n"
              + "  " + root.pluginDir + "bin/omarchy-mcpd --permissions"
+      }
 
       const rows = (root.rules && root.rules.rules) || []
       const levels = ["error", "void", "shadowed", "redundant"]
