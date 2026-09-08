@@ -30,6 +30,20 @@ from omarchy_mcp.tools.catalogue import Catalogue
 LOG = logging.getLogger("test")
 
 
+def polled(reloader: Reloader) -> reload_module.Reloaded:
+    """`Reloader.poll` for a test that changed something.
+
+    It returns ``None`` when nothing on disk moved, which is a real answer these
+    tests assert directly elsewhere. Here it would mean the edit under test did
+    not register, and an attribute error three lines later is a worse way to
+    find that out than a named assertion.
+    """
+    result = reloader.poll()
+    assert result is not None, "the edit under test should have been a reload"
+    return result
+
+
+
 @pytest.fixture(autouse=True)
 def no_notifications(monkeypatch):
     """Nothing in this file may put a real notification on a real desktop."""
@@ -91,7 +105,7 @@ def test_a_tool_switched_off_is_taken_away(tmp_path):
     assert "omarchy_screenshot" in catalogue.present
 
     path.write_text('[tools]\ndisabled = ["omarchy_screenshot"]\n')
-    result = reloader.poll()
+    result = polled(reloader)
 
     assert result.tools.removed == ("omarchy_screenshot",)
     assert "omarchy_screenshot" not in catalogue.present
@@ -102,7 +116,7 @@ def test_a_tool_switched_back_on_returns(tmp_path):
     assert "omarchy_theme" not in catalogue.present
 
     path.write_text("[tools]\ndisabled = []\n")
-    result = reloader.poll()
+    result = polled(reloader)
 
     assert result.tools.added == ("omarchy_theme",)
     assert "omarchy_theme" in catalogue.present
@@ -113,7 +127,7 @@ def test_permissions_take_effect_without_a_restart(tmp_path):
     assert settings.permissions.rules == ()
 
     permission_paths(tmp_path)[0].write_text('{"permissions": {"deny": [{"kind": "route", "matcher": "omarchy theme set"}]}}')
-    result = reloader.poll()
+    result = polled(reloader)
 
     assert result.permissions_changed
     matched = settings.permissions.matching("omarchy theme set")
@@ -125,7 +139,7 @@ def test_an_edit_nothing_can_tell_apart_is_not_announced(tmp_path, no_notificati
 
     # A comment, and a value no rule depends on.
     path.write_text("# a note to self\n[server]\ntimeout_ms = 6000\n")
-    result = reloader.poll()
+    result = polled(reloader)
 
     assert not result, "neither the tools nor the rules moved"
     assert no_notifications == []
@@ -141,7 +155,7 @@ def test_an_unparseable_file_changes_nothing(tmp_path, no_notifications):
     before = settings.current
 
     path.write_text("[tools\ndisabled = ")
-    result = reloader.poll()
+    result = polled(reloader)
 
     assert result.rejected
     # The running config stands: the disabled tool does not come back on a
@@ -168,7 +182,7 @@ def test_fixing_the_file_applies_it_and_says_so(tmp_path, no_notifications):
     reloader.poll()
 
     path.write_text('[tools]\ndisabled = ["omarchy_theme"]\n')
-    result = reloader.poll()
+    result = polled(reloader)
 
     assert not result.rejected
     assert "omarchy_theme" not in catalogue.present
@@ -182,7 +196,7 @@ def test_a_bad_key_still_applies_the_rest(tmp_path):
     reloader, settings, _, path = build(tmp_path, "")
 
     path.write_text('[server]\ntimeout_ms = "soon"\n\n[tools]\ndisabled = ["omarchy_theme"]\n')
-    result = reloader.poll()
+    result = polled(reloader)
 
     assert not result.rejected
     assert settings.current.disabled_tools == ("omarchy_theme",)
@@ -207,7 +221,7 @@ def test_a_file_that_stays_deleted_resets_to_defaults(tmp_path):
 
     path.unlink()
     reloader.poll()
-    result = reloader.poll()
+    result = polled(reloader)
 
     assert result.tools
     assert settings.current == Config()
@@ -264,7 +278,7 @@ def test_a_defective_document_leaves_the_running_one_in_force(tmp_path, no_notif
     assert before.rules
 
     permission_paths(tmp_path)[0].write_text('{"permissions": {"deny": [')
-    result = reloader.poll()
+    result = polled(reloader)
 
     assert result.permissions_rejected
     assert not result.permissions_changed
@@ -292,7 +306,7 @@ def test_fixing_the_document_applies_it_and_says_so(tmp_path, no_notifications):
     permission_paths(tmp_path)[0].write_text(
         json.dumps({"permissions": {"deny": [{"kind": "route", "matcher": "omarchy dev *"}]}})
     )
-    result = reloader.poll()
+    result = polled(reloader)
 
     assert not result.permissions_rejected
     assert settings.permissions.matching("omarchy dev link") is not None
@@ -324,7 +338,7 @@ def test_the_second_file_is_pooled_with_the_first(tmp_path):
     permission_paths(tmp_path)[1].write_text(
         json.dumps({"permissions": {"allow": [{"kind": "route", "matcher": "omarchy install app"}]}})
     )
-    result = reloader.poll()
+    result = polled(reloader)
 
     assert result.permissions_changed
     matched = settings.permissions.matching("omarchy install app")
@@ -354,7 +368,7 @@ def test_acknowledging_advances_the_snapshot(tmp_path, commands, no_notification
     (tmp_path / "consent").mkdir()
 
     (tmp_path / "consent" / f"ack-{review.token}").write_text(review.token)
-    result = reloader.poll()
+    result = polled(reloader)
 
     assert result.acknowledged
     assert delta.load_seen(seen_path) == frozenset(commands)
@@ -451,7 +465,7 @@ def test_pruning_needs_the_token_the_daemon_published(tmp_path, commands, no_not
     assert len(perms.prunable(local, commands)) == 1
 
     (tmp_path / "consent" / f"prune-{token}").write_text(token)
-    result = reloader.poll()
+    result = polled(reloader)
 
     assert result.pruned == 1
     assert perms.prunable(local, commands) == ()
@@ -527,7 +541,7 @@ def test_removing_a_grant_needs_the_token_the_daemon_published(tmp_path, command
     assert permissions_module.load((local,)).rules, "a file that does not name the token is not a press"
 
     _press(tmp_path, token, "allow", "omarchy install app")
-    result = reloader.poll()
+    result = polled(reloader)
 
     assert result.revoked == 1
     assert permissions_module.load((local,)).rules == ()
@@ -545,7 +559,7 @@ def test_the_token_is_not_spent_by_a_press(tmp_path, commands):
     assert reloader.revoke_token == token
 
     _press(tmp_path, token, "allow", "omarchy theme set")
-    assert reloader.poll().revoked == 1
+    assert polled(reloader).revoked == 1
     assert permissions_module.load((local,)).rules == ()
 
 
@@ -560,7 +574,7 @@ def test_two_presses_in_one_poll_are_two_removals(tmp_path, commands):
     _press(tmp_path, token, "allow", "omarchy install app")
     _press(tmp_path, token, "allow", "omarchy theme set")
 
-    assert reloader.poll().revoked == 2
+    assert polled(reloader).revoked == 2
     assert permissions_module.load((local,)).rules == ()
 
 
@@ -676,7 +690,7 @@ def test_the_helper_writes_what_the_poller_reads(tmp_path, commands, no_notifica
     assert press("revoke", token, "deny", "omarchy install app").returncode == 0
     assert press("revoke", token, "allow", "omarchy install app").returncode == 0
 
-    result = reloader.poll()
+    result = polled(reloader)
 
     assert result.revoked == 1, "the deny was written and refused; the allow went"
     assert permissions_module.load((local,)).rules == ()

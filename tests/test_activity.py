@@ -202,6 +202,7 @@ class TestTheWriterLifecycle:
     def test_a_session_is_bracketed_by_started_and_stopped(self, tmp_path, monkeypatch):
         monkeypatch.setattr(activity, "STATE_DIR", tmp_path)
         with activity.writer(Config(), LOG) as sink:
+            assert sink is not None, "logging is on, so there is a sink"
             sink.append(Record(tool="omarchy_run").as_dict())
 
         written = lines(tmp_path / "activity.jsonl")
@@ -312,7 +313,7 @@ class TestStatsAsTheSeam:
         stats = Stats(sink=sink)
         with pytest.raises(ZeroDivisionError):
             with stats.call("omarchy_run"):
-                1 / 0
+                _ = 1 / 0
         sink.stop()
 
         (written,) = lines(sink.path)

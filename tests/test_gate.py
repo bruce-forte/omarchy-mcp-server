@@ -623,6 +623,7 @@ class TestWhatComesBack:
         decision = await gate.authorize(
             guarded(commands), [], perms=asking(), ctx=ctx, log=LOG, offload=offload
         )
+        assert isinstance(decision, gate.Refused)
         body = json.loads(json.dumps(decision.as_dict()))
         assert body["consent"] == "declined"
         assert body["tier"] == "guarded"

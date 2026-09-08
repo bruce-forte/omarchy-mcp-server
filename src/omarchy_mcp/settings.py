@@ -97,11 +97,11 @@ class Settings:
     # instance, which is how Python spells an alternative constructor:
     # ``Settings.of(x)`` is called without there being a ``Settings`` yet.
     @classmethod
-    def of(cls, config: Config | "Settings") -> "Settings":
+    def of(cls, config: Config | Settings) -> Settings:
         """Accept either, so a caller that never reloads can pass a `Config`.
 
         The tests and `make tools` build a server that lives for one function
         call; making them construct a holder they will never swap would be
         ceremony that hides what those call sites are actually saying.
         """
-        return config if isinstance(config, cls) else cls(config)
+        return config if isinstance(config, Settings) else cls(config)

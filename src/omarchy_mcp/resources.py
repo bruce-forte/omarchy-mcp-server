@@ -22,6 +22,7 @@ what makes the last three *templates* rather than fixed addresses.
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from . import desktop, permissions, registry, shell
 from .config import Config
@@ -185,7 +186,7 @@ def register(mcp, settings: Settings, log) -> None:
             )
         return json.dumps(shell.as_dict(one), indent=2)
 
-    def _annotated(commands) -> dict[str, object]:
+    def _annotated(commands) -> dict[str, Any]:
         """Registry entries carrying this server's verdict on each one.
 
         Reading the raw registry would leave the reader to work out which

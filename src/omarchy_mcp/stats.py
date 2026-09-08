@@ -30,8 +30,9 @@ import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from typing import Any
 
-from .activity import Record
+from .activity import Record, Sink
 
 
 @dataclass
@@ -56,7 +57,7 @@ class Stats:
 
     #: Where records go after they are counted. ``None`` is counters only,
     #: which is what a test gets and what `log.activity = false` produces.
-    sink: object | None = None
+    sink: Sink | None = None
 
     #: Told that a call finished, for the stdout frame the shell reads. Separate
     #: from `sink` because it is not the audit trail and does not follow
@@ -120,7 +121,7 @@ class Stats:
         if self.on_call is not None:
             self.on_call(rec)
 
-    def snapshot(self) -> dict[str, object]:
+    def snapshot(self) -> dict[str, Any]:
         """A consistent copy of the counters, for `/health`.
 
         Under the lock so the five values describe one moment rather than five.

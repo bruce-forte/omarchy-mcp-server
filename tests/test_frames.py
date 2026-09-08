@@ -84,7 +84,7 @@ class TestWhatIsNotInIt:
     def test_a_call_frame_carries_no_arguments(self, capsys):
         stats = Stats(on_call=lambda rec: frames.call(rec.tool, rec.result))
         with stats.call("omarchy_clipboard_write") as rec:
-            rec.args = ["sk-ant-api03-a-secret-somebody-copied"]
+            rec.args = ("sk-ant-api03-a-secret-somebody-copied",)
             rec.exit = 0
 
         written = capsys.readouterr().out

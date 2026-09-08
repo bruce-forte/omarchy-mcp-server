@@ -54,6 +54,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import anyio
+import anyio.to_thread
 
 from . import execute
 from .paths import CONSENT_DIR, PLUGIN_ID

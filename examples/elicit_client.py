@@ -41,8 +41,10 @@ import sys
 import tomllib
 
 import anyio
+import anyio.to_thread
 import httpx2
 from mcp import ClientSession, types
+from mcp.client.session import ClientRequestContext
 from mcp.client.streamable_http import streamable_http_client
 
 PLUGIN_ID = "io.github.bruce-forte.mcp-server"
@@ -98,7 +100,7 @@ def _parse(argv: list[str]) -> tuple[bool, int | None, str | None, list[str]]:
     return accept, port, rest[0], rest[1:]
 
 
-def _choices(params) -> list[str]:
+def _choices(params: types.ElicitRequestParams) -> list[str]:
     """The enum a form is offering for its one field, if it offers one.
 
     The schema arrives as plain JSON Schema -- this client is not the server and
@@ -127,7 +129,7 @@ def _field_name(params) -> str:
     return names[0] if names else "value"
 
 
-def _ask_at_the_terminal(params) -> dict | None:
+def _ask_at_the_terminal(params: types.ElicitRequestParams) -> dict | None:
     """Render the form as a numbered list and read an answer. None is a decline.
 
     Blocking, and called through ``anyio.to_thread.run_sync`` for that reason.
@@ -158,7 +160,9 @@ async def main() -> int:
     #: make it local; `nonlocal` would work too, and this is the smaller change.
     asked: list[bool] = []
 
-    async def on_elicit(_ctx, params):
+    async def on_elicit(
+        context: ClientRequestContext, params: types.ElicitRequestParams
+    ) -> types.ElicitResult:
         """Called by the SDK when the server asks this client a question.
 
         Passing this callback at all is what makes the client *declare*

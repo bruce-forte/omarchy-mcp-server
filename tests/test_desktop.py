@@ -135,6 +135,9 @@ class TestClipboard:
         class Reply:
             returncode = 1
             stdout = ""
+            # Filled in from the parameter below, so the three wordings are one
+            # test rather than three.
+            stderr = ""
 
         Reply.stderr = stderr
         monkeypatch.setattr(subprocess, "run", lambda *a, **k: Reply())

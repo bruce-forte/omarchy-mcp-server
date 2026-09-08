@@ -46,7 +46,7 @@ def headers(session: str | None = None, accept: str = "application/json, text/ev
     return out
 
 
-def rpc(client, method, params=None, session=None, id_=1):
+def rpc(client, method, params=None, session=None, id_: int | None = 1):
     body = {"jsonrpc": "2.0", "method": method}
     if id_ is not None:
         body["id"] = id_

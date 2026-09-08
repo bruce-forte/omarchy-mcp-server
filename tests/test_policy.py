@@ -101,6 +101,7 @@ def test_other_targets_are_untouched():
 
 def test_self_refusal_names_the_plugin_and_a_way_forward():
     reason = shell_call_refusal(PLUGIN_ID, "stop")
+    assert reason is not None
     assert PLUGIN_ID in reason
     assert "panel" in reason
     # An agent told only "no" tries the next spelling.

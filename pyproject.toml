@@ -19,6 +19,10 @@ dependencies = [
 dev = [
     "pytest>=8",
     "anyio>=4",
+    # Pinned rather than run through uvx, so that CI and a desktop check the
+    # same thing: a pyright release that adds a check would otherwise fail the
+    # build on a commit that changed nothing.
+    "pyright==1.1.411",
 ]
 
 [tool.pytest.ini_options]
@@ -29,3 +33,11 @@ markers = ["anyio: async test, run on the asyncio backend"]
 [tool.ruff]
 line-length = 100
 src = ["src"]
+
+# The project is never installed into the venv (see the note at the top), so the
+# type checker is told where the package lives the same way pytest is.
+[tool.pyright]
+include = ["src", "tests", "examples"]
+extraPaths = ["src"]
+pythonVersion = "3.11"
+typeCheckingMode = "standard"

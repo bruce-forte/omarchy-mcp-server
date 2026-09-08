@@ -244,6 +244,7 @@ class TestAskingWhichTheme:
 
         (message, schema), = seen
         cmd = control.registry.get("omarchy theme set")
+        assert cmd is not None
         assert cmd.summary.rstrip(".") in message
         # `args` is `<theme-name>`, which names the field for the person.
         assert "theme name" in schema.model_json_schema()["properties"]["name"]["description"]

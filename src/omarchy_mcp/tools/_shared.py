@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import functools
 import json
+from collections.abc import Awaitable, Callable
+from typing import ParamSpec, TypeVar
 
 import anyio.to_thread
 
@@ -54,7 +56,14 @@ async def offload(fn, *args, **kwargs):
     return await anyio.to_thread.run_sync(functools.partial(fn, *args, **kwargs))
 
 
-def threaded(fn):
+#: The parameters and the return type of whatever `threaded` is given, so the
+#: wrapper it hands back is typed as *that* function made awaitable rather than
+#: as an untyped ``(*args, **kwargs)``.
+_P = ParamSpec("_P")
+_T = TypeVar("_T")
+
+
+def threaded(fn: Callable[_P, _T]) -> Callable[_P, Awaitable[_T]]:
     """Register a sync tool body as an async tool that runs in one thread hop.
 
     For tools with nothing to await: the body stays exactly as it was, sync and

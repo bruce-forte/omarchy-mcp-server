@@ -161,7 +161,7 @@ class Reloader:
         seen_path: Path = REGISTRY_SEEN_FILE,
         consent_dir: Path = CONSENT_DIR,
         local_path: Path = PERMISSIONS_LOCAL_FILE,
-        review: object | None = None,
+        review: delta_module.Review | None = None,
         on_change: Callable[[Reloaded], None] | None = None,
         announce: Callable[[], Awaitable[None]] | None = None,
     ) -> None:

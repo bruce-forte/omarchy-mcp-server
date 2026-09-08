@@ -359,7 +359,7 @@ class TestLoading:
         loaded = load([mine, theirs])
         outcome = evaluate("omarchy install app", Tier.GUARDED, loaded)
         assert outcome.effect is Effect.ASK
-        assert outcome.rule.source == "permissions.json"
+        assert outcome.rule is not None and outcome.rule.source == "permissions.json"
 
     def test_the_users_own_rule_is_the_one_named(self, tmp_path):
         """Same decision in both files: the explainer quotes theirs, not the
@@ -370,7 +370,7 @@ class TestLoading:
         theirs.write_text(doc(allow=["omarchy install app"]))
 
         outcome = evaluate("omarchy install app", Tier.GUARDED, load([mine, theirs]))
-        assert outcome.rule.source == "permissions.json"
+        assert outcome.rule is not None and outcome.rule.source == "permissions.json"
 
     def test_guarded_default_may_be_set_in_one_file_only(self, tmp_path):
         """It decides one thing, so it belongs in one place."""
@@ -448,6 +448,7 @@ class TestTheShippedExample:
 
     def test_every_rule_in_it_does_something(self, example, commands):
         rules, options = parse(example.read_text(), source=example.name)
+        assert options.guarded_default is not None
         perms = Permissions(rules=rules, guarded_default=options.guarded_default)
         assert check(perms, commands) == (), "the example must have no void or error rules"
 
@@ -765,7 +766,7 @@ class TestInertRules:
             pooled(allow=["omarchy install *", "omarchy install app"]), commands
         )
         assert [f.level for f in found] == ["redundant"]
-        assert found[0].by.matcher == "omarchy install *"
+        assert found[0].by is not None and found[0].by.matcher == "omarchy install *"
 
     def test_partial_coverage_is_not_a_defect(self, commands):
         """`allow omarchy theme *` under a `deny omarchy theme set` is a good

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from concurrent.futures import ThreadPoolExecutor
+from typing import Any
 
 from . import execute
 
@@ -28,13 +29,13 @@ PROBE_TIMEOUT_MS = 8000
 PROBE_OUTPUT_B = 16 * 1024
 
 
-def parse(raw: str) -> object:
+def parse(raw: str) -> Any:
     """Omarchy's status commands emit JSON, tab-separated pairs, or bare text.
 
     Returns whichever Python value fits: a dict or list from JSON, a dict from
     the pairs, a string otherwise, and ``None`` for no output at all. The return
-    hint is ``object`` -- the base of every Python type -- because all four are
-    possible and the caller only ever serialises the result back to JSON.
+    hint is ``Any`` -- "the checker cannot say" -- because all four are possible
+    and the shape is only known to whoever asked for a particular probe.
     """
     text = raw.strip()
     if not text:
@@ -71,7 +72,7 @@ def parse(raw: str) -> object:
     return text if len(lines) > 1 else lines[0]
 
 
-def gather() -> dict[str, object]:
+def gather() -> dict[str, Any]:
     """Run every probe. A field is null when the machine has no such thing."""
 
     # Defined inside ``gather`` because it exists only to be mapped over the

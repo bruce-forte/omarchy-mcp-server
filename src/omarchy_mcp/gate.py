@@ -302,9 +302,12 @@ async def _ask(cmd, call, *, perms, ctx, log, offload) -> consent.Answer:
             # needs something it can invoke *inside* its own deadline, not a
             # result already waited for. Which surface asked is the only
             # difference the rule never sees.
+            # ``token is None`` rather than ``elicits``: the two say the
+            # same thing -- the token is minted only for the desktop -- and this
+            # is the half the desktop branch actually depends on.
             asker = (
                 (lambda: ctx.elicit(body, Approval))
-                if elicits
+                if token is None
                 else (lambda: prompt.desktop_ask(token))
             )
             _cooldowns.asked(cmd.route)

@@ -76,7 +76,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
@@ -376,7 +376,10 @@ class Permissions:
 
     rules: tuple[Rule, ...] = ()
     guarded_default: Effect = DEFAULT_GUARDED
-    ask_timeout_s: int = DEFAULT_ASK_TIMEOUT_S
+    #: ``float`` rather than ``int``: this is a duration, and the document's
+    #: own `askTimeoutSeconds` is still whole seconds. The wider type is what
+    #: lets a test give the gate a fifth of a second instead of thirty.
+    ask_timeout_s: float = DEFAULT_ASK_TIMEOUT_S
     #: Which file set `guarded_default`, for the explainer. Empty means nobody
     #: did and the value is this module's own.
     guarded_default_source: str = ""
@@ -408,7 +411,7 @@ class Options:
     guarded_default: Effect | None = None
     ask_timeout_s: int | None = None
 
-    def named(self) -> dict[str, object]:
+    def named(self) -> dict[str, Any]:
         """The keys this file actually set, by the name it wrote them under."""
         return {
             name: value
@@ -493,7 +496,11 @@ def load(paths: Sequence[Path]) -> Permissions:
     #: One bucket per effect, so rules can be pooled across files and still come
     #: out in precedence order at the end.
     pooled: dict[Effect, list[Rule]] = {effect: [] for effect in PRECEDENCE}
-    settings: dict[str, object] = {}
+    #: The settings each file set, by the name it wrote them under. ``Any``
+    #: because the values are heterogeneous -- an `Effect` and an ``int`` -- and
+    #: `parse` has already checked the type of each against the key it came
+    #: under, so nothing downstream re-derives it.
+    settings: dict[str, Any] = {}
     #: Which file set each setting, so the second one to claim it is an error
     #: naming both files rather than a silent overwrite.
     claimed: dict[str, str] = {}
@@ -818,7 +825,7 @@ ASK_NOTE = (
 
 def describe(
     cmd: Command, perms: Permissions, *, unreviewed: frozenset[str] = frozenset()
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """This server's verdict on one command, for anything that publishes it.
 
     One derivation with two readers -- `omarchy_search_commands` and the commands
@@ -830,7 +837,7 @@ def describe(
     invisible to the only caller there is.
     """
     outcome = decide(cmd, perms, unreviewed=unreviewed)
-    row: dict[str, object] = {
+    row: dict[str, Any] = {
         "tier": outcome.tier.value,
         "runnable": outcome.allowed or outcome.asks,
     }
@@ -857,7 +864,7 @@ def describe(
 COVERED_SHOWN = 12
 
 
-def explain(perms: Permissions, commands: dict[str, Command]) -> dict[str, object]:
+def explain(perms: Permissions, commands: dict[str, Command]) -> dict[str, Any]:
     """The whole permission state, for a person who asked what an agent may do.
 
     Not the same thing as `omarchy://commands`, which annotates every route with
@@ -874,7 +881,7 @@ def explain(perms: Permissions, commands: dict[str, Command]) -> dict[str, objec
     findings = {id(f.rule): f for f in check(perms, commands)}
     for rule in perms.rules:
         covered = rule.covers(commands.values())
-        row: dict[str, object] = {
+        row: dict[str, Any] = {
             "effect": rule.effect.value,
             "matcher": rule.matcher,
             "source": rule.source,
@@ -911,7 +918,7 @@ def explain(perms: Permissions, commands: dict[str, Command]) -> dict[str, objec
             continue
         if outcome.effect is Effect.ALLOW and outcome.rule is None and outcome.tier is Tier.SAFE:
             continue
-        entry: dict[str, object] = {
+        entry: dict[str, Any] = {
             "route": cmd.route,
             "tier": outcome.tier.value,
             "effect": outcome.effect.value,

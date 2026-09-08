@@ -97,11 +97,13 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats) -> None:
             'action="list" first.'
         ),
         annotations=ToolAnnotations(
-            readOnlyHint=False, destructiveHint=False, idempotentHint=True,
-            openWorldHint=False,
+            read_only_hint=False, destructive_hint=False, idempotent_hint=True,
+            open_world_hint=False,
         ),
     )
-    async def omarchy_theme(action: str = "current", name: str = "", ctx: Context = None) -> str:
+    async def omarchy_theme(
+        action: str = "current", name: str = "", ctx: Context | None = None
+    ) -> str:
         """Read, list, or apply the theme, depending on ``action``."""
         if action == "current":
             return await run("omarchy theme current", [], "omarchy_theme", ctx)
@@ -126,11 +128,13 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats) -> None:
             "current theme, or set a specific image by absolute path."
         ),
         annotations=ToolAnnotations(
-            readOnlyHint=False, destructiveHint=False, idempotentHint=False,
-            openWorldHint=False,
+            read_only_hint=False, destructive_hint=False, idempotent_hint=False,
+            open_world_hint=False,
         ),
     )
-    async def omarchy_background(action: str = "current", path: str = "", ctx: Context = None) -> str:
+    async def omarchy_background(
+        action: str = "current", path: str = "", ctx: Context | None = None
+    ) -> str:
         """Read, cycle, or set the desktop background."""
         if action == "current":
             return await run("omarchy theme bg current", [], "omarchy_background", ctx)
@@ -156,11 +160,13 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats) -> None:
             "user sees what happened."
         ),
         annotations=ToolAnnotations(
-            readOnlyHint=False, destructiveHint=False, idempotentHint=False,
-            openWorldHint=False,
+            read_only_hint=False, destructive_hint=False, idempotent_hint=False,
+            open_world_hint=False,
         ),
     )
-    async def omarchy_audio(action: str = "volume", level: str = "raise", ctx: Context = None) -> str:
+    async def omarchy_audio(
+        action: str = "volume", level: str = "raise", ctx: Context | None = None
+    ) -> str:
         """Volume, mute, microphone mute, or output switching."""
         if action == "volume":
             if level not in ("raise", "lower") and not _is_step(level):
@@ -190,12 +196,12 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats) -> None:
             "'+10%' or '10%-', or 'on'/'off'. Omit it to read the current level."
         ),
         annotations=ToolAnnotations(
-            readOnlyHint=False, destructiveHint=False, idempotentHint=False,
-            openWorldHint=False,
+            read_only_hint=False, destructive_hint=False, idempotent_hint=False,
+            open_world_hint=False,
         ),
     )
     async def omarchy_brightness(
-        target: str = "display", value: str = "", monitor: str = "", ctx: Context = None
+        target: str = "display", value: str = "", monitor: str = "", ctx: Context | None = None
     ) -> str:
         """Display or keyboard brightness. An empty ``value`` reads it instead."""
         if target == "display":
@@ -226,8 +232,8 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats) -> None:
             "anything."
         ),
         annotations=ToolAnnotations(
-            readOnlyHint=False, destructiveHint=False, idempotentHint=False,
-            openWorldHint=False,
+            read_only_hint=False, destructive_hint=False, idempotent_hint=False,
+            open_world_hint=False,
         ),
     )
     async def omarchy_media(action: str = "status") -> str:
@@ -269,11 +275,13 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats) -> None:
             "reachable through omarchy_run with `omarchy toggle <flag>`."
         ),
         annotations=ToolAnnotations(
-            readOnlyHint=False, destructiveHint=False, idempotentHint=False,
-            openWorldHint=False,
+            read_only_hint=False, destructive_hint=False, idempotent_hint=False,
+            open_world_hint=False,
         ),
     )
-    async def omarchy_toggle(feature: str, state: str = "toggle", ctx: Context = None) -> str:
+    async def omarchy_toggle(
+        feature: str, state: str = "toggle", ctx: Context | None = None
+    ) -> str:
         """Flip one of the named desktop flags on, off, or over."""
         route = TOGGLES.get(feature)
         if route is None:
@@ -313,11 +321,11 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats) -> None:
             "waiting for it to be closed."
         ),
         annotations=ToolAnnotations(
-            readOnlyHint=False, destructiveHint=False, idempotentHint=False,
-            openWorldHint=True,
+            read_only_hint=False, destructive_hint=False, idempotent_hint=False,
+            open_world_hint=True,
         ),
     )
-    async def omarchy_launch(what: str, target: str = "", ctx: Context = None) -> str:
+    async def omarchy_launch(what: str, target: str = "", ctx: Context | None = None) -> str:
         """Open a browser, editor, terminal, web app, or file manager."""
         routes = {
             "browser": "omarchy launch browser",
