@@ -151,8 +151,11 @@ Panel {
   // walk within one, which is how every keyboard-driven panel in this shell
   // behaves. A horizontal row -- the three answers, the daemon buttons -- is
   // one vertical stop.
-  property int cursorRow: 0
-  property int cursorCol: 0
+  //: The *key* is the state; the row and column are derived from it. Storing
+  //: indices instead would slide the cursor onto a different button the moment
+  //: the ring changed shape -- which is exactly what happens when a Remove is
+  //: pressed and its row goes away.
+  property string cursorKey: ""
 
   readonly property var focusRows: {
     var rows = []
@@ -180,13 +183,21 @@ Panel {
     return rows
   }
 
-  readonly property string cursorKey: {
+  //: Where the key sits right now, as [row, col], or [-1, -1] if the stop it
+  //: named has gone.
+  readonly property var cursorAt: {
     var rows = root.focusRows
-    if (root.cursorRow < 0 || root.cursorRow >= rows.length)
-      return ""
-    var row = rows[root.cursorRow]
-    return root.cursorCol >= 0 && root.cursorCol < row.length ? row[root.cursorCol] : ""
+    for (var r = 0; r < rows.length; r++) {
+      var c = rows[r].indexOf(root.cursorKey)
+      if (c >= 0)
+        return [r, c]
+    }
+    return [-1, -1]
   }
+
+  //: A stop that disappears takes the cursor back to a resting place rather
+  //: than leaving it pointing at nothing.
+  onCursorAtChanged: if (cursorAt[0] < 0) restCursor()
 
   //: The rows a Remove is actually drawn on. The ring has to agree with what
   //: is on screen, so the cap lives here rather than in the delegate.
@@ -322,6 +333,11 @@ Panel {
     var rows = focusRows
     if (rows.length === 0)
       return
+    var at = cursorAt
+    if (at[0] < 0) {
+      restCursor()
+      return
+    }
     if (dy !== 0) {
       // On a tab with nothing to focus in its body, the arrows are free and
       // the body is the thing that needs them.
@@ -329,13 +345,13 @@ Panel {
         scrollBody(dy)
         return
       }
-      cursorRow = Math.max(0, Math.min(cursorRow + dy, rows.length - 1))
-      cursorCol = 0
+      var row = Math.max(0, Math.min(at[0] + dy, rows.length - 1))
+      cursorKey = rows[row][0]
       return
     }
     if (dx !== 0) {
-      var row = rows[Math.max(0, Math.min(cursorRow, rows.length - 1))]
-      cursorCol = Math.max(0, Math.min(cursorCol + dx, row.length - 1))
+      var here = rows[at[0]]
+      cursorKey = here[Math.max(0, Math.min(at[1] + dx, here.length - 1))]
     }
   }
 
@@ -392,13 +408,16 @@ Panel {
   // legend that lists everything is a wall, so it lists what applies here.
   readonly property string keyLegend: {
     var rows = focusRows
-    var row = rows.length > 0 ? rows[Math.max(0, Math.min(cursorRow, rows.length - 1))] : []
+    var at = cursorAt
+    var row = at[0] >= 0 ? rows[at[0]] : []
     var parts = []
     if (row.length > 1)
       parts.push("h l move")
     parts.push(bodyHasControls ? "j k rows" : "j k scroll")
     if (cursorKey !== "")
-      parts.push("⏎ activate")
+      // A word rather than ⏎: the glyph is ambiguous at 12px and depends on
+      // a font this plugin does not choose.
+      parts.push("enter activate")
     parts.push("[ ] tabs")
     parts.push("esc close")
     return parts.join(" · ")
@@ -416,8 +435,12 @@ Panel {
   //: otherwise, since those are on every tab and are what a person opens this
   //: panel to press.
   function restCursor() {
-    cursorRow = root.asking ? 0 : Math.max(0, focusRows.length - 1)
-    cursorCol = 0
+    var rows = focusRows
+    if (rows.length === 0) {
+      cursorKey = ""
+      return
+    }
+    cursorKey = root.asking ? rows[0][0] : rows[rows.length - 1][0]
   }
 
   onTabChanged: restCursor()
