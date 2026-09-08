@@ -191,7 +191,7 @@ Report CPU and memory, battery, network, current theme and background, idle stat
 
 ### `omarchy_theme`
 
-Read the current Omarchy theme, list the installed ones, or apply one. Applying a theme restyles the whole desktop -- shell, terminals, and GTK apps -- so confirm the name against `list` rather than guessing it.
+Read the current Omarchy theme, list the installed ones, or apply one. Applying a theme restyles the whole desktop -- shell, terminals, and GTK apps -- so confirm the name against `list` rather than guessing it. Calling action="set" with no name asks the user to pick one, if their client can be asked; otherwise it is an error and you should call action="list" first.
 
 | Parameter | Type | |
 |-----------|------|--|

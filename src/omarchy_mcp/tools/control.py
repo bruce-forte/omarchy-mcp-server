@@ -10,11 +10,14 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass
+from typing import Literal
 
 from mcp.server.mcpserver import Context
 from mcp.types import ToolAnnotations
+from pydantic import Field, create_model
 
-from .. import execute, registry, shell
+from .. import consent, execute, gate, registry, resolve, shell
 from ..settings import Settings
 from ..stats import Stats
 from ._shared import offload, run_route
@@ -41,6 +44,12 @@ STATE_WORDS: dict[str, tuple[str, ...]] = {
     "toggle": ("toggle",),
     "status": ("status",),
 }
+
+#: How many themes an elicitation form offers before the enum is dropped and the
+#: field becomes free text. An enum is a picker in a client that renders one;
+#: past a certain length it is a wall, and the resolver refuses a wrong name
+#: with near misses anyway.
+MAX_CHOICES = 60
 
 MEDIA_ACTIONS = (
     "playPause", "play", "pause", "next", "previous", "status",
@@ -82,7 +91,10 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats) -> None:
         description=(
             "Read the current Omarchy theme, list the installed ones, or apply one. "
             "Applying a theme restyles the whole desktop -- shell, terminals, and "
-            "GTK apps -- so confirm the name against `list` rather than guessing it."
+            "GTK apps -- so confirm the name against `list` rather than guessing it. "
+            'Calling action="set" with no name asks the user to pick one, if their '
+            "client can be asked; otherwise it is an error and you should call "
+            'action="list" first.'
         ),
         annotations=ToolAnnotations(
             readOnlyHint=False, destructiveHint=False, idempotentHint=True,
@@ -97,7 +109,12 @@ def register(tools: Catalogue, settings: Settings, log, stats: Stats) -> None:
             return await run("omarchy theme list", [], "omarchy_theme", ctx)
         if action == "set":
             if not name:
-                return json.dumps({"error": 'action "set" needs a theme name'}, indent=2)
+                # No theme named. Ask the person which one, if their client can
+                # be asked; otherwise this stays the error it always was.
+                picked = await _pick_theme(ctx, settings.permissions, log)
+                if isinstance(picked, _Refused):
+                    return json.dumps(picked.payload, indent=2)
+                name = picked.name
             return await run("omarchy theme set", [name], "omarchy_theme", ctx)
         return json.dumps({"error": 'action must be current, list, or set'}, indent=2)
 
@@ -363,3 +380,107 @@ def _is_step(value: str) -> bool:
     # check is what stops a bare "+" reaching ``value[1:]`` as an empty string,
     # which ``isdigit`` calls False anyway but less obviously.
     return len(value) > 1 and value[0] in "+-" and value[1:].isdigit()
+
+
+# ------------------------------------------------- asking which one, in a form
+#
+# The other half of elicitation. `gate.py` uses it to ask *may this run*; this
+# uses it to ask *which one did you mean*, which is what form mode is actually
+# for -- the question carries a schema, and the answer comes back typed.
+#
+# Three properties are deliberate, and the first is the one that matters:
+#
+# **It decides nothing.** The chosen name is handed straight back to the same
+# `run_route` an explicit name would have taken, so the tier, the rules, the
+# resolver and the approval prompt all still apply to it. Picking a theme from a
+# list is not consent to switch to it, and this must never become a second door
+# into the executor.
+#
+# **A client that cannot be asked keeps the old error.** Claude Code negotiates
+# a protocol with no back-channel (F23), so for it nothing changes: the call
+# still comes back saying a name is needed.
+#
+# **No answer runs nothing.** It goes through `consent.ask`, so the deadline,
+# the decline and the disconnect are the same six outcomes as everywhere else --
+# and the same rule that only an accept proceeds.
+
+
+@dataclass(frozen=True)
+class _Picked:
+    """A theme the person chose from the form."""
+
+    name: str
+
+
+@dataclass(frozen=True)
+class _Refused:
+    """No name to run with, and what the agent is told instead."""
+
+    payload: dict
+
+
+def _needs_a_name(extra: str = "") -> _Refused:
+    """The refusal for a `set` with nothing to set, as it always read."""
+    return _Refused({"error": ('action "set" needs a theme name' + extra)})
+
+
+def _choice_model(themes: list[str]):
+    """A one-field pydantic model whose field is an enum of ``themes``.
+
+    Built per call because the choices are whatever is installed right now. A
+    `Literal` renders as a JSON Schema ``enum``, which is what makes a client
+    show a picker rather than a text box; past `MAX_CHOICES` the enum is
+    dropped, because a hundred-entry dropdown is worse than typing.
+    """
+    described = Field(description="Which theme to switch to")
+    if 0 < len(themes) <= MAX_CHOICES:
+        field = (Literal[tuple(themes)], described)
+    else:
+        field = (str, described)
+    return create_model("ThemeChoice", name=field)
+
+
+async def _pick_theme(ctx, perms, log) -> _Picked | _Refused:
+    """Ask the person which theme, and return it. Never runs anything."""
+    if not gate.can_elicit(ctx):
+        # The client declared no elicitation, or its transport cannot carry a
+        # server-initiated request. Either way there is nobody to ask.
+        return _needs_a_name()
+
+    try:
+        themes = await offload(resolve._themes)
+    except resolve.Unresolvable as exc:
+        # The theme list is the form's contents. Without it there is no form,
+        # and guessing is what `resolve.py` exists not to do.
+        log.info("cannot offer a theme list: %s", exc.message)
+        return _needs_a_name(f"; the installed themes could not be listed ({exc.message})")
+
+    if not themes:
+        return _needs_a_name("; no themes appear to be installed")
+
+    model = _choice_model(themes)
+    answer = await consent.ask(
+        lambda: ctx.elicit("Which theme should I switch to?", model),
+        what="which theme to switch to",
+        timeout_s=perms.ask_timeout_s,
+        log=log,
+    )
+    if not answer.accepted:
+        log.info("theme choice %s", answer.outcome.value)
+        return _Refused(
+            {
+                "error": answer.reason or "The user did not choose a theme.",
+                "consent": answer.outcome.value,
+            }
+        )
+
+    chosen = getattr(answer.data, "name", "")
+    if not isinstance(chosen, str) or not chosen.strip():
+        # An accept whose content does not fit the schema this server sent. The
+        # SDK validates it, so this is the belt to that braces -- and an empty
+        # name would otherwise reach `omarchy theme set` as no argument at all,
+        # which opens the interactive picker on the user's screen.
+        return _needs_a_name("; the client accepted without choosing one")
+
+    log.info("theme chosen by elicitation: %r", chosen)
+    return _Picked(chosen.strip())

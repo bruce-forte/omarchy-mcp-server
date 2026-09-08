@@ -705,20 +705,53 @@ notification is the primary surface rather than a nicety beside it.
 You can watch the other path work. From a checkout, with the daemon running:
 
 ```bash
-make elicit                     # asks about `omarchy theme set`, declines
-make elicit ARGS='--accept'     # ...and says yes, so the theme actually changes
+make elicit                                  # the form: which theme?
+make elicit ARGS='"omarchy theme set" Nord'  # the consent question
+make elicit ARGS='--accept'                  # ...and say yes to it
 ```
 
 It attaches as a handshake-era client, so the daemon asks *it* rather than your
-desktop, and the question is printed in your terminal. It declines by default,
-so running it changes nothing. `examples/elicit_client.py` is about eighty lines
-and explains the negotiation in its own docstring.
+desktop, and the question is printed in your terminal.
+`examples/elicit_client.py` explains the negotiation in its own docstring.
 
-Two things you may see instead of a question. If no rule makes the route ask, it
-simply runs — add the `ask` rule from
+**Two different questions, and the bare `make elicit` shows both.** It calls
+`omarchy_theme(action="set")` and deliberately names no theme, which is a
+*missing parameter* rather than a permission question. The server answers with a
+**form** — the installed themes as an enum, which a client renders as a picker:
+
+```
+--- the server is asking ---
+Which theme should I switch to?
+
+   1. Catppuccin
+   ...
+  21. Tokyo Night
+choose 1-23 (enter to decline):
+```
+
+Pick one and the *consent* question follows it, because choosing a theme from a
+list is not consent to switch to it. The name you picked goes through the same
+tier, the same rules, the same resolver and the same approval as one the agent
+had named itself:
+
+```
+--- the server is asking ---
+An agent is asking to run a guarded command.
+
+  omarchy theme set 'Tokyo Night'
+
+Target: Tokyo Night
+```
+
+Two things you may see instead of that second question. If no rule makes the
+route ask, it simply runs — add the `ask` rule from
 [step 6](#6-move-the-line-and-watch-it-take-effect) first. And if you have
 already declined it a few times, you get `not_asked_again` rather than a prompt:
 that is the anti-habituation guard, and it clears itself within minutes.
+
+For a client that cannot be asked — Claude Code — none of this changes:
+`action="set"` with no name is the error it always was, telling the agent to
+call `action="list"` first.
 
 ### Arguments are checked before anything runs
 

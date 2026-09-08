@@ -93,12 +93,21 @@ def can_elicit(ctx) -> bool:
     arrive as `unreachable` and tell the agent the client disconnected when
     nothing of the sort happened.
     """
-    session = getattr(ctx, "session", None)
-    # Note the default is ``False``: an SDK object without this attribute is
-    # treated as unable to carry the question, which fails closed.
-    if session is None or not getattr(session, "can_send_request", False):
+    # Every read here is wrapped, because these are *properties* on an SDK
+    # object rather than plain attributes: `Context.session` raises
+    # ``ValueError: Context is not available outside of a request`` when there
+    # is no request in flight, and ``getattr(..., default)`` does not swallow an
+    # exception raised by the property it called. A context that cannot answer
+    # the question is one that cannot carry a question, so it reads as False.
+    try:
+        session = ctx.session
+        # Note the default is ``False``: an SDK object without this attribute is
+        # treated as unable to carry the question, which fails closed.
+        if session is None or not getattr(session, "can_send_request", False):
+            return False
+        return consent.supports_asking(ctx.client_capabilities)
+    except (AttributeError, ValueError):
         return False
-    return consent.supports_asking(getattr(ctx, "client_capabilities", None))
 
 
 #: How much asking the user will put up with. Module-level for the same reason

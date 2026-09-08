@@ -49,12 +49,12 @@ PLUGIN_ID = "io.github.bruce-forte.mcp-server"
 STATE_DIR = pathlib.Path.home() / ".local/state" / PLUGIN_ID
 CONFIG_FILE = pathlib.Path.home() / ".config/omarchy/mcp/config.toml"
 
-#: The default call. Guarded routes ask on their own; `omarchy theme set` is
-#: safe and asks only if you have written an `ask` rule for it -- which is what
-#: the README's getting-started walkthrough has you do, and why it is the
-#: default here. Override by passing a route and its arguments.
-DEFAULT_ROUTE = "omarchy theme set"
-DEFAULT_ARGS = ["Tokyo Night"]
+#: With no arguments the script calls `omarchy_theme(action="set")` and names no
+#: theme, which is the *form* demonstration: the server has a missing parameter
+#: rather than a permission question, and asks which one with the installed
+#: themes as an enum. Passing a route switches to the consent demonstration,
+#: running it through `omarchy_run` instead.
+FALLBACK_ROUTE = "omarchy theme set"
 
 
 def _port() -> int:
@@ -76,18 +76,66 @@ def _token() -> str:
         )
 
 
-def _parse(argv: list[str]) -> tuple[bool, str, list[str]]:
-    """``[--accept] [route [args...]]``, with the defaults above."""
+def _parse(argv: list[str]) -> tuple[bool, int | None, str | None, list[str]]:
+    """``[--accept] [--port N] [route [args...]]``.
+
+    No route means the form demonstration. ``--port`` targets a daemon other
+    than the configured one, which is how you point this at a checkout running
+    under ``make run`` while the installed plugin keeps serving.
+    """
     accept = "--accept" in argv
     rest = [a for a in argv if a != "--accept"]
+    port = None
+    if "--port" in rest:
+        at = rest.index("--port")
+        try:
+            port = int(rest[at + 1])
+        except (IndexError, ValueError):
+            sys.exit("--port needs a number")
+        rest = rest[:at] + rest[at + 2:]
     if not rest:
-        return accept, DEFAULT_ROUTE, list(DEFAULT_ARGS)
-    return accept, rest[0], rest[1:]
+        return accept, port, None, []
+    return accept, port, rest[0], rest[1:]
+
+
+def _choices(params) -> list[str]:
+    """The enum a form is offering for its one field, if it offers one.
+
+    The schema arrives as plain JSON Schema -- this client is not the server and
+    has no pydantic model for it, which is the point of sending a schema at all.
+    """
+    schema = getattr(params, "requested_schema", None) or {}
+    for prop in (schema.get("properties") or {}).values():
+        if prop.get("enum"):
+            return [str(v) for v in prop["enum"]]
+    return []
+
+
+def _field_name(params) -> str:
+    """The single field the form is asking for."""
+    schema = getattr(params, "requested_schema", None) or {}
+    names = list((schema.get("properties") or {}).keys())
+    return names[0] if names else "value"
+
+
+def _ask_at_the_terminal(params) -> dict | None:
+    """Render the form as a numbered list and read an answer. None is a decline."""
+    options = _choices(params)
+    if not options:
+        typed = input(f"{_field_name(params)}: ").strip()
+        return {_field_name(params): typed} if typed else None
+
+    for n, option in enumerate(options, 1):
+        print(f"  {n:>2}. {option}")
+    raw = input(f"choose 1-{len(options)} (enter to decline): ").strip()
+    if not raw.isdigit() or not 1 <= int(raw) <= len(options):
+        return None
+    return {_field_name(params): options[int(raw) - 1]}
 
 
 async def main() -> int:
-    accept, route, args = _parse(sys.argv[1:])
-    url = f"http://127.0.0.1:{_port()}/mcp"
+    accept, port, route, args = _parse(sys.argv[1:])
+    url = f"http://127.0.0.1:{port or _port()}/mcp"
 
     async def on_elicit(_ctx, params):
         """Called by the SDK when the server asks this client a question.
@@ -95,9 +143,25 @@ async def main() -> int:
         Passing this callback at all is what makes the client *declare*
         elicitation in its capabilities; without it the SDK advertises none and
         the server would never try.
+
+        Two shapes arrive here, and the schema is what tells them apart. A
+        consent question carries a schema with nothing required, so any accept
+        will do. A *form* carries the field the server is missing -- here, an
+        enum of the themes installed on this machine -- and an accept has to
+        fill it in or the SDK rejects the reply before it is sent.
         """
         print("\n--- the server is asking -------------------------------------")
         print(params.message)
+        options = _choices(params)
+        if options:
+            print()
+            content = _ask_at_the_terminal(params)
+            if content is None:
+                print(">>> declining\n")
+                return types.ElicitResult(action="decline")
+            print(f">>> answering {content}\n")
+            return types.ElicitResult(action="accept", content=content)
+
         print("--------------------------------------------------------------")
         if accept:
             print(">>> accepting\n")
@@ -115,11 +179,21 @@ async def main() -> int:
                 # deliberately does not make.
                 init = await session.initialize()
                 print(f"negotiated protocol : {init.protocol_version}")
-                print(f"calling             : {route} {args}")
 
-                result = await session.call_tool(
-                    "omarchy_run", {"route": route, "args": args}
-                )
+                if route is None:
+                    # The form demonstration: ask for a theme switch without
+                    # saying which theme. The server has a missing parameter,
+                    # not a permission question, and asks which one.
+                    print('calling             : omarchy_theme(action="set")'
+                          " -- deliberately naming no theme")
+                    result = await session.call_tool(
+                        "omarchy_theme", {"action": "set"}
+                    )
+                else:
+                    print(f"calling             : {route} {args}")
+                    result = await session.call_tool(
+                        "omarchy_run", {"route": route, "args": args}
+                    )
                 print("\n--- what the agent would have been told ----------------------")
                 for block in result.content:
                     print(getattr(block, "text", block))

@@ -153,3 +153,122 @@ class TestToolBehaviour:
         mcp, ran = tools
         await self._call(mcp, "omarchy_launch", {"what": "browser"})
         assert ran[-1] == ("omarchy launch browser", [])
+
+
+class TestAskingWhichTheme:
+    """`omarchy_theme(action="set")` with no name asks, in form mode.
+
+    The security property is the one to hold onto: choosing from a list is not
+    consent to run anything. Whatever comes back goes through the same gate an
+    explicitly-named theme would, so these tests check what the picker *returns*
+    rather than what runs.
+    """
+
+    class Elicitation:
+        def __init__(self, form=object(), url=None):
+            self.form, self.url = form, url
+
+    class Caps:
+        def __init__(self, elicitation):
+            self.elicitation = elicitation
+
+    class Ctx:
+        """The half of a Context these functions touch."""
+
+        def __init__(self, *, can_ask=True, reply=None, capture=None):
+            self.session = type("S", (), {"can_send_request": can_ask})()
+            self.client_capabilities = TestAskingWhichTheme.Caps(
+                TestAskingWhichTheme.Elicitation()
+            )
+            self._reply = reply
+            self._capture = capture
+
+        async def elicit(self, message, schema):
+            if self._capture is not None:
+                self._capture.append((message, schema))
+            return self._reply
+
+    @staticmethod
+    def _accept(name):
+        return type("R", (), {"action": "accept", "data": type("D", (), {"name": name})()})()
+
+    @pytest.fixture
+    def themes(self, monkeypatch):
+        names = ["Catppuccin", "Nord", "Tokyo Night"]
+        monkeypatch.setattr(control.resolve, "_themes", lambda: list(names))
+        return names
+
+    @pytest.fixture
+    def perms(self):
+        from omarchy_mcp.permissions import Permissions
+
+        return Permissions()
+
+    @pytest.fixture
+    def log(self):
+        import logging
+
+        return logging.getLogger("test-theme-picker")
+
+    @pytest.mark.anyio
+    async def test_a_client_that_cannot_be_asked_gets_the_old_error(self, themes, perms, log):
+        """Claude Code is this case (F23), so for it nothing changed."""
+        picked = await control._pick_theme(
+            self.Ctx(can_ask=False), perms, log
+        )
+        assert isinstance(picked, control._Refused)
+        assert "needs a theme name" in picked.payload["error"]
+
+    @pytest.mark.anyio
+    async def test_the_form_offers_the_installed_themes_as_an_enum(self, themes, perms, log):
+        seen: list = []
+        ctx = self.Ctx(reply=self._accept("Nord"), capture=seen)
+
+        picked = await control._pick_theme(ctx, perms, log)
+
+        assert picked == control._Picked("Nord")
+        (_message, schema), = seen
+        assert schema.model_json_schema()["properties"]["name"]["enum"] == themes
+
+    @pytest.mark.anyio
+    async def test_a_decline_chooses_nothing(self, themes, perms, log):
+        ctx = self.Ctx(reply=type("R", (), {"action": "decline"})())
+
+        picked = await control._pick_theme(ctx, perms, log)
+
+        assert isinstance(picked, control._Refused)
+        assert picked.payload["consent"] == "declined"
+
+    @pytest.mark.anyio
+    async def test_an_accept_with_no_theme_in_it_is_not_a_theme(self, themes, perms, log):
+        """An empty name would reach `omarchy theme set` as no argument at all,
+        which opens the interactive picker on the user's own screen."""
+        ctx = self.Ctx(reply=self._accept("   "))
+
+        picked = await control._pick_theme(ctx, perms, log)
+
+        assert isinstance(picked, control._Refused)
+
+    @pytest.mark.anyio
+    async def test_no_theme_list_means_no_form(self, monkeypatch, perms, log):
+        """The list is the form's contents; without it there is nothing to ask."""
+
+        def unavailable():
+            raise control.resolve.Unresolvable(
+                "theme", "could not list themes", source_unavailable=True
+            )
+
+        monkeypatch.setattr(control.resolve, "_themes", unavailable)
+
+        picked = await control._pick_theme(self.Ctx(), perms, log)
+
+        assert isinstance(picked, control._Refused)
+        assert "could not be listed" in picked.payload["error"]
+
+    def test_too_many_themes_drops_the_enum(self):
+        """A hundred-entry dropdown is worse than a text box, and the resolver
+        refuses a wrong name with near misses either way."""
+        many = [f"theme-{n}" for n in range(control.MAX_CHOICES + 1)]
+        rendered = control._choice_model(many).model_json_schema()
+        assert "enum" not in rendered["properties"]["name"]
+        assert rendered["properties"]["name"]["type"] == "string"
