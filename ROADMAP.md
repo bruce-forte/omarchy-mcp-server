@@ -88,7 +88,7 @@ security boundary only assert whatever the code already does.
 
 ## Phase 6 in detail
 
-**Finished**: N1–N16. The theme was that the person the daemon acts on behalf of
+**Finished**: N1–N18. The theme was that the person the daemon acts on behalf of
 could not see what it did, could not answer for a call in flight, and could not
 stop it without a terminal. Decision 12 covers *daemon* faults; none of this
 covered what an *agent* does, which is the part with consequences.
@@ -2306,6 +2306,65 @@ The review still reports it — only a person can decide which list it belongs i
   that rewrites hardware config — `omarchy toggle hybrid gpu` is already guarded
   while `omarchy hw hybrid gpu` is not.
 
+### N18 — No agent-control file ships with the plugin — done
+
+The Omarchy marketplace security review refused the listing over three tracked
+files: a root `CLAUDE.md` and a `SKILL.md` under each of `.claude/` and
+`.codex/`. Not for what they said — the working agreement and a personal
+interviewing skill, both harmless — but for where they land.
+
+**The mechanism.** `omarchy plugin add` clones this repository into
+`~/.config/omarchy/plugins/io.github.bruce-forte.mcp-server/`. A coding agent
+started in that directory, or in any directory above it, discovers files with
+those names and reads them as instructions with nobody opting in — `~` and
+`~/.config` are both above it, so this is not a contrived path. Whatever the
+repository ships under such a name is therefore an instruction channel into a
+*reader's* agent: it arrives with the plugin, it is not part of the runtime any
+reviewer read, and it is not what the user thought they installed.
+
+That would be a poor idea in any plugin. In this one it is the worst available
+one, because this plugin is what hands an agent command execution. The whole
+design is that a person sees and approves what an agent does to the desktop;
+a file that reconfigures the agent before it ever calls a tool goes around all
+of it — ahead of `policy.py`, ahead of the consent prompt, ahead of the log.
+
+**The fix, in three parts.**
+
+- `CLAUDE.md` became `CONTRIBUTING.md`. Same text, a name no agent auto-loads.
+  The reviewer's own wording allows this: ordinary contributor documentation may
+  use non-agent filenames.
+- `.claude/`, `.codex/` and `.agentfiles/` are untracked and git-ignored, along
+  with the other names in that family. They still exist on a contributor's
+  disk — the generator that writes them is unaffected — git simply stops
+  carrying them.
+- `make agents` is a release check, and `make check` runs it. It greps
+  `git ls-files` against the family of names, case-insensitively, and fails on
+  any hit. `git ls-files` walks the whole tree, so the check is recursive by
+  construction and a file reintroduced three directories down is caught too.
+
+**Why `git ls-files` and not the working directory.** What `plugin add` clones
+is what git tracks. A contributor's untracked `.claude/` never reaches anybody,
+and failing the build over it would make the check something people route
+around. The published tree is the thing to defend, so the published tree is
+what the check reads.
+
+**Why case-insensitive.** A `claude.md` committed from a case-insensitive
+filesystem is read as `CLAUDE.md` by an agent on one. Matching exactly would
+have made the check a spelling test.
+
+#### Watch for
+
+- **The list of names is a thing that rots.** It covers what the ecosystem uses
+  today — `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `SKILL.md`,
+  `copilot-instructions.md`, `.mcp.json`, the `.claude`/`.codex`/`.cursor`
+  family and their rule files. A convention invented after this commit passes
+  the check until somebody adds it. `.gitignore` and the `AGENT_FILES` pattern
+  in the `Makefile` have to be kept in step.
+- **Nothing stops a *dependency* shipping one.** The check reads this
+  repository's own tracked files. The venv is built outside the plugin directory,
+  so what `uv` installs does not land in the cloned tree — but that is a
+  property of where the venv goes, not something this check verifies.
+
 ## Deferred
 
 Wanted, but not phase 6.
@@ -2375,7 +2434,7 @@ Found by running the plugin in a live shell. None of these are visible to
 
 | # | Finding | Consequence |
 |---|---------|-------------|
-| F19 | The daemon wrote `__pycache__` **into the installed plugin directory** — 22 `.pyc` files. Python caches bytecode next to the source it imports, and the source is in the directory Omarchy watches, so the daemon made the shell reload itself simply by starting | `PYTHONPYCACHEPREFIX` points the cache at the state directory. `tests/test_bootstrap.py` now reads the wrapper and fails if anything writes into the plugin directory. **The plugin was violating the rule its own `CLAUDE.md` states** |
+| F19 | The daemon wrote `__pycache__` **into the installed plugin directory** — 22 `.pyc` files. Python caches bytecode next to the source it imports, and the source is in the directory Omarchy watches, so the daemon made the shell reload itself simply by starting | `PYTHONPYCACHEPREFIX` points the cache at the state directory. `tests/test_bootstrap.py` now reads the wrapper and fails if anything writes into the plugin directory. **The plugin was violating the rule its own `CONTRIBUTING.md` states** |
 | F20 | `hyprctl`'s per-workspace window count disagrees with its client list — it counts a group as one window — and `desktop_state` reported both | Found by an agent using the tool, which flagged the contradiction and had to pick which to believe. Counts are now derived from the windows actually returned |
 | F21 | Several tests shelled out to the installed `omarchy`, so the suite could not run in CI and would change meaning on the next Omarchy update | An autouse fixture pins every test to the committed registry snapshot |
 
@@ -2393,7 +2452,7 @@ tool from the client itself. The patch was reverted; nothing here was committed.
 | F25 | `omarchy notification send --exec` carries argv as an `omarchy-exec-argv` hint that the shell runs **on click**. Verified end to end: a critical notification's `--exec` ran within 6s of the click. `actions` is empty, so there is exactly one action | A desktop consent surface already exists, works in every protocol era and for every client, and puts the question where the person is. One action means **click is yes and silence is no** — which is precisely N3's rule |
 | F26 | A click does not dismiss the notification — `omarchy notification dismiss` exists for exactly that, and matches a **summary substring**, not an id | Every ask needs a distinct headline, or two concurrent prompts dismiss each other |
 | F28 | **Nothing after `uvicorn.run()` runs.** Uvicorn restores the default signal handler and re-raises the signal that stopped it, so the process dies *by signal* — verified, exit status 143 on SIGTERM. A `finally`, an `atexit`, a non-daemon thread: none of them get a turn | The activity log's `stopped` marker was never written and its queue was never flushed, on every ordinary shutdown. Not catchable by unit tests, which fake `uvicorn.run` as a normal return; found by SIGTERMing the real daemon. Shutdown work now hangs off the **ASGI lifespan**, which completes before the re-raise (`activity.Closing`) |
-| F27 | `omarchy-shell <id> restart` left the daemon in `Waiting for connections to close` **indefinitely**, port unbound and process alive, because an attached client still held its stream open. It took `kill -9` | The reload rule `CLAUDE.md` documents hung whenever a client was attached, which is whenever it matters. **Fixed.** Three faults in one bug: uvicorn's `timeout_graceful_shutdown` defaults to waiting forever and an attached client never closes its stream; nothing escalated past `SIGTERM`; and `restart()` guessed 250ms, so `start()` returned early on a process that was still shutting down and left `wantRunning` false — which is why every hang also needed a manual `start`. The daemon now bounds its own shutdown, `Service.qml` puts a deadline on `SIGTERM`, and a restart waits for the actual exit. Verified with a client attached: 600ms, unattended |
+| F27 | `omarchy-shell <id> restart` left the daemon in `Waiting for connections to close` **indefinitely**, port unbound and process alive, because an attached client still held its stream open. It took `kill -9` | The reload rule `CONTRIBUTING.md` documents hung whenever a client was attached, which is whenever it matters. **Fixed.** Three faults in one bug: uvicorn's `timeout_graceful_shutdown` defaults to waiting forever and an attached client never closes its stream; nothing escalated past `SIGTERM`; and `restart()` guessed 250ms, so `start()` returned early on a process that was still shutting down and left `wantRunning` false — which is why every hang also needed a manual `start`. The daemon now bounds its own shutdown, `Service.qml` puts a deadline on `SIGTERM`, and a restart waits for the actual exit. Verified with a client attached: 600ms, unattended |
 | F29 | **The test suite rebooted the developer's machine.** Three tests used `omarchy system reboot` as their example of a guarded route, on the sound assumption that a guarded route is refused and nothing happens. N10's commit b flipped the guarded default from *refuse* to *ask*, so the gate resolved the call and raised a real `-u critical` notification instead — `tests/test_server.py` and `tests/test_activity.py` mock neither `prompt.send` nor `execute.run`. It was clicked, in good faith, and the reboot ran. The journal shows two `systemctl reboot --no-wall` two seconds apart: two of the three tests got that far before the machine went down | The lesson is not "pick a gentler route". A suite must not be **one behaviour change away from executing whatever it names**, and pinning the registry, the state directory and the resolver sources was never the same thing as pinning execution. Two autouse fixtures now stand in the way: `_no_real_omarchy` fails any spawn of `omarchy`, `omarchy-shell`, `hyprctl`, `qs` or `wl-copy` against the live system, and `_no_desktop_prompts` keeps `prompt.send` off the desktop entirely. Both are tested in `tests/test_conftest_guards.py`, because a guard nobody exercises stops working silently. The opt-ins are narrow and already existed: redirect `execute.SEARCH` at a fixture directory, or mark the test `needs_omarchy` |
 | F30 | **`omarchy restart shell` gives the daemon no chance to shut down, and nothing in QML can change that.** Measured with a throwaway Quickshell instance rather than the live shell. `Component.onDestruction` *does* run on `quickshell kill`, and `child.signal(15)` from it *does* deliver SIGTERM -- so the precondition N11 was written against holds. But Quickshell reaps the child before a handler can finish: a child whose SIGTERM handler slept 3s, 1.5s, 0.5s, 0.25s, 0.1s, 0.05s and 0.02s never reached its next line in any of them. `running = false` behaves identically during teardown. The same `running = false` while the shell stays up lets a 1.5s handler run to completion, which is why `omarchy-shell <id> stop` and `restart` have always written a clean `stopped` | N11 is not fixable supervisor-side, and the honest response was the one its own escape hatch named: document the gap rather than write a guess. The log's missing `stopped` stays missing; `activity.mark_unclosed` derives *"this session has no recorded end"* at read time from what is already on disk -- a `started` followed by another `started` -- and the panel and `--tail` say so. Nothing is written, no timestamp is invented, and the last `started` in a window is never marked because it is the session still running |
 | F31 | **A person looks for a button.** First live use of the approval prompt on a real desktop: *"there wasn't a button on the notification"*. Correct, and by construction — `omarchy-notification-send` calls `Notify` with an **empty actions array** and rides the click command in an `omarchy-exec-argv` hint, so the whole toast is the click target and no labelled button is available through that CLI at all. F25 recorded the one-action shape; what it did not anticipate is that the *absence of a visible affordance* makes "Click to approve" an instruction with no object | Wording was the first fix and the wrong one. **A click now opens the panel instead of approving** — the user's own suggestion, and a better design than what was built. Three things fall out, in the order they matter: a click becomes *navigation*, so a reflexive press on a toast can no longer grant anything, which is N14's worry closed at the source; all three answers sit in one place, where *Always* and *Deny* are finally reachable by somebody who never found the panel; and the one-time token stops riding on a notification argv, reaching the shell on the `asking` frame and returning through a button. `--exec` runs `omarchy-shell shell summon`, verified live. Silence still refuses. Supersedes F25's "click is yes" |

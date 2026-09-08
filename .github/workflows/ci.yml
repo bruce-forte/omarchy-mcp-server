@@ -55,6 +55,16 @@ jobs:
             exit 1
           } || true
 
+      - name: No agent-control files committed
+        # `omarchy plugin add` clones this repository into
+        # ~/.config/omarchy/plugins/<id>/, where a coding agent working in or
+        # above that directory would read a CLAUDE.md, an AGENTS.md or a
+        # .claude/ skill as instructions -- an instruction channel into somebody
+        # else's agent, shipped by the one plugin that hands an agent command
+        # execution. See ROADMAP N18. `make agents` is the same check a desktop
+        # runs, so this cannot pass here and fail there.
+        run: make agents
+
       - name: No virtualenv committed
         # `omarchy plugin validate` rejects symlinks inside a plugin folder, so
         # a committed .venv makes the plugin uninstallable. Asks git rather than

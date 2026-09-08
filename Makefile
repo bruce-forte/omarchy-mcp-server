@@ -10,9 +10,9 @@
 PLUGIN_ID := io.github.bruce-forte.mcp-server
 export UV_PROJECT_ENVIRONMENT := $(if $(XDG_STATE_HOME),$(XDG_STATE_HOME),$(HOME)/.local/state)/$(PLUGIN_ID)/dev-venv
 
-.PHONY: check test lint validate tools schema lsp sync clean run guard py elicit
+.PHONY: check test lint validate agents tools schema lsp sync clean run guard py elicit
 
-check: guard test lint validate
+check: guard agents test lint validate
 
 # A bare `uv run` or `uv sync` outside these targets creates ./.venv, and
 # `omarchy plugin validate` then fails on the symlinks inside it with a message
@@ -51,6 +51,36 @@ lint: sync
 
 validate:
 	omarchy plugin validate .
+
+# No agent-control file may ship.
+#
+# `omarchy plugin add` clones this repository into
+# `~/.config/omarchy/plugins/<id>/`, and a coding agent working in that
+# directory -- or anywhere above it -- discovers and obeys a `CLAUDE.md`, an
+# `AGENTS.md`, a `.claude/` skill or a `.cursorrules` on its own. That is an
+# instruction channel into somebody else's agent which no reviewer of this
+# daemon ever looked at, and it is worst here of all places: this plugin hands
+# an agent command execution. The marketplace security review refused the
+# listing over exactly this; see ROADMAP N18.
+#
+# The list is checked against `git ls-files`, because what `plugin add` clones
+# is what git tracks. It is recursive by construction -- `git ls-files` walks
+# the whole tree -- so a file reintroduced three directories down is caught
+# too. Matching is case-insensitive: a `claude.md` is read the same on the
+# case-insensitive filesystems some contributors are on.
+#
+# Ordinary contributor documentation is fine under a name no agent auto-loads.
+# That is what CONTRIBUTING.md is.
+AGENT_FILES := (^|/)(\.(claude|codex|cursor|windsurf|aider|continue|roo|cline|gemini|opencode|amazonq|junie|trae|kilocode|augment|goose|agentfiles)([/.]|$$)|(claude|agent|agents|gemini|skill|llms?)\.md$$|copilot-instructions\.md$$|\.(cursorrules|windsurfrules|clinerules)$$|\.mcp\.json$$)
+agents:
+	@found=$$(git ls-files | grep -Ei '$(AGENT_FILES)' || true); \
+	test -z "$$found" || { \
+	  echo "error: agent-control files are tracked, and this repository ships"; \
+	  echo "       to ~/.config/omarchy/plugins/, where an agent would read them:"; \
+	  echo "$$found" | sed 's/^/         /'; \
+	  echo "       Untrack them ('git rm --cached'); .gitignore already lists the"; \
+	  echo "       usual names. Contributor docs belong in CONTRIBUTING.md."; \
+	  exit 1; }
 
 # What CI checks that the other targets do not: that the generated reference is
 # current, and that the shipped config still pins nothing.

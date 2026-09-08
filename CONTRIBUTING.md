@@ -17,15 +17,28 @@ routes to the rest of it. Keep them accurate: a claim in a document nobody has
 re-read is worse than no document, and the counts in them (nineteen tools, eight
 resources, thirteen IPC verbs) are the ones that rot first.
 
-This file is the working agreement.
+This file is the working agreement. It is `CONTRIBUTING.md` rather than
+`CLAUDE.md` on purpose — see **No agent-control file ships** below.
 
 ## Conventions for this repo
 
 - **Commit straight to `master`.** No branches.
+- **No agent-control file ships.** No `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`,
+  `SKILL.md`, `.claude/`, `.codex/`, `.cursorrules` — at any depth.
+  `omarchy plugin add` clones this repository into
+  `~/.config/omarchy/plugins/<id>/`, and a coding agent working in or above that
+  directory reads such a file and obeys it, without anybody choosing to. That is
+  an instruction channel into somebody else's agent that no reviewer of this
+  daemon ever saw, and it is worst in a plugin that hands an agent command
+  execution. `make agents` checks `git ls-files` against the usual names and
+  fails on a match; `.gitignore` lists them, so your own tooling can keep
+  writing them locally. Contributor documentation goes here, under a name no
+  agent auto-loads. ROADMAP N18 has the history.
 - **No AI attribution in commit messages.** No `Co-Authored-By`, no
   `Generated with`, no session trailer.
 - Run `make check` before committing. It runs the tests, `ruff`, `pyright`,
-  `qmllint`, `shellcheck`, `omarchy plugin validate`, and three staleness gates:
+  `qmllint`, `shellcheck`, `omarchy plugin validate`, `make agents`, and three
+  staleness gates:
   that `TOOLS.md` matches the server's current schemas, that
   `permissions.schema.json` matches the pydantic models that enforce it, and
   that `config.example.toml` still pins no defaults. CI runs the same things.

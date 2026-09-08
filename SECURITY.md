@@ -34,7 +34,7 @@ then [What the server does not defend against](#what-the-server-does-not-defend-
 `auth.py`, `execute.py`, `gate.py` and `prompt.py`. Changes there need tests in
 the same commit, and the existing tests are the specification — see
 [What the tests pin](ARCHITECTURE.md#what-the-tests-pin) and the working
-agreement in [`CLAUDE.md`](CLAUDE.md).
+agreement in [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ### Contents
 
@@ -73,6 +73,24 @@ compared in constant time. A process that cannot read that file cannot use the
 server. Note this is a boundary between *processes*, not between users: anything
 running as you can read the token, which is the same thing as saying anything
 running as you could already run these commands directly.
+
+### A coding agent reading the plugin directory
+
+`omarchy plugin add` clones this repository into
+`~/.config/omarchy/plugins/io.github.bruce-forte.mcp-server/`. A coding agent
+run in that directory — or in any directory above it, which includes
+`~/.config` and `~` — discovers files like `CLAUDE.md`, `AGENTS.md` and
+`.claude/skills/*/SKILL.md` on its own and treats them as instructions. Nobody
+opts in. So anything this repository ships under one of those names is an
+instruction channel into a reader's agent, arriving with the plugin and
+reviewed by nobody, in the one plugin that hands that agent command execution.
+
+**Defence.** No such file is tracked. `make agents` matches `git ls-files`
+against the usual names — case-insensitively, at any depth — and fails the
+build on a hit, and `make check` runs it. What git tracks is what
+`plugin add` clones, so that is the surface the check covers. The working
+agreement lives in `CONTRIBUTING.md`, which no agent auto-loads. This was
+raised by the Omarchy marketplace security review; ROADMAP N18 records it.
 
 ## What the server does not defend against
 
