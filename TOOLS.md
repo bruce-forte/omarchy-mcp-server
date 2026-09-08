@@ -2,7 +2,7 @@
 
 # Tools
 
-The tool surface of the Omarchy MCP server, version 0.1.0.
+The tool surface of the Omarchy MCP server, version 1.0.0.
 
 Omarchy ships hundreds of commands. Exposing one tool per command would put tens
 of thousands of tokens of schema into a client's context before it did any work,
