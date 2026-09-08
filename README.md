@@ -901,6 +901,7 @@ omarchy plugin update io.github.bruce-forte.mcp-server
 
 ```bash
 make check        # tests, ruff, pyright, qmllint, shellcheck, validation, gates
+make lsp          # point your editor's language server at the dev virtualenv
 make test
 make tools        # regenerate TOOLS.md from the server's schemas
 make schema       # regenerate permissions.schema.json from the pydantic models
@@ -911,6 +912,12 @@ make elicit       # answer a real approval over MCP elicitation, in your termina
 Use the `Makefile` rather than bare `uv` commands: it puts the dev virtualenv
 outside the repository, because `omarchy plugin validate` rejects symlinks
 anywhere inside a plugin folder and a virtualenv is largely symlinks.
+
+That is also why your editor needs `make lsp`. A language server looks for a
+`.venv` beside `pyproject.toml`, does not find one, and reports every
+third-party import as unresolved; `make lsp` writes a git-ignored
+`pyrightconfig.json` naming the real environment. Run it once per checkout, and
+again after changing `[tool.pyright]`.
 
 **Reload rules.** Editing Python takes effect on the next daemon restart
 (`omarchy-shell io.github.bruce-forte.mcp-server restart`). Editing QML needs
