@@ -941,7 +941,10 @@ Item {
   // which one they are looking at.
   Process {
     id: tail
-    command: [root.pluginDir + "bin/omarchy-mcpd", "--tail", "8", "--json"]
+    // Thirty rather than eight: the log has a tab of its own now, and a tab
+    // with one screen of nothing in it is a tab nobody opens twice. The tab
+    // scrolls; the file is read once per open, not continuously.
+    command: [root.pluginDir + "bin/omarchy-mcpd", "--tail", "30", "--json"]
 
     stdout: StdioCollector {
       id: tailOut

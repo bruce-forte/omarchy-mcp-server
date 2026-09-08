@@ -529,3 +529,75 @@ class TestUnclosedSessions:
         line = activity.render(record)
         assert "no recorded end" in line
         assert "unclosed=True" not in line, "the derived flag is not a field to print"
+
+
+class TestHowLoudARecordIs:
+    """The Log tab's level column. Derived from the record's kind rather than
+    stored, so an old log reads the same as a new one and the terminal cannot
+    disagree with the panel about what counts as wrong."""
+
+    def test_a_call_that_worked_is_information(self):
+        assert activity.level(Record(tool="omarchy_theme", exit=0).as_dict()) == "i"
+
+    def test_a_refusal_is_a_warning_rather_than_an_error(self):
+        """The policy doing its job. Loud enough to find, not a fault."""
+        assert activity.level(Record(tool="omarchy_run", outcome="refused").as_dict()) == "w"
+
+    def test_a_failed_call_is_a_warning(self):
+        assert activity.level(Record(tool="omarchy_run", exit=2).as_dict()) == "w"
+
+    def test_an_unanswered_question_is_a_warning(self):
+        assert activity.level(Record(tool="omarchy_run", timed_out=True).as_dict()) == "w"
+
+    def test_a_missing_dependency_is_an_error(self):
+        """A defect on the desktop, not something an agent did."""
+        assert activity.level(Record(tool="omarchy_screenshot", outcome="not_installed").as_dict()) == "e"
+
+    def test_a_raised_exception_is_an_error(self):
+        assert activity.level(Record(tool="omarchy_run", outcome="error").as_dict()) == "e"
+
+    def test_an_ordinary_event_is_information(self):
+        for event in ("started", "stopped", "reloaded", "acknowledged", "permission"):
+            assert activity.level({"ts": "x", "event": event}) == "i", event
+
+    def test_a_rejected_file_is_an_error(self):
+        """The daemon is running something other than what the file says."""
+        assert activity.level({"ts": "x", "event": "config_rejected"}) == "e"
+        assert activity.level({"ts": "x", "event": "permissions_rejected"}) == "e"
+
+    def test_dropped_records_are_an_error(self):
+        assert activity.level({"ts": "x", "event": "dropped", "n": 12}) == "e"
+
+    def test_a_session_with_no_recorded_end_is_a_warning(self):
+        """Expected after `omarchy restart shell`, so not an error -- F30."""
+        assert activity.level({"ts": "x", "event": "started", "unclosed": True}) == "w"
+        assert activity.level({"ts": "x", "event": "started"}) == "i"
+
+    def test_the_json_tail_carries_it(self, tmp_path, monkeypatch, capsys):
+        from omarchy_mcp import __main__ as entry
+
+        monkeypatch.setattr(activity, "STATE_DIR", tmp_path)
+        sink = Sink(tmp_path / "activity.jsonl", max_bytes=1 << 20, log=LOG)
+        sink.start()
+        sink.append(Record(tool="omarchy_theme", exit=0).as_dict())
+        sink.append(Record(tool="omarchy_run", outcome="refused").as_dict())
+        sink.stop()
+
+        assert entry.main(["--tail", "5", "--json"]) == 0
+        records = json.loads(capsys.readouterr().out)["records"]
+        assert [r["level"] for r in records] == ["i", "w"]
+        assert records[0]["tool"] == "omarchy_theme", "the record is otherwise untouched"
+
+    def test_it_is_not_written_to_the_file(self, tmp_path):
+        """A derivation, not a field. The log's shape does not move for a UI."""
+        path = tmp_path / "activity.jsonl"
+        sink = Sink(path, max_bytes=1 << 20, log=LOG)
+        sink.start()
+        sink.append(Record(tool="omarchy_theme", exit=0).as_dict())
+        sink.stop()
+        assert "level" not in path.read_text()
+
+    def test_the_rendered_line_is_unchanged_by_it(self):
+        """`--tail` without --json is a person's view and predates this."""
+        line = activity.render({"ts": "2026-01-05T10:04:00+00:00", "event": "started"})
+        assert "level" not in line
