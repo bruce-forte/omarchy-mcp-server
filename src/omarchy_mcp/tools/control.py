@@ -459,6 +459,11 @@ async def _pick_theme(ctx, perms, log) -> _Picked | _Refused:
         return _needs_a_name("; no themes appear to be installed")
 
     model = _choice_model(themes)
+    # The same deadline a consent question gets, deliberately: a form left
+    # unanswered is a tool call parked on somebody who walked away, which is the
+    # thing `askTimeoutSeconds` bounds. It is the user's own setting, so
+    # somebody who finds 60s tight for reading a list can raise it. A late
+    # answer is ignored rather than acted on, as everywhere else here.
     answer = await consent.ask(
         lambda: ctx.elicit("Which theme should I switch to?", model),
         what="which theme to switch to",

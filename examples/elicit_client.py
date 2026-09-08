@@ -111,6 +111,15 @@ def _choices(params) -> list[str]:
     return []
 
 
+def _leaves(exc: BaseException):
+    """Every non-group exception inside a possibly-nested ExceptionGroup."""
+    if isinstance(exc, BaseExceptionGroup):
+        for sub in exc.exceptions:
+            yield from _leaves(sub)
+    else:
+        yield exc
+
+
 def _field_name(params) -> str:
     """The single field the form is asking for."""
     schema = getattr(params, "requested_schema", None) or {}
@@ -119,7 +128,14 @@ def _field_name(params) -> str:
 
 
 def _ask_at_the_terminal(params) -> dict | None:
-    """Render the form as a numbered list and read an answer. None is a decline."""
+    """Render the form as a numbered list and read an answer. None is a decline.
+
+    Blocking, and called through ``anyio.to_thread.run_sync`` for that reason.
+    ``input()`` on the event-loop thread stalls the whole client while somebody
+    reads a list of themes -- it cannot service its own connection, and the
+    session is torn down underneath the answer it is waiting for. The daemon
+    does the same thing for the same reason; see ``tools/_shared.py``.
+    """
     options = _choices(params)
     if not options:
         typed = input(f"{_field_name(params)}: ").strip()
@@ -161,7 +177,7 @@ async def main() -> int:
         options = _choices(params)
         if options:
             print()
-            content = _ask_at_the_terminal(params)
+            content = await anyio.to_thread.run_sync(_ask_at_the_terminal, params)
             if content is None:
                 print(">>> declining\n")
                 return types.ElicitResult(action="decline")
@@ -177,7 +193,19 @@ async def main() -> int:
 
     # Headers go on the HTTP client: the transport takes a configured client
     # rather than headers of its own.
-    async with httpx2.AsyncClient(headers={"Authorization": f"Bearer {_token()}"}) as http:
+    #
+    # The timeout has to be set here too, and it is the whole reason a question
+    # can be answered at human speed. Passing our own client means the SDK does
+    # not build one, so its SSE-friendly defaults (30s connect, **300s read**)
+    # are not applied and httpx's own 5s read timeout stands -- which tears the
+    # stream down while somebody is still reading the list of themes, and
+    # surfaces as `MCPError: SSE stream ended without a response`.
+    timeout = httpx2.Timeout(30.0, read=300.0)
+    async with httpx2.AsyncClient(
+        headers={"Authorization": f"Bearer {_token()}"},
+        timeout=timeout,
+        follow_redirects=True,
+    ) as http:
         async with streamable_http_client(url, http_client=http) as (read, write):
             async with ClientSession(read, write, elicitation_callback=on_elicit) as session:
                 # `initialize()` negotiates the handshake era only. The modern
@@ -230,8 +258,10 @@ if __name__ == "__main__":
     except* Exception as group:
         # The transport wraps failures in an ExceptionGroup, and a connection
         # refused is the ordinary case here rather than a bug worth a traceback.
-        for exc in group.exceptions:
-            print(f"\ncould not talk to the daemon: {exc}", file=sys.stderr)
+        # Groups nest, so the leaves are what carry the message worth printing:
+        # the outer one only ever says "unhandled errors in a TaskGroup".
+        for exc in _leaves(group):
+            print(f"\ncould not talk to the daemon: {type(exc).__name__}: {exc}", file=sys.stderr)
         print(
             "Is it serving? omarchy-shell io.github.bruce-forte.mcp-server status",
             file=sys.stderr,
