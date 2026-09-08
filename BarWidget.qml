@@ -387,6 +387,23 @@ Panel {
   // `[` and `]`, because Tab belongs to the bar. They wrap, and with three tabs
   // that puts every tab at most one keystroke away in one direction or the
   // other -- which is also why there are no 1/2/3 shortcuts.
+  // What the keys do, where the cursor actually is. Nothing in this shell has
+  // a legend, and six bindings with nothing saying so is folklore -- but a
+  // legend that lists everything is a wall, so it lists what applies here.
+  readonly property string keyLegend: {
+    var rows = focusRows
+    var row = rows.length > 0 ? rows[Math.max(0, Math.min(cursorRow, rows.length - 1))] : []
+    var parts = []
+    if (row.length > 1)
+      parts.push("h l move")
+    parts.push(bodyHasControls ? "j k rows" : "j k scroll")
+    if (cursorKey !== "")
+      parts.push("⏎ activate")
+    parts.push("[ ] tabs")
+    parts.push("esc close")
+    return parts.join(" · ")
+  }
+
   function stepTab(direction) {
     var i = tabs.indexOf(tab)
     if (i < 0)
@@ -404,6 +421,33 @@ Panel {
   }
 
   onTabChanged: restCursor()
+
+  // When, for the Log's second column. Relative for anything recent, because a
+  // bar popup answers "did that just happen?" rather than "at what time?"; the
+  // wall clock takes over once "hours ago" stops being an answer.
+  function ago(ts) {
+    var then = Date.parse(String(ts))
+    if (isNaN(then))
+      return ""
+    var seconds = Math.max(0, (Date.now() - then) / 1000)
+    if (seconds < 45)
+      return "just now"
+    if (seconds < 3600)
+      return Math.floor(seconds / 60) + "m ago"
+    if (seconds < 86400)
+      return Math.floor(seconds / 3600) + "h ago"
+    return Qt.formatDateTime(new Date(then), "MMM d hh:mm")
+  }
+
+  // The level column. Derived in `activity.py` so the terminal and this cannot
+  // disagree about what counts as wrong; this only chooses the colour.
+  function levelColor(level) {
+    if (level === "e")
+      return Color.urgent
+    if (level === "w")
+      return Color.accent
+    return Qt.darker(Color.foreground, 1.8)
+  }
 
   // Which finding a row carries, worst first. A rule has at most one: an error
   // stops the daemon, and saying it is also redundant would be two lines about
@@ -949,23 +993,58 @@ Panel {
                 Repeater {
                   model: root.recent
 
-                  Row {
+                  // Four columns at fixed widths rather than a Row of natural
+                  // ones: a log is read down a column, and text that starts at
+                  // a different x on every line is read line by line instead.
+                  Item {
+                    id: logRow
                     width: logColumn.width
-                    spacing: Style.spacing.controlGap
+                    implicitHeight: message.implicitHeight
+
+                    required property var modelData
 
                     Text {
-                      width: parent.width - detail.width - parent.spacing
+                      id: levelCell
+                      anchors.left: parent.left
+                      width: Style.space(10)
+                      text: String(logRow.modelData.level || "i")
+                      color: root.levelColor(logRow.modelData.level)
+                      font.family: Style.font.family
+                      font.pixelSize: Style.font.bodySmall
+                    }
+
+                    Text {
+                      id: whenCell
+                      anchors.left: levelCell.right
+                      anchors.leftMargin: Style.spacing.controlGap
+                      width: Style.space(72)
                       elide: Text.ElideRight
-                      text: root.rowLabel(modelData)
-                      color: root.rowColor(modelData)
+                      text: root.ago(logRow.modelData.ts)
+                      color: Qt.darker(Color.foreground, 1.8)
+                      font.family: Style.font.family
+                      font.pixelSize: Style.font.bodySmall
+                    }
+
+                    Text {
+                      id: message
+                      anchors.left: whenCell.right
+                      anchors.leftMargin: Style.spacing.controlGap
+                      anchors.right: detail.left
+                      anchors.rightMargin: Style.spacing.controlGap
+                      elide: Text.ElideRight
+                      // The bullet was a list marker; in a table the level
+                      // column is the marker.
+                      text: String(root.rowLabel(logRow.modelData)).replace(/^· /, "")
+                      color: root.rowColor(logRow.modelData)
                       font.family: Style.font.family
                       font.pixelSize: Style.font.bodySmall
                     }
 
                     Text {
                       id: detail
-                      text: root.rowDetail(modelData)
-                      color: root.detailColor(modelData)
+                      anchors.right: parent.right
+                      text: root.rowDetail(logRow.modelData)
+                      color: root.detailColor(logRow.modelData)
                       font.family: Style.font.family
                       font.pixelSize: Style.font.bodySmall
                     }
@@ -1063,26 +1142,46 @@ Panel {
                       readonly property int hidden: (group.expanded ? modelData.rows.length
                                                                     : group.flagged.length) - group.shown.length
 
-                      Row {
+                      // The file, and its Edit in the gutter. A gutter is only a
+                      // gutter if it is a straight line: with buttons trailing
+                      // text of different lengths the eye has to find each one,
+                      // and these buttons remove permissions.
+                      Item {
                         width: parent.width
-                        spacing: Style.spacing.controlGap
+                        implicitHeight: Math.max(headerText.implicitHeight, editButton.implicitHeight)
 
-                        Text {
-                          text: group.modelData.file
-                          color: Color.foreground
-                          font.family: Style.font.family
-                          font.pixelSize: Style.font.bodySmall
-                        }
+                        Column {
+                          id: headerText
+                          anchors.left: parent.left
+                          anchors.right: editButton.left
+                          anchors.rightMargin: Style.spacing.controlGap
+                          anchors.verticalCenter: parent.verticalCenter
+                          spacing: 0
 
-                        Text {
-                          text: group.modelData.rows.length
-                              + (group.modelData.rows.length === 1 ? " rule" : " rules")
-                          color: Qt.darker(Color.foreground, 1.4)
-                          font.family: Style.font.family
-                          font.pixelSize: Style.font.bodySmall
+                          Text {
+                            width: parent.width
+                            elide: Text.ElideRight
+                            text: group.modelData.file
+                            color: Color.foreground
+                            font.family: Style.font.family
+                            font.pixelSize: Style.font.bodySmall
+                          }
+
+                          Text {
+                            width: parent.width
+                            elide: Text.ElideRight
+                            text: group.modelData.rows.length
+                                + (group.modelData.rows.length === 1 ? " rule" : " rules")
+                            color: Qt.darker(Color.foreground, 1.4)
+                            font.family: Style.font.family
+                            font.pixelSize: Style.font.bodySmall
+                          }
                         }
 
                         Button {
+                          id: editButton
+                          anchors.right: parent.right
+                          anchors.verticalCenter: parent.verticalCenter
                           text: "Edit"
                           hasCursor: root.cursorKey === "edit:" + group.modelData.which
                           onHasCursorChanged: if (hasCursor) root.reveal(this)
@@ -1107,19 +1206,35 @@ Panel {
 
                           readonly property var flag: root.flagOf(ruleRow.modelData)
 
-                          Row {
+                          Item {
                             width: parent.width
-                            spacing: Style.spacing.controlGap
+                            implicitHeight: Math.max(ruleText.implicitHeight,
+                                                     removeButton.visible ? removeButton.implicitHeight : 0)
 
+                            // Elides rather than pushing: a long matcher would
+                            // otherwise shove the button out of the card, which
+                            // is the same overflow bug in a different place.
                             Text {
-                              text: "· " + modelData.effect + " '" + modelData.matcher + "'"
+                              id: ruleText
+                              anchors.left: parent.left
+                              anchors.right: covers.left
+                              anchors.rightMargin: Style.spacing.controlGap
+                              anchors.verticalCenter: parent.verticalCenter
+                              elide: Text.ElideRight
+                              text: "· " + ruleRow.modelData.effect + " '"
+                                  + ruleRow.modelData.matcher + "'"
                               color: Color.foreground
                               font.family: Style.font.family
                               font.pixelSize: Style.font.bodySmall
                             }
 
                             Text {
-                              text: modelData.covers + (modelData.covers === 1 ? " command" : " commands")
+                              id: covers
+                              anchors.right: removeButton.visible ? removeButton.left : parent.right
+                              anchors.rightMargin: removeButton.visible ? Style.spacing.controlGap : 0
+                              anchors.verticalCenter: parent.verticalCenter
+                              text: ruleRow.modelData.covers
+                                  + (ruleRow.modelData.covers === 1 ? " command" : " commands")
                               color: Qt.darker(Color.foreground, 1.4)
                               font.family: Style.font.family
                               font.pixelSize: Style.font.bodySmall
@@ -1129,14 +1244,19 @@ Panel {
                             // deny is a decision; it is taken back in an editor, which
                             // the button above opens.
                             Button {
+                              id: removeButton
+                              anchors.right: parent.right
+                              anchors.verticalCenter: parent.verticalCenter
                               text: "Remove"
                               hasCursor: root.cursorKey === "remove:" + ruleRow.modelData.matcher
                               onHasCursorChanged: if (hasCursor) root.reveal(this)
                               bordered: true
-                              visible: group.modelData.removable && modelData.effect === "allow"
+                              visible: group.modelData.removable
+                                       && ruleRow.modelData.effect === "allow"
                                        && root.canRemove
                               enabled: root.service !== null
-                              onClicked: root.service.revoke(modelData.effect, modelData.matcher)
+                              onClicked: root.service.revoke(ruleRow.modelData.effect,
+                                                             ruleRow.modelData.matcher)
                             }
                           }
 
@@ -1194,7 +1314,31 @@ Panel {
 
                   PanelSeparator { width: parent.width }
 
-                  PanelSectionHeader { text: "DEAD RULES" }
+                  // The block's action lives on the block's header, so every
+                  // control in this tab sits on the same vertical.
+                  Item {
+                    width: parent.width
+                    implicitHeight: Math.max(deadHeader.implicitHeight, pruneButton.implicitHeight)
+
+                    PanelSectionHeader {
+                      id: deadHeader
+                      anchors.left: parent.left
+                      anchors.verticalCenter: parent.verticalCenter
+                      text: "DEAD RULES"
+                    }
+
+                    Button {
+                      id: pruneButton
+                      anchors.right: parent.right
+                      anchors.verticalCenter: parent.verticalCenter
+                      text: "Prune"
+                      hasCursor: root.cursorKey === "prune"
+                      onHasCursorChanged: if (hasCursor) root.reveal(this)
+                      bordered: true
+                      enabled: root.service !== null
+                      onClicked: root.service.prune()
+                    }
+                  }
 
                   Text {
                     width: parent.width
@@ -1223,14 +1367,6 @@ Panel {
                     }
                   }
 
-                  Button {
-                    text: "Prune"
-                    hasCursor: root.cursorKey === "prune"
-                    onHasCursorChanged: if (hasCursor) root.reveal(this)
-                    bordered: true
-                    enabled: root.service !== null
-                    onClicked: root.service.prune()
-                  }
                 }
 
                 Column {
@@ -1240,17 +1376,40 @@ Panel {
 
                   PanelSeparator { width: parent.width }
 
-                  Row {
+                  Item {
                     width: parent.width
-                    spacing: Style.spacing.controlGap
+                    implicitHeight: Math.max(reviewHeader.implicitHeight, ackButton.implicitHeight)
 
-                    PanelSectionHeader { text: "PERMISSIONS" }
+                    Row {
+                      id: reviewHeader
+                      anchors.left: parent.left
+                      anchors.right: ackButton.left
+                      anchors.rightMargin: Style.spacing.controlGap
+                      anchors.verticalCenter: parent.verticalCenter
+                      spacing: Style.spacing.controlGap
 
-                    Text {
-                      text: root.reviewHeadline
-                      color: Color.urgent
-                      font.family: Style.font.family
-                      font.pixelSize: Style.font.bodySmall
+                      PanelSectionHeader { text: "PERMISSIONS" }
+
+                      Text {
+                        width: reviewHeader.width - x
+                        elide: Text.ElideRight
+                        text: root.reviewHeadline
+                        color: Color.urgent
+                        font.family: Style.font.family
+                        font.pixelSize: Style.font.bodySmall
+                      }
+                    }
+
+                    Button {
+                      id: ackButton
+                      anchors.right: parent.right
+                      anchors.verticalCenter: parent.verticalCenter
+                      text: "Acknowledge"
+                      hasCursor: root.cursorKey === "acknowledge"
+                      onHasCursorChanged: if (hasCursor) root.reveal(this)
+                      bordered: true
+                      enabled: root.service !== null
+                      onClicked: root.service.acknowledge()
                     }
                   }
 
@@ -1340,18 +1499,6 @@ Panel {
                     font.pixelSize: Style.font.bodySmall
                   }
 
-                  Row {
-                    spacing: Style.spacing.controlGap
-
-                    Button {
-                      text: "Acknowledge"
-                      hasCursor: root.cursorKey === "acknowledge"
-                      onHasCursorChanged: if (hasCursor) root.reveal(this)
-                      bordered: true
-                      enabled: root.service !== null
-                      onClicked: root.service.acknowledge()
-                    }
-                  }
 
                   Text {
                     width: parent.width
@@ -1382,6 +1529,7 @@ Panel {
           PanelSeparator { width: parent.width }
 
           Flow {
+            id: actionRow
             width: parent.width
             spacing: Style.spacing.controlGap
 
@@ -1438,6 +1586,15 @@ Panel {
               // clipboard and is never rendered here.
               onClicked: root.service.copyClientConfig()
             }
+          }
+
+          Text {
+            width: parent.width
+            elide: Text.ElideRight
+            text: root.keyLegend
+            color: Qt.darker(Color.foreground, 2.0)
+            font.family: Style.font.family
+            font.pixelSize: Style.font.bodySmall
           }
         }
       }
