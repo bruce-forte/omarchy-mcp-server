@@ -116,6 +116,30 @@ Panel {
         || r.shadowed !== undefined || r.redundant !== undefined
   }).length
 
+  //: The strip, and which body is showing. Per widget instance, because a bar
+  //: surface exists once per screen, and reset on open: the strip is navigated
+  //: by feel, so a card that sometimes opens in the middle of its own strip
+  //: makes every keystroke after it land somewhere unpredicted.
+  readonly property var tabs: ["Summary", "Log", "Rules"]
+  property string tab: "Summary"
+
+  //: The strip's model. `ButtonGroup` takes {value, label} options, which is
+  //: what lets the marker sit *on* the tab it is about -- a dot rendered after
+  //: the strip would say that something needs attention without saying where.
+  readonly property var tabOptions: [
+    { "value": "Summary", "label": "Summary" },
+    { "value": "Log", "label": "Log" },
+    { "value": "Rules", "label": root.rulesNeedAttention ? "Rules ●" : "Rules" }
+  ]
+
+  //: What tabs take away is everything being visible at once. A dot, not a
+  //: count: the question a marker answers is *is there anything over there*,
+  //: and a number is ambiguous the moment two kinds of thing can be counted.
+  //
+  //  Whatever this covers has to be what the tab actually shows, or the marker
+  //  is a promise that fails silently -- an absent dot reads as "nothing there".
+  readonly property bool rulesNeedAttention: needsReview || canPrune || flaggedRules > 0
+
   readonly property var recent: service ? service.recent : []
   readonly property bool recentLoading: service ? service.recentLoading : false
   readonly property bool activityLogged: service ? service.activityLogged : true
@@ -201,6 +225,8 @@ Panel {
   // The log is read when the panel opens, not continuously: it is a file that
   // grows to a megabyte, and FileView has no seek.
   onOpenedChanged: {
+    if (opened)
+      root.tab = "Summary"
     if (opened && service) {
       service.refreshRecent()
       // Only when there is one. The counts arrived on a frame; this reads the
@@ -372,6 +398,20 @@ Panel {
     onPressed: function (b) { root.toggle() }
   }
 
+  // The panel is three bodies between two permanent bands.
+  //
+  // Tabs, because everything in one column meant nothing was prominent: a
+  // parked question, the daemon's health, a cooldown, dead rules, a review and
+  // the log were all equally present, and N15's scroll only let that grow.
+  //
+  // Fixed height, one for all three tabs. A popup anchored under a bar icon
+  // grows downward, so a card fitted per tab moves the action row up and down
+  // under the cursor while tabbing -- and that row is the thing meant to stay
+  // where it was.
+  //
+  // 520 wide, which is wider than every first-party panel: `Reload config`
+  // overflowed a 420 card before any of this, and the labels are sized by the
+  // user's font and space scale, which this plugin does not control.
   KeyboardPanel {
     id: panel
     anchorItem: button
@@ -379,687 +419,783 @@ Panel {
     bar: root.bar
     open: root.opened
     focusTarget: keys
-    contentWidth: panel.fittedContentWidth(Style.space(420))
-    contentHeight: panel.fittedContentHeight(column.implicitHeight, Style.space(520))
+    contentWidth: panel.fittedContentWidth(Style.space(520))
+    contentHeight: panel.fittedContentHeight(Style.space(520), Style.space(520))
 
     PanelKeyCatcher {
       id: keys
       anchors.fill: parent
       onCloseRequested: root.close()
+      // Still the shell's binding: Tab moves to the next panel on the bar, in
+      // this panel as in every other. Tabs here are `[` and `]`.
       onTabRequested: function (direction) { root.switchPanel(direction) }
-      onMoveRequested: function (dx, dy) {
-        if (dy !== 0)
-          flick.contentY = Math.max(0, Math.min(flick.contentY + dy * Style.space(56),
-                                                Math.max(0, flick.contentHeight - flick.height)))
-      }
 
-      // The panel is fitted to a fixed height, and this content is not a fixed
-      // length: a machine with a dozen rules and something to review has more
-      // to say than 520 of anything. Without this the surplus is drawn
-      // *outside* the card -- found on a live desktop, and it was latent here
-      // before the rules section made it reachable.
-      //
-      // Not the scroll trap N10 warned about. That was putting 400 routes in a
-      // bar popup; this is a bounded section that names
-      // `omarchy-mcpd --permissions` for the rest.
-      Flickable {
-        id: flick
+      Item {
         anchors.fill: parent
-        contentWidth: width
-        contentHeight: column.implicitHeight
-        clip: true
-        boundsBehavior: Flickable.StopAtBounds
-        flickableDirection: Flickable.VerticalFlick
-        interactive: contentHeight > height
-        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
+        // A parked call has a deadline, and this is the only surface carrying
+        // Deny. Above the strip rather than inside a tab: behind one, somebody
+        // sitting on Log never sees the question their agent is waiting on.
         Column {
-          id: column
-          width: flick.width
-          spacing: Style.spacing.md
+          id: approvalBand
+          anchors.top: parent.top
+          anchors.left: parent.left
+          anchors.right: parent.right
+          spacing: Style.spacing.sm
+          visible: root.asking
 
-          // First, above everything: a call is parked waiting for this. The
-          // notification is the other surface, and it can only say yes -- these
-          // are the two answers it has no room for.
-          Column {
-            width: parent.width
-            spacing: Style.spacing.sm
-            visible: root.asking
-
-            PanelSectionHeader { text: "APPROVAL NEEDED" }
-
-            Text {
+            Column {
               width: parent.width
-              wrapMode: Text.WordWrap
-              text: root.askRoute + (root.askArgs.length > 0
-                      ? " " + root.askArgs.map(function (a) { return "'" + a + "'" }).join(" ")
-                      : "")
-              color: Color.urgent
-              font.family: Style.font.family
-              font.pixelSize: Style.font.bodySmall
-              font.bold: true
-            }
+              spacing: Style.spacing.sm
+              visible: root.asking
 
-            Text {
-              width: parent.width
-              wrapMode: Text.WordWrap
-              // Named target or not, this line is always shown: "not resolvable"
-              // is information, and a prompt that silently omits it reads as one
-              // that checked.
-              text: root.askTarget !== "" ? "Target: " + root.askTarget
-                                          : "Target: not resolvable to a known object"
-              color: Qt.darker(Color.foreground, 1.4)
-              font.family: Style.font.family
-              font.pixelSize: Style.font.bodySmall
-            }
-
-            Row {
-              spacing: Style.spacing.controlGap
-
-              Button {
-                text: "Allow once"
-                bordered: true
-                onClicked: root.service.answer("approve")
-              }
-
-              Button {
-                text: "Always"
-                bordered: true
-                onClicked: root.service.answer("always")
-              }
-
-              Button {
-                text: "Deny"
-                bordered: true
-                onClicked: root.service.answer("deny")
-              }
-            }
-
-            Text {
-              width: parent.width
-              wrapMode: Text.WordWrap
-              text: "Always writes an allow rule for this exact command to "
-                  + "permissions.local.json. Ignoring this refuses it."
-              color: Qt.darker(Color.foreground, 1.6)
-              font.family: Style.font.family
-              font.pixelSize: Style.font.bodySmall
-            }
-
-            PanelSeparator { width: parent.width }
-          }
-
-          Text {
-            text: root.serving ? "Serving on 127.0.0.1:" + root.port
-                               : "Not serving · " + root.phase
-            color: root.serving ? Color.foreground : Color.urgent
-            font.family: Style.font.family
-            font.pixelSize: Style.font.subtitle
-            font.bold: true
-          }
-
-          Text {
-            width: parent.width
-            wrapMode: Text.WordWrap
-            visible: text !== ""
-            text: {
-              if (root.serving)
-                return root.calls + (root.calls === 1 ? " tool call" : " tool calls") + " served"
-              if (root.phase === "stopped")
-                return "Stopped. It will stay stopped until you start it again."
-              return root.lastError !== "" ? root.lastError
-                                           : "See `journalctl --user -f` for the reason"
-            }
-            color: Qt.darker(Color.foreground, 1.4)
-            font.family: Style.font.family
-            font.pixelSize: Style.font.bodySmall
-          }
-
-          // Not folded into the line above: that one is about the daemon, this
-          // one is about what an agent can reach, and they change for different
-          // reasons. Hidden until the daemon has said, so a starting server does
-          // not read as "0 tools".
-          Text {
-            width: parent.width
-            wrapMode: Text.WordWrap
-            visible: root.toolsDeclared > 0
-            text: {
-              var line = root.tools + " of " + root.toolsDeclared + " tools offered"
-              if (root.tools < root.toolsDeclared)
-                line += " · " + (root.toolsDeclared - root.tools) + " switched off in config.toml"
-              return line
-            }
-            color: Qt.darker(Color.foreground, 1.4)
-            font.family: Style.font.family
-            font.pixelSize: Style.font.bodySmall
-          }
-
-          // Beside the tools line rather than in the rules section below: this
-          // file is not a permissions document, and grouping it there would say
-          // it was.
-          Button {
-            text: "Edit config.toml"
-            bordered: true
-            enabled: root.service !== null
-            onClicked: root.service.editFile("config")
-          }
-
-          // The daemon keeps serving when config.toml stops parsing, on purpose:
-          // a stray keystroke must not switch every disabled tool back on. Which
-          // makes this the only place the person finds out.
-          Text {
-            width: parent.width
-            wrapMode: Text.WordWrap
-            visible: !root.configOk
-            text: "config.toml does not parse. Still running the previous configuration."
-            color: Color.urgent
-            font.family: Style.font.family
-            font.pixelSize: Style.font.bodySmall
-          }
-
-          // Its own line, not folded into the one above. The two files fail
-          // independently and are fixed in different places, and this one is the
-          // more serious: at startup it stops the daemon rather than being
-          // ignored, because running under rules nobody wrote is worse than not
-          // running.
-          Text {
-            width: parent.width
-            wrapMode: Text.WordWrap
-            visible: !root.permissionsOk
-            text: root.serving
-              ? "permissions.json does not load. Still running the permissions it had."
-              : "permissions.json does not load, so the server did not start. Fix it, "
-                + "press Check, then Start."
-            color: Color.urgent
-            font.family: Style.font.family
-            font.pixelSize: Style.font.bodySmall
-          }
-
-          // The verdict of the last Check. With the daemon down this is the only
-          // way to find out whether an edit worked without restarting to see.
-          Text {
-            width: parent.width
-            wrapMode: Text.WordWrap
-            visible: root.permissionsCheck !== ""
-            text: root.permissionsCheck
-            color: root.permissionsCheckOk ? Qt.darker(Color.foreground, 1.4) : Color.urgent
-            font.family: Style.font.family
-            font.pixelSize: Style.font.bodySmall
-          }
-
-          // Why a guarded call may be refused without anybody being asked. Not a
-          // control: this expires on its own within minutes, and a button to
-          // clear it would be a control that *widens*, which needs the same token
-          // dance as everything else that does. Showing it is the point.
-          Column {
-            width: parent.width
-            spacing: 2
-            visible: root.askingSuppressed || root.coolingRoutes.length > 0
-
-            PanelSeparator { width: parent.width }
-
-            PanelSectionHeader { text: "NOT ASKING" }
-
-            Text {
-              width: parent.width
-              wrapMode: Text.WordWrap
-              visible: root.askingSuppressed
-              text: root.recentPrompts + " approval prompts recently, which is enough "
-                  + "that the next would be answered out of habit. No more are being "
-                  + "raised for now. Allow the command once instead of approving it "
-                  + "every time."
-              color: Color.urgent
-              font.family: Style.font.family
-              font.pixelSize: Style.font.bodySmall
-            }
-
-            Repeater {
-              model: root.coolingRoutes
+              PanelSectionHeader { text: "APPROVAL NEEDED" }
 
               Text {
-                width: column.width
+                width: parent.width
                 wrapMode: Text.WordWrap
-                text: "· " + modelData.route + " — answered no "
-                    + modelData.refusals + "×, not asking again for "
-                    + Math.max(1, Math.round(modelData.secondsLeft / 60)) + " min"
-                color: Qt.darker(Color.foreground, 1.4)
-                font.family: Style.font.family
-                font.pixelSize: Style.font.bodySmall
-              }
-            }
-          }
-
-          // Dead rules, offered for tidying. Its own block rather than part of
-          // the review: the two are different sets, and a rule can be prunable
-          // without ever having appeared in a review because it was already dead
-          // when the snapshot was taken.
-          Column {
-            width: parent.width
-            spacing: Style.spacing.sm
-            visible: root.canPrune
-
-            PanelSeparator { width: parent.width }
-
-            PanelSectionHeader { text: "DEAD RULES" }
-
-            Text {
-              width: parent.width
-              wrapMode: Text.WordWrap
-              text: root.prunableRules + " rule" + (root.prunableRules === 1 ? "" : "s")
-                  + " in permissions.local.json match no command Omarchy ships. They "
-                  + "grant nothing; a rule left over from a route that was renamed."
-              color: Qt.darker(Color.foreground, 1.4)
-              font.family: Style.font.family
-              font.pixelSize: Style.font.bodySmall
-            }
-
-            // Shown before anything goes. A daemon that quietly edits a file is
-            // one the user cannot reason about, which is why N10 never prunes on
-            // its own and this needs a press.
-            Repeater {
-              model: root.review.prunable || []
-
-              Text {
-                width: column.width
-                wrapMode: Text.WordWrap
-                text: "· " + modelData.effect + " '" + modelData.matcher + "'"
-                color: Qt.darker(Color.foreground, 1.4)
-                font.family: Style.font.family
-                font.pixelSize: Style.font.bodySmall
-              }
-            }
-
-            Button {
-              text: "Prune"
-              bordered: true
-              enabled: root.service !== null
-              onClicked: root.service.prune()
-            }
-          }
-
-          // The delta: what an `omarchy update` changed under rules that did not
-          // change. Above RECENT, because it is the one thing here that is
-          // waiting on a person.
-          Column {
-            width: parent.width
-            spacing: Style.spacing.sm
-            visible: root.needsReview
-
-            PanelSeparator { width: parent.width }
-
-            Row {
-              width: parent.width
-              spacing: Style.spacing.controlGap
-
-              PanelSectionHeader { text: "PERMISSIONS" }
-
-              Text {
-                text: root.reviewHeadline
+                text: root.askRoute + (root.askArgs.length > 0
+                        ? " " + root.askArgs.map(function (a) { return "'" + a + "'" }).join(" ")
+                        : "")
                 color: Color.urgent
                 font.family: Style.font.family
                 font.pixelSize: Style.font.bodySmall
+                font.bold: true
               }
+
+              Text {
+                width: parent.width
+                wrapMode: Text.WordWrap
+                // Named target or not, this line is always shown: "not resolvable"
+                // is information, and a prompt that silently omits it reads as one
+                // that checked.
+                text: root.askTarget !== "" ? "Target: " + root.askTarget
+                                            : "Target: not resolvable to a known object"
+                color: Qt.darker(Color.foreground, 1.4)
+                font.family: Style.font.family
+                font.pixelSize: Style.font.bodySmall
+              }
+
+              Row {
+                spacing: Style.spacing.controlGap
+
+                Button {
+                  text: "Allow once"
+                  bordered: true
+                  onClicked: root.service.answer("approve")
+                }
+
+                Button {
+                  text: "Always"
+                  bordered: true
+                  onClicked: root.service.answer("always")
+                }
+
+                Button {
+                  text: "Deny"
+                  bordered: true
+                  onClicked: root.service.answer("deny")
+                }
+              }
+
+              Text {
+                width: parent.width
+                wrapMode: Text.WordWrap
+                text: "Always writes an allow rule for this exact command to "
+                    + "permissions.local.json. Ignoring this refuses it."
+                color: Qt.darker(Color.foreground, 1.6)
+                font.family: Style.font.family
+                font.pixelSize: Style.font.bodySmall
+              }
+
+              PanelSeparator { width: parent.width }
             }
 
-            // A rule that covers more than it did, without anybody editing it.
-            // The most valuable row here and the one that reads as a warning.
-            Repeater {
-              model: root.review.widened || []
+          PanelSeparator { width: parent.width }
+        }
 
-              Column {
-                width: column.width
-                spacing: 2
+        // `[` and `]` drive this; the mouse clicks it. Not a stop in the focus
+        // ring -- it has its own keys, and every stop in that ring should do
+        // something on Enter.
+        Column {
+          id: strip
+          anchors.top: approvalBand.visible ? approvalBand.bottom : parent.top
+          anchors.left: parent.left
+          anchors.right: parent.right
+          anchors.topMargin: approvalBand.visible ? Style.spacing.sm : 0
+          spacing: Style.spacing.sm
+
+          ButtonGroup {
+            id: tabs
+            options: root.tabOptions
+            value: root.tab
+            focusable: false
+            cursorIndex: -1
+            onChanged: function (v) { root.tab = v }
+          }
+
+          PanelSeparator { width: parent.width }
+        }
+
+        // One body per tab, each keeping its own scroll position, so coming
+        // back to the Log leaves it where it was rather than at the top.
+        Item {
+          id: body
+          anchors.top: strip.bottom
+          anchors.left: parent.left
+          anchors.right: parent.right
+          anchors.bottom: footer.top
+          anchors.topMargin: Style.spacing.sm
+          anchors.bottomMargin: Style.spacing.sm
+
+          Flickable {
+            id: summaryFlick
+            anchors.fill: parent
+            visible: root.tab === "Summary"
+            contentWidth: width
+            contentHeight: summaryColumn.implicitHeight
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+            flickableDirection: Flickable.VerticalFlick
+            interactive: contentHeight > height
+            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+
+            Column {
+              id: summaryColumn
+              width: summaryFlick.width
+              spacing: Style.spacing.md
+
+                Text {
+                  text: root.serving ? "Serving on 127.0.0.1:" + root.port
+                                     : "Not serving · " + root.phase
+                  color: root.serving ? Color.foreground : Color.urgent
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.subtitle
+                  font.bold: true
+                }
 
                 Text {
                   width: parent.width
                   wrapMode: Text.WordWrap
-                  text: "Your " + modelData.effect + " rule '" + modelData.matcher
-                      + "' now also covers " + modelData.routes.length + " command"
-                      + (modelData.routes.length === 1 ? "" : "s")
-                      + " you have not seen."
+                  visible: text !== ""
+                  text: {
+                    if (root.serving)
+                      return root.calls + (root.calls === 1 ? " tool call" : " tool calls") + " served"
+                    if (root.phase === "stopped")
+                      return "Stopped. It will stay stopped until you start it again."
+                    return root.lastError !== "" ? root.lastError
+                                                 : "See `journalctl --user -f` for the reason"
+                  }
+                  color: Qt.darker(Color.foreground, 1.4)
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.bodySmall
+                }
+
+                // Not folded into the line above: that one is about the daemon, this
+                // one is about what an agent can reach, and they change for different
+                // reasons. Hidden until the daemon has said, so a starting server does
+                // not read as "0 tools".
+                Text {
+                  width: parent.width
+                  wrapMode: Text.WordWrap
+                  visible: root.toolsDeclared > 0
+                  text: {
+                    var line = root.tools + " of " + root.toolsDeclared + " tools offered"
+                    if (root.tools < root.toolsDeclared)
+                      line += " · " + (root.toolsDeclared - root.tools) + " switched off in config.toml"
+                    return line
+                  }
+                  color: Qt.darker(Color.foreground, 1.4)
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.bodySmall
+                }
+
+                // Beside the tools line rather than in the rules section below: this
+                // file is not a permissions document, and grouping it there would say
+                // it was.
+                Button {
+                  text: "Edit config.toml"
+                  bordered: true
+                  enabled: root.service !== null
+                  onClicked: root.service.editFile("config")
+                }
+
+                // The daemon keeps serving when config.toml stops parsing, on purpose:
+                // a stray keystroke must not switch every disabled tool back on. Which
+                // makes this the only place the person finds out.
+                Text {
+                  width: parent.width
+                  wrapMode: Text.WordWrap
+                  visible: !root.configOk
+                  text: "config.toml does not parse. Still running the previous configuration."
                   color: Color.urgent
                   font.family: Style.font.family
                   font.pixelSize: Style.font.bodySmall
                 }
 
+                // Its own line, not folded into the one above. The two files fail
+                // independently and are fixed in different places, and this one is the
+                // more serious: at startup it stops the daemon rather than being
+                // ignored, because running under rules nobody wrote is worse than not
+                // running.
                 Text {
                   width: parent.width
                   wrapMode: Text.WordWrap
-                  text: modelData.routes.join(", ")
-                  color: Qt.darker(Color.foreground, 1.4)
+                  visible: !root.permissionsOk
+                  text: root.serving
+                    ? "permissions.json does not load. Still running the permissions it had."
+                    : "permissions.json does not load, so the server did not start. Fix it, "
+                      + "press Check, then Start."
+                  color: Color.urgent
                   font.family: Style.font.family
                   font.pixelSize: Style.font.bodySmall
                 }
-              }
-            }
 
-            // A rule that has stopped matching. Silent loss of protection when it
-            // is a deny: upstream renamed a route out from under it.
-            Repeater {
-              model: root.review.dead || []
+                // The verdict of the last Check. With the daemon down this is the only
+                // way to find out whether an edit worked without restarting to see.
+                Text {
+                  width: parent.width
+                  wrapMode: Text.WordWrap
+                  visible: root.permissionsCheck !== ""
+                  text: root.permissionsCheck
+                  color: root.permissionsCheckOk ? Qt.darker(Color.foreground, 1.4) : Color.urgent
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.bodySmall
+                }
 
+              // Summary is always the tab that opens, so the one thing that
+              // must not be missed is stated here in words as well as by the
+              // dot on the strip. A marker says *something is over there*; this
+              // says what, which is the difference between a badge and a
+              // warning.
               Text {
-                width: column.width
+                width: parent.width
                 wrapMode: Text.WordWrap
-                text: "Your " + modelData.effect + " rule '" + modelData.matcher
-                    + "' no longer matches anything."
+                visible: root.rulesNeedAttention
+                text: {
+                  var parts = []
+                  if (root.needsReview)
+                    parts.push("a permissions review is waiting")
+                  if (root.flaggedRules > 0)
+                    parts.push(root.flaggedRules + " rule"
+                             + (root.flaggedRules === 1 ? "" : "s") + " need attention")
+                  if (root.canPrune)
+                    parts.push(root.prunableRules + " dead rule"
+                             + (root.prunableRules === 1 ? "" : "s"))
+                  return parts.join(" · ") + " — Rules tab"
+                }
                 color: Color.urgent
                 font.family: Style.font.family
                 font.pixelSize: Style.font.bodySmall
               }
-            }
 
-            Repeater {
-              model: root.review.arrivals || []
-
-              Row {
-                width: column.width
-                spacing: Style.spacing.controlGap
-                visible: modelData.quarantined || modelData.unclassified
-
-                Text {
-                  width: parent.width - arrivalNote.width - parent.spacing
-                  elide: Text.ElideRight
-                  text: modelData.route
-                  color: Color.foreground
-                  font.family: Style.font.family
-                  font.pixelSize: Style.font.bodySmall
-                }
-
-                Text {
-                  id: arrivalNote
-                  text: modelData.unclassified ? "new group · runs" : "held · asks once"
-                  color: modelData.unclassified ? Color.urgent
-                                                : Qt.darker(Color.foreground, 1.4)
-                  font.family: Style.font.family
-                  font.pixelSize: Style.font.bodySmall
-                }
-              }
-            }
-
-            Text {
-              width: parent.width
-              wrapMode: Text.WordWrap
-              visible: root.reviewLoadingOrEmpty
-              text: "Reading the review…"
-              color: Qt.darker(Color.foreground, 1.4)
-              font.family: Style.font.family
-              font.pixelSize: Style.font.bodySmall
-            }
-
-            Row {
-              spacing: Style.spacing.controlGap
-
-              Button {
-                text: "Acknowledge"
-                bordered: true
-                enabled: root.service !== null
-                onClicked: root.service.acknowledge()
-              }
-            }
-
-            Text {
-              width: parent.width
-              wrapMode: Text.WordWrap
-              text: "Acknowledging records what Omarchy ships now, so you are only "
-                  + "told about the next change. Held commands stop being asked about."
-              color: Qt.darker(Color.foreground, 1.6)
-              font.family: Style.font.family
-              font.pixelSize: Style.font.bodySmall
-            }
-          }
-
-          // Every rule in force, grouped by the file it came from. Always
-          // visible, unlike the warning blocks above: those appear when there is
-          // something wrong, and this is a surface -- the Edit buttons need a
-          // home before anything is wrong, and a section that only exists when
-          // it is broken is one nobody knows about.
-          //
-          // Rows carry a count of what a rule covers and not the routes. A row
-          // that expands into twelve is the scroll trap in miniature; the whole
-          // listing is `omarchy-mcpd --permissions`, which the footer names.
-          Column {
-            id: rulesSection
-            width: parent.width
-            spacing: Style.spacing.sm
-
-            //: The user's own file first: it is the one with authority over the
-            //: other, and it is read first.
-            readonly property var groups: [
-              {
-                "file": "permissions.json",
-                "which": "permissions",
-                "rows": root.ownRules,
-                "removable": false
-              },
-              {
-                "file": "permissions.local.json",
-                "which": "local",
-                "rows": root.localRules,
-                "removable": true
-              }
-            ]
-
-            PanelSeparator { width: parent.width }
-
-            Row {
-              width: parent.width
-              spacing: Style.spacing.controlGap
-
-              PanelSectionHeader { text: "RULES" }
-
-              Text {
-                text: {
-                  if (!root.rulesRead)
-                    return root.rulesLoading ? "reading…" : ""
-                  if (!root.permissionsOk)
-                    return "the document does not load"
-                  if (root.flaggedRules === 0)
-                    return "nothing needs attention"
-                  return root.flaggedRules + " need attention"
-                }
-                color: root.flaggedRules > 0 || !root.permissionsOk
-                  ? Color.urgent : Qt.darker(Color.foreground, 1.4)
-                font.family: Style.font.family
-                font.pixelSize: Style.font.bodySmall
-              }
-            }
-
-            Repeater {
-              model: rulesSection.groups
-
-              Column {
-                id: group
-                width: rulesSection.width
-                spacing: 2
-
-                required property var modelData
-
-                //: `permissions.json` is reference material here and its rules
-                //: are read-only, so only the ones that need attention are shown
-                //: until somebody asks for the rest. The daemon's own file is
-                //: shown whole: it is the pile that Remove exists to thin, and a
-                //: grant you no longer want is not flagged as anything.
-                property bool expanded: modelData.removable
-                readonly property var flagged: modelData.rows.filter(function (r) {
-                  return root.flagOf(r)[0] !== ""
-                })
-                readonly property var shown: {
-                  const rows = group.expanded ? modelData.rows : group.flagged
-                  return rows.slice(0, 8)
-                }
-                readonly property int hidden: (group.expanded ? modelData.rows.length
-                                                              : group.flagged.length) - group.shown.length
-
-                Row {
+              // Why a guarded call may be refused without anybody being asked.
+              // Here rather than under Rules: it is a fact about what the
+              // daemon is doing right now, not about a rule.
+                Column {
                   width: parent.width
-                  spacing: Style.spacing.controlGap
+                  spacing: 2
+                  visible: root.askingSuppressed || root.coolingRoutes.length > 0
+
+                  PanelSeparator { width: parent.width }
+
+                  PanelSectionHeader { text: "NOT ASKING" }
 
                   Text {
-                    text: group.modelData.file
-                    color: Color.foreground
+                    width: parent.width
+                    wrapMode: Text.WordWrap
+                    visible: root.askingSuppressed
+                    text: root.recentPrompts + " approval prompts recently, which is enough "
+                        + "that the next would be answered out of habit. No more are being "
+                        + "raised for now. Allow the command once instead of approving it "
+                        + "every time."
+                    color: Color.urgent
                     font.family: Style.font.family
                     font.pixelSize: Style.font.bodySmall
                   }
 
+                  Repeater {
+                    model: root.coolingRoutes
+
+                    Text {
+                      width: summaryColumn.width
+                      wrapMode: Text.WordWrap
+                      text: "· " + modelData.route + " — answered no "
+                          + modelData.refusals + "×, not asking again for "
+                          + Math.max(1, Math.round(modelData.secondsLeft / 60)) + " min"
+                      color: Qt.darker(Color.foreground, 1.4)
+                      font.family: Style.font.family
+                      font.pixelSize: Style.font.bodySmall
+                    }
+                  }
+                }
+            }
+          }
+
+          Flickable {
+            id: logFlick
+            anchors.fill: parent
+            visible: root.tab === "Log"
+            contentWidth: width
+            contentHeight: logColumn.implicitHeight
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+            flickableDirection: Flickable.VerticalFlick
+            interactive: contentHeight > height
+            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+
+            Column {
+              id: logColumn
+              width: logFlick.width
+              spacing: Style.spacing.md
+
+
+                Text {
+                  width: parent.width
+                  wrapMode: Text.WordWrap
+                  visible: root.recent.length === 0
+                  text: {
+                    if (root.recentLoading)
+                      return "Reading the log…"
+                    if (!root.activityLogged)
+                      return "The activity log is off. Set log.activity = true in "
+                           + "~/.config/omarchy/mcp/config.toml to keep a record of what agents do."
+                    return "Nothing recorded yet."
+                  }
+                  color: Qt.darker(Color.foreground, 1.4)
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.bodySmall
+                }
+
+                Repeater {
+                  model: root.recent
+
+                  Row {
+                    width: logColumn.width
+                    spacing: Style.spacing.controlGap
+
+                    Text {
+                      width: parent.width - detail.width - parent.spacing
+                      elide: Text.ElideRight
+                      text: root.rowLabel(modelData)
+                      color: root.rowColor(modelData)
+                      font.family: Style.font.family
+                      font.pixelSize: Style.font.bodySmall
+                    }
+
+                    Text {
+                      id: detail
+                      text: root.rowDetail(modelData)
+                      color: root.detailColor(modelData)
+                      font.family: Style.font.family
+                      font.pixelSize: Style.font.bodySmall
+                    }
+                  }
+                }
+            }
+          }
+
+          Flickable {
+            id: rulesFlick
+            anchors.fill: parent
+            visible: root.tab === "Rules"
+            contentWidth: width
+            contentHeight: rulesColumn.implicitHeight
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+            flickableDirection: Flickable.VerticalFlick
+            interactive: contentHeight > height
+            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+
+            Column {
+              id: rulesColumn
+              width: rulesFlick.width
+              spacing: Style.spacing.md
+
+                Column {
+                  id: rulesSection
+                  width: parent.width
+                  spacing: Style.spacing.sm
+
+                  //: The user's own file first: it is the one with authority over the
+                  //: other, and it is read first.
+                  readonly property var groups: [
+                    {
+                      "file": "permissions.json",
+                      "which": "permissions",
+                      "rows": root.ownRules,
+                      "removable": false
+                    },
+                    {
+                      "file": "permissions.local.json",
+                      "which": "local",
+                      "rows": root.localRules,
+                      "removable": true
+                    }
+                  ]
+
+
+                  Row {
+                    width: parent.width
+                    spacing: Style.spacing.controlGap
+
+                    PanelSectionHeader { text: "RULES" }
+
+                    Text {
+                      text: {
+                        if (!root.rulesRead)
+                          return root.rulesLoading ? "reading…" : ""
+                        if (!root.permissionsOk)
+                          return "the document does not load"
+                        if (root.flaggedRules === 0)
+                          return "nothing needs attention"
+                        return root.flaggedRules + " need attention"
+                      }
+                      color: root.flaggedRules > 0 || !root.permissionsOk
+                        ? Color.urgent : Qt.darker(Color.foreground, 1.4)
+                      font.family: Style.font.family
+                      font.pixelSize: Style.font.bodySmall
+                    }
+                  }
+
+                  Repeater {
+                    model: rulesSection.groups
+
+                    Column {
+                      id: group
+                      width: rulesSection.width
+                      spacing: 2
+
+                      required property var modelData
+
+                      //: `permissions.json` is reference material here and its rules
+                      //: are read-only, so only the ones that need attention are shown
+                      //: until somebody asks for the rest. The daemon's own file is
+                      //: shown whole: it is the pile that Remove exists to thin, and a
+                      //: grant you no longer want is not flagged as anything.
+                      property bool expanded: modelData.removable
+                      readonly property var flagged: modelData.rows.filter(function (r) {
+                        return root.flagOf(r)[0] !== ""
+                      })
+                      readonly property var shown: {
+                        const rows = group.expanded ? modelData.rows : group.flagged
+                        return rows.slice(0, 8)
+                      }
+                      readonly property int hidden: (group.expanded ? modelData.rows.length
+                                                                    : group.flagged.length) - group.shown.length
+
+                      Row {
+                        width: parent.width
+                        spacing: Style.spacing.controlGap
+
+                        Text {
+                          text: group.modelData.file
+                          color: Color.foreground
+                          font.family: Style.font.family
+                          font.pixelSize: Style.font.bodySmall
+                        }
+
+                        Text {
+                          text: group.modelData.rows.length
+                              + (group.modelData.rows.length === 1 ? " rule" : " rules")
+                          color: Qt.darker(Color.foreground, 1.4)
+                          font.family: Style.font.family
+                          font.pixelSize: Style.font.bodySmall
+                        }
+
+                        Button {
+                          text: "Edit"
+                          bordered: true
+                          enabled: root.service !== null
+                          // Creates the file if it is not there yet, with the $schema
+                          // line, so the editor validates the first rule as it is
+                          // typed.
+                          onClicked: root.service.editFile(group.modelData.which)
+                        }
+                      }
+
+                      Repeater {
+                        model: group.shown
+
+                        Column {
+                          id: ruleRow
+                          width: group.width
+                          spacing: 0
+
+                          required property var modelData
+
+                          readonly property var flag: root.flagOf(ruleRow.modelData)
+
+                          Row {
+                            width: parent.width
+                            spacing: Style.spacing.controlGap
+
+                            Text {
+                              text: "· " + modelData.effect + " '" + modelData.matcher + "'"
+                              color: Color.foreground
+                              font.family: Style.font.family
+                              font.pixelSize: Style.font.bodySmall
+                            }
+
+                            Text {
+                              text: modelData.covers + (modelData.covers === 1 ? " command" : " commands")
+                              color: Qt.darker(Color.foreground, 1.4)
+                              font.family: Style.font.family
+                              font.pixelSize: Style.font.bodySmall
+                            }
+
+                            // Grants only, and only in the daemon's own file. A live
+                            // deny is a decision; it is taken back in an editor, which
+                            // the button above opens.
+                            Button {
+                              text: "Remove"
+                              bordered: true
+                              visible: group.modelData.removable && modelData.effect === "allow"
+                                       && root.canRemove
+                              enabled: root.service !== null
+                              onClicked: root.service.revoke(modelData.effect, modelData.matcher)
+                            }
+                          }
+
+                          Text {
+                            width: parent.width
+                            wrapMode: Text.WordWrap
+                            visible: ruleRow.flag[0] !== ""
+                            text: "  " + ruleRow.flag[0] + ": " + ruleRow.flag[1]
+                            color: ruleRow.flag[0] === "redundant" ? Qt.darker(Color.foreground, 1.4)
+                                                                   : Color.urgent
+                            font.family: Style.font.family
+                            font.pixelSize: Style.font.bodySmall
+                          }
+                        }
+                      }
+
+                      Text {
+                        width: parent.width
+                        wrapMode: Text.WordWrap
+                        visible: group.hidden > 0
+                        text: "  … and " + group.hidden + " more — run omarchy-mcpd --permissions"
+                        color: Qt.darker(Color.foreground, 1.6)
+                        font.family: Style.font.family
+                        font.pixelSize: Style.font.bodySmall
+                      }
+
+                      Button {
+                        text: group.expanded ? "Hide the rest" : "Show all "
+                                               + group.modelData.rows.length + " rules"
+                        bordered: true
+                        visible: !group.modelData.removable
+                                 && group.modelData.rows.length > group.flagged.length
+                        onClicked: group.expanded = !group.expanded
+                      }
+
+                      Text {
+                        width: parent.width
+                        wrapMode: Text.WordWrap
+                        visible: group.modelData.rows.length === 0 && root.rulesRead
+                        text: group.modelData.removable
+                          ? "  nothing granted here yet; answering \u201calways\u201d writes to it"
+                          : "  no rules; guarded commands take the default"
+                        color: Qt.darker(Color.foreground, 1.6)
+                        font.family: Style.font.family
+                        font.pixelSize: Style.font.bodySmall
+                      }
+                    }
+                  }
+                }
+
+                Column {
+                  width: parent.width
+                  spacing: Style.spacing.sm
+                  visible: root.canPrune
+
+                  PanelSeparator { width: parent.width }
+
+                  PanelSectionHeader { text: "DEAD RULES" }
+
                   Text {
-                    text: group.modelData.rows.length
-                        + (group.modelData.rows.length === 1 ? " rule" : " rules")
+                    width: parent.width
+                    wrapMode: Text.WordWrap
+                    text: root.prunableRules + " rule" + (root.prunableRules === 1 ? "" : "s")
+                        + " in permissions.local.json match no command Omarchy ships. They "
+                        + "grant nothing; a rule left over from a route that was renamed."
                     color: Qt.darker(Color.foreground, 1.4)
                     font.family: Style.font.family
                     font.pixelSize: Style.font.bodySmall
                   }
 
+                  // Shown before anything goes. A daemon that quietly edits a file is
+                  // one the user cannot reason about, which is why N10 never prunes on
+                  // its own and this needs a press.
+                  Repeater {
+                    model: root.review.prunable || []
+
+                    Text {
+                      width: rulesColumn.width
+                      wrapMode: Text.WordWrap
+                      text: "· " + modelData.effect + " '" + modelData.matcher + "'"
+                      color: Qt.darker(Color.foreground, 1.4)
+                      font.family: Style.font.family
+                      font.pixelSize: Style.font.bodySmall
+                    }
+                  }
+
                   Button {
-                    text: "Edit"
+                    text: "Prune"
                     bordered: true
                     enabled: root.service !== null
-                    // Creates the file if it is not there yet, with the $schema
-                    // line, so the editor validates the first rule as it is
-                    // typed.
-                    onClicked: root.service.editFile(group.modelData.which)
+                    onClicked: root.service.prune()
                   }
                 }
 
-                Repeater {
-                  model: group.shown
+                Column {
+                  width: parent.width
+                  spacing: Style.spacing.sm
+                  visible: root.needsReview
 
-                  Column {
-                    id: ruleRow
-                    width: group.width
-                    spacing: 0
+                  PanelSeparator { width: parent.width }
 
-                    required property var modelData
+                  Row {
+                    width: parent.width
+                    spacing: Style.spacing.controlGap
 
-                    readonly property var flag: root.flagOf(ruleRow.modelData)
+                    PanelSectionHeader { text: "PERMISSIONS" }
 
-                    Row {
-                      width: parent.width
-                      spacing: Style.spacing.controlGap
+                    Text {
+                      text: root.reviewHeadline
+                      color: Color.urgent
+                      font.family: Style.font.family
+                      font.pixelSize: Style.font.bodySmall
+                    }
+                  }
+
+                  // A rule that covers more than it did, without anybody editing it.
+                  // The most valuable row here and the one that reads as a warning.
+                  Repeater {
+                    model: root.review.widened || []
+
+                    Column {
+                      width: rulesColumn.width
+                      spacing: 2
 
                       Text {
-                        text: "· " + modelData.effect + " '" + modelData.matcher + "'"
+                        width: parent.width
+                        wrapMode: Text.WordWrap
+                        text: "Your " + modelData.effect + " rule '" + modelData.matcher
+                            + "' now also covers " + modelData.routes.length + " command"
+                            + (modelData.routes.length === 1 ? "" : "s")
+                            + " you have not seen."
+                        color: Color.urgent
+                        font.family: Style.font.family
+                        font.pixelSize: Style.font.bodySmall
+                      }
+
+                      Text {
+                        width: parent.width
+                        wrapMode: Text.WordWrap
+                        text: modelData.routes.join(", ")
+                        color: Qt.darker(Color.foreground, 1.4)
+                        font.family: Style.font.family
+                        font.pixelSize: Style.font.bodySmall
+                      }
+                    }
+                  }
+
+                  // A rule that has stopped matching. Silent loss of protection when it
+                  // is a deny: upstream renamed a route out from under it.
+                  Repeater {
+                    model: root.review.dead || []
+
+                    Text {
+                      width: rulesColumn.width
+                      wrapMode: Text.WordWrap
+                      text: "Your " + modelData.effect + " rule '" + modelData.matcher
+                          + "' no longer matches anything."
+                      color: Color.urgent
+                      font.family: Style.font.family
+                      font.pixelSize: Style.font.bodySmall
+                    }
+                  }
+
+                  Repeater {
+                    model: root.review.arrivals || []
+
+                    Row {
+                      width: rulesColumn.width
+                      spacing: Style.spacing.controlGap
+                      visible: modelData.quarantined || modelData.unclassified
+
+                      Text {
+                        width: parent.width - arrivalNote.width - parent.spacing
+                        elide: Text.ElideRight
+                        text: modelData.route
                         color: Color.foreground
                         font.family: Style.font.family
                         font.pixelSize: Style.font.bodySmall
                       }
 
                       Text {
-                        text: modelData.covers + (modelData.covers === 1 ? " command" : " commands")
-                        color: Qt.darker(Color.foreground, 1.4)
+                        id: arrivalNote
+                        text: modelData.unclassified ? "new group · runs" : "held · asks once"
+                        color: modelData.unclassified ? Color.urgent
+                                                      : Qt.darker(Color.foreground, 1.4)
                         font.family: Style.font.family
                         font.pixelSize: Style.font.bodySmall
                       }
-
-                      // Grants only, and only in the daemon's own file. A live
-                      // deny is a decision; it is taken back in an editor, which
-                      // the button above opens.
-                      Button {
-                        text: "Remove"
-                        bordered: true
-                        visible: group.modelData.removable && modelData.effect === "allow"
-                                 && root.canRemove
-                        enabled: root.service !== null
-                        onClicked: root.service.revoke(modelData.effect, modelData.matcher)
-                      }
-                    }
-
-                    Text {
-                      width: parent.width
-                      wrapMode: Text.WordWrap
-                      visible: ruleRow.flag[0] !== ""
-                      text: "  " + ruleRow.flag[0] + ": " + ruleRow.flag[1]
-                      color: ruleRow.flag[0] === "redundant" ? Qt.darker(Color.foreground, 1.4)
-                                                             : Color.urgent
-                      font.family: Style.font.family
-                      font.pixelSize: Style.font.bodySmall
                     }
                   }
-                }
 
-                Text {
-                  width: parent.width
-                  wrapMode: Text.WordWrap
-                  visible: group.hidden > 0
-                  text: "  … and " + group.hidden + " more — run omarchy-mcpd --permissions"
-                  color: Qt.darker(Color.foreground, 1.6)
-                  font.family: Style.font.family
-                  font.pixelSize: Style.font.bodySmall
-                }
+                  Text {
+                    width: parent.width
+                    wrapMode: Text.WordWrap
+                    visible: root.reviewLoadingOrEmpty
+                    text: "Reading the review…"
+                    color: Qt.darker(Color.foreground, 1.4)
+                    font.family: Style.font.family
+                    font.pixelSize: Style.font.bodySmall
+                  }
 
-                Button {
-                  text: group.expanded ? "Hide the rest" : "Show all "
-                                         + group.modelData.rows.length + " rules"
-                  bordered: true
-                  visible: !group.modelData.removable
-                           && group.modelData.rows.length > group.flagged.length
-                  onClicked: group.expanded = !group.expanded
-                }
+                  Row {
+                    spacing: Style.spacing.controlGap
 
-                Text {
-                  width: parent.width
-                  wrapMode: Text.WordWrap
-                  visible: group.modelData.rows.length === 0 && root.rulesRead
-                  text: group.modelData.removable
-                    ? "  nothing granted here yet; answering \u201calways\u201d writes to it"
-                    : "  no rules; guarded commands take the default"
-                  color: Qt.darker(Color.foreground, 1.6)
-                  font.family: Style.font.family
-                  font.pixelSize: Style.font.bodySmall
+                    Button {
+                      text: "Acknowledge"
+                      bordered: true
+                      enabled: root.service !== null
+                      onClicked: root.service.acknowledge()
+                    }
+                  }
+
+                  Text {
+                    width: parent.width
+                    wrapMode: Text.WordWrap
+                    text: "Acknowledging records what Omarchy ships now, so you are only "
+                        + "told about the next change. Held commands stop being asked about."
+                    color: Qt.darker(Color.foreground, 1.6)
+                    font.family: Style.font.family
+                    font.pixelSize: Style.font.bodySmall
+                  }
                 }
-              }
             }
           }
+        }
+
+        // On every tab, and pinned: these four are what a person opens this
+        // panel to press. A Flow rather than a Row because the labels are
+        // sized by a font this plugin does not control -- the width makes it
+        // fit, the wrap makes the failure mode two tidy rows rather than a
+        // button sliced off at the frame.
+        Column {
+          id: footer
+          anchors.bottom: parent.bottom
+          anchors.left: parent.left
+          anchors.right: parent.right
+          spacing: Style.spacing.sm
 
           PanelSeparator { width: parent.width }
 
-          PanelSectionHeader { text: "RECENT" }
-
-          Text {
+          Flow {
             width: parent.width
-            wrapMode: Text.WordWrap
-            visible: root.recent.length === 0
-            text: {
-              if (root.recentLoading)
-                return "Reading the log…"
-              if (!root.activityLogged)
-                return "The activity log is off. Set log.activity = true in "
-                     + "~/.config/omarchy/mcp/config.toml to keep a record of what agents do."
-              return "Nothing recorded yet."
-            }
-            color: Qt.darker(Color.foreground, 1.4)
-            font.family: Style.font.family
-            font.pixelSize: Style.font.bodySmall
-          }
-
-          Repeater {
-            model: root.recent
-
-            Row {
-              width: column.width
-              spacing: Style.spacing.controlGap
-
-              Text {
-                width: parent.width - detail.width - parent.spacing
-                elide: Text.ElideRight
-                text: root.rowLabel(modelData)
-                color: root.rowColor(modelData)
-                font.family: Style.font.family
-                font.pixelSize: Style.font.bodySmall
-              }
-
-              Text {
-                id: detail
-                text: root.rowDetail(modelData)
-                color: root.detailColor(modelData)
-                font.family: Style.font.family
-                font.pixelSize: Style.font.bodySmall
-              }
-            }
-          }
-
-          PanelSeparator { width: parent.width }
-
-          Row {
             spacing: Style.spacing.controlGap
 
             Button {
