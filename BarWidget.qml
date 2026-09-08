@@ -140,6 +140,64 @@ Panel {
   //  is a promise that fails silently -- an absent dot reads as "nothing there".
   readonly property bool rulesNeedAttention: needsReview || canPrune || flaggedRules > 0
 
+  // --- the focus ring ------------------------------------------------------
+  //
+  // Keyed rather than indexed, because half the stops do not exist until the
+  // daemon says so: a Remove per grant, a Prune when something is dead, an
+  // Acknowledge when a review is waiting. An index into a list that changes
+  // under the cursor points at a different button than the one that was lit.
+  //
+  // Rows, not a flat list: `Up`/`Down` cross between rows and `Left`/`Right`
+  // walk within one, which is how every keyboard-driven panel in this shell
+  // behaves. A horizontal row -- the three answers, the daemon buttons -- is
+  // one vertical stop.
+  property int cursorRow: 0
+  property int cursorCol: 0
+
+  readonly property var focusRows: {
+    var rows = []
+    if (root.asking)
+      rows.push(["ask:once", "ask:always", "ask:deny"])
+    if (root.tab === "Summary")
+      rows.push(["edit:config"])
+    if (root.tab === "Rules") {
+      rows.push(["edit:permissions"])
+      rows.push(["edit:local"])
+      if (root.canRemove) {
+        var grants = root.localShown
+        for (var i = 0; i < grants.length; i++) {
+          if (grants[i].effect === "allow")
+            rows.push(["remove:" + grants[i].matcher])
+        }
+      }
+      if (root.canPrune)
+        rows.push(["prune"])
+      if (root.needsReview)
+        rows.push(["acknowledge"])
+    }
+    rows.push(["action:power", "action:restart", "action:check",
+               "action:reload", "action:copy"])
+    return rows
+  }
+
+  readonly property string cursorKey: {
+    var rows = root.focusRows
+    if (root.cursorRow < 0 || root.cursorRow >= rows.length)
+      return ""
+    var row = rows[root.cursorRow]
+    return root.cursorCol >= 0 && root.cursorCol < row.length ? row[root.cursorCol] : ""
+  }
+
+  //: The rows a Remove is actually drawn on. The ring has to agree with what
+  //: is on screen, so the cap lives here rather than in the delegate.
+  readonly property int localCap: 8
+  readonly property var localShown: localRules.slice(0, localCap)
+
+  //: Whether this tab's body contributes any stops. The Log contributes none,
+  //: which is what frees `Up`/`Down` to scroll it -- a Log you cannot scroll
+  //: from the keyboard is not a Log tab.
+  readonly property bool bodyHasControls: tab !== "Log"
+
   readonly property var recent: service ? service.recent : []
   readonly property bool recentLoading: service ? service.recentLoading : false
   readonly property bool activityLogged: service ? service.activityLogged : true
@@ -227,6 +285,11 @@ Panel {
   onOpenedChanged: {
     if (opened)
       root.tab = "Summary"
+    // On open, never on arrival. A question appearing under an already-open
+    // panel must not move the cursor under somebody's fingers: that is how a
+    // call gets approved by an Enter meant for something else.
+    if (opened)
+      root.restCursor()
     if (opened && service) {
       service.refreshRecent()
       // Only when there is one. The counts arrived on a frame; this reads the
@@ -238,6 +301,109 @@ Panel {
       service.refreshRules()
     }
   }
+
+  function bodyFlick() {
+    if (tab === "Summary")
+      return summaryFlick
+    if (tab === "Log")
+      return logFlick
+    return rulesFlick
+  }
+
+  function scrollBody(dy) {
+    var flick = bodyFlick()
+    if (!flick)
+      return
+    flick.contentY = Math.max(0, Math.min(flick.contentY + dy * Style.space(56),
+                                          Math.max(0, flick.contentHeight - flick.height)))
+  }
+
+  function moveCursor(dx, dy) {
+    var rows = focusRows
+    if (rows.length === 0)
+      return
+    if (dy !== 0) {
+      // On a tab with nothing to focus in its body, the arrows are free and
+      // the body is the thing that needs them.
+      if (!bodyHasControls) {
+        scrollBody(dy)
+        return
+      }
+      cursorRow = Math.max(0, Math.min(cursorRow + dy, rows.length - 1))
+      cursorCol = 0
+      return
+    }
+    if (dx !== 0) {
+      var row = rows[Math.max(0, Math.min(cursorRow, rows.length - 1))]
+      cursorCol = Math.max(0, Math.min(cursorCol + dx, row.length - 1))
+    }
+  }
+
+  // Scroll to whatever the cursor just landed on. Called by the button itself,
+  // because a keyed cursor has no item to measure -- the item knows.
+  function reveal(item) {
+    var flick = bodyFlick()
+    if (!item || !flick || flick.contentY === undefined)
+      return
+    var top = item.mapToItem(flick.contentItem, 0, 0).y
+    var bottom = top + item.height
+    var margin = Style.space(12)
+    if (top - margin < flick.contentY)
+      flick.contentY = Math.max(0, top - margin)
+    else if (bottom + margin > flick.contentY + flick.height)
+      flick.contentY = Math.min(Math.max(0, flick.contentHeight - flick.height),
+                                bottom + margin - flick.height)
+  }
+
+  function activateCursor() {
+    var key = cursorKey
+    if (!service || key === "")
+      return
+    if (key === "ask:once")   { service.answer("approve"); return }
+    if (key === "ask:always") { service.answer("always"); return }
+    if (key === "ask:deny")   { service.answer("deny"); return }
+    if (key === "edit:config")      { service.editFile("config"); return }
+    if (key === "edit:permissions") { service.editFile("permissions"); return }
+    if (key === "edit:local")       { service.editFile("local"); return }
+    if (key.indexOf("remove:") === 0) {
+      service.revoke("allow", key.substring("remove:".length))
+      return
+    }
+    if (key === "prune")       { service.prune(); return }
+    if (key === "acknowledge") { service.acknowledge(); return }
+    if (key === "action:power") {
+      if (root.serving || root.phase !== "stopped")
+        service.stop()
+      else
+        service.start()
+      return
+    }
+    if (key === "action:restart") { service.restart(); return }
+    if (key === "action:check")   { service.checkPermissions(); return }
+    if (key === "action:reload")  { service.reloadConfig(); return }
+    if (key === "action:copy")    { service.copyClientConfig(); return }
+  }
+
+  // `[` and `]`, because Tab belongs to the bar. They wrap, and with three tabs
+  // that puts every tab at most one keystroke away in one direction or the
+  // other -- which is also why there are no 1/2/3 shortcuts.
+  function stepTab(direction) {
+    var i = tabs.indexOf(tab)
+    if (i < 0)
+      i = 0
+    tab = tabs[(i + direction + tabs.length) % tabs.length]
+  }
+
+  //: The cursor lands somewhere sensible whenever the ring changes shape: on
+  //: the answers when a question is up *at open*, and on the daemon buttons
+  //: otherwise, since those are on every tab and are what a person opens this
+  //: panel to press.
+  function restCursor() {
+    cursorRow = root.asking ? 0 : Math.max(0, focusRows.length - 1)
+    cursorCol = 0
+  }
+
+  onTabChanged: restCursor()
 
   // Which finding a row carries, worst first. A rule has at most one: an error
   // stops the daemon, and saying it is also redundant would be two lines about
@@ -429,6 +595,14 @@ Panel {
       // Still the shell's binding: Tab moves to the next panel on the bar, in
       // this panel as in every other. Tabs here are `[` and `]`.
       onTabRequested: function (direction) { root.switchPanel(direction) }
+      onMoveRequested: function (dx, dy) { root.moveCursor(dx, dy) }
+      onActivateRequested: root.activateCursor()
+      onTextKey: function (t) {
+        if (t === "[")
+          root.stepTab(-1)
+        else if (t === "]")
+          root.stepTab(1)
+      }
 
       Item {
         anchors.fill: parent
@@ -481,18 +655,21 @@ Panel {
 
                 Button {
                   text: "Allow once"
+                  hasCursor: root.cursorKey === "ask:once"
                   bordered: true
                   onClicked: root.service.answer("approve")
                 }
 
                 Button {
                   text: "Always"
+                  hasCursor: root.cursorKey === "ask:always"
                   bordered: true
                   onClicked: root.service.answer("always")
                 }
 
                 Button {
                   text: "Deny"
+                  hasCursor: root.cursorKey === "ask:deny"
                   bordered: true
                   onClicked: root.service.answer("deny")
                 }
@@ -615,6 +792,8 @@ Panel {
                 // it was.
                 Button {
                   text: "Edit config.toml"
+                  hasCursor: root.cursorKey === "edit:config"
+                  onHasCursorChanged: if (hasCursor) root.reveal(this)
                   bordered: true
                   enabled: root.service !== null
                   onClicked: root.service.editFile("config")
@@ -905,6 +1084,8 @@ Panel {
 
                         Button {
                           text: "Edit"
+                          hasCursor: root.cursorKey === "edit:" + group.modelData.which
+                          onHasCursorChanged: if (hasCursor) root.reveal(this)
                           bordered: true
                           enabled: root.service !== null
                           // Creates the file if it is not there yet, with the $schema
@@ -949,6 +1130,8 @@ Panel {
                             // the button above opens.
                             Button {
                               text: "Remove"
+                              hasCursor: root.cursorKey === "remove:" + ruleRow.modelData.matcher
+                              onHasCursorChanged: if (hasCursor) root.reveal(this)
                               bordered: true
                               visible: group.modelData.removable && modelData.effect === "allow"
                                        && root.canRemove
@@ -1042,6 +1225,8 @@ Panel {
 
                   Button {
                     text: "Prune"
+                    hasCursor: root.cursorKey === "prune"
+                    onHasCursorChanged: if (hasCursor) root.reveal(this)
                     bordered: true
                     enabled: root.service !== null
                     onClicked: root.service.prune()
@@ -1160,6 +1345,8 @@ Panel {
 
                     Button {
                       text: "Acknowledge"
+                      hasCursor: root.cursorKey === "acknowledge"
+                      onHasCursorChanged: if (hasCursor) root.reveal(this)
                       bordered: true
                       enabled: root.service !== null
                       onClicked: root.service.acknowledge()
@@ -1200,6 +1387,7 @@ Panel {
 
             Button {
               text: root.serving || root.phase !== "stopped" ? "Stop" : "Start"
+              hasCursor: root.cursorKey === "action:power"
               bordered: true
               enabled: root.service !== null
               onClicked: {
@@ -1212,6 +1400,7 @@ Panel {
 
             Button {
               text: "Restart"
+              hasCursor: root.cursorKey === "action:restart"
               bordered: true
               enabled: root.service !== null
               onClicked: root.service.restart()
@@ -1226,6 +1415,7 @@ Panel {
             // without this the only way to test a fix is to try to start and see.
             Button {
               text: "Check permissions"
+              hasCursor: root.cursorKey === "action:check"
               bordered: true
               enabled: root.service !== null
               onClicked: root.service.checkPermissions()
@@ -1233,6 +1423,7 @@ Panel {
 
             Button {
               text: "Reload config"
+              hasCursor: root.cursorKey === "action:reload"
               bordered: true
               enabled: root.service !== null && root.serving
               onClicked: root.service.reloadConfig()
@@ -1240,6 +1431,7 @@ Panel {
 
             Button {
               text: root.copied ? "Copied" : "Copy client config"
+              hasCursor: root.cursorKey === "action:copy"
               bordered: true
               enabled: root.service !== null
               // The setup line carries the bearer token. It goes to the
