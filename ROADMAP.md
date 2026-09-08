@@ -1737,7 +1737,7 @@ the state instead, off `/health`, because the real failure mode here is a
 guarded call refused with no prompt and no explanation. Silent suppression is a
 mystery; suppression with a line saying why is a feature.
 
-### N15 — Edit permissions from the panel — planned
+### N15 — Edit permissions from the panel — done
 
 N10 built the surface that *answers* a question about one call, and N13 built
 the one that removes rules that have died. Neither is the surface a person opens
@@ -1954,6 +1954,49 @@ button widens (`revoke` refuses every effect but `allow`); nothing writes
 Neither generated file moves: no tool schema changes, so `TOOLS.md` is untouched,
 and `Finding` is a dataclass rather than a pydantic model, so
 `permissions.schema.json` is untouched.
+
+#### Verified on a live desktop
+
+Against Omarchy's real 427-command registry, with the daemon running under the
+shell.
+
+- **All four flags, on a real document.** A deliberately narrowing test file --
+  two denies and a dead rule, nothing widened -- produced `redundant`,
+  `shadowed` twice, and `void`, each naming the rule that beat it and the file
+  that rule is in. `omarchy theme *` beside a narrower rule was **not** flagged,
+  which is the partial-coverage case staying clean.
+- **The channel, end to end**, through the real `bin/omarchy-mcp-consent` and a
+  daemon run by hand so its `editable` frame was visible. A wrong token removed
+  nothing. A `revoke` naming a `deny` was refused in `permissions.py` -- the
+  button not being drawn is not the protection. The `allow` went, the reload
+  applied it two seconds later, and `activity.jsonl` recorded
+  `{"event":"permission","verb":"revoke","route":"omarchy dev status"}`.
+- **The suppression, by contrast.** A hand edit raised *"MCP server: permissions
+  changed · +allow: omarchy theme set"*. Removing the same rule through the
+  helper a moment later logged `-allow: omarchy theme set` and raised nothing.
+- **`--edit local`** opened the user's actual editor on the actual file.
+
+Two things it found, both fixed in the same session:
+
+**The `permissions` verb answered "not read yet; open the bar panel"** until
+somebody had opened it, because the rows are read when a panel opens. The
+`qs ipc show` listing is the discovery mechanism, so a verb whose only answer is
+*go and press something* discovered nothing. It starts the read itself now.
+
+**The panel drew its surplus outside the card.** It is fitted to
+`Style.space(520)` and this content is not a fixed length; six rules and a
+review overflowed, and the overflow was painted below the frame rather than
+clipped. **Latent before this item** -- DEAD RULES and a long review can do it
+without any of N15 -- and only visible because the rules section made it easy to
+reach. Fixed with the shell's own idiom, a clipping `Flickable` with a scrollbar
+and arrow-key scrolling, as `plugins/agents/Panel.qml` does. The flag on a row
+became one line at the same time: the sentence saying what to do about a rule is
+`--permissions`'s job, and five wrapped lines per rule is what walked the section
+out of the frame in the first place.
+
+The lesson is the one F31 already taught in a different costume: **a surface is
+not verified by a test that renders no pixels.** Neither of these was a logic
+error, and no assertion in 721 tests could have caught either.
 
 #### Watch for
 
