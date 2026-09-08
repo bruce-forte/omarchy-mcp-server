@@ -3,3 +3,6 @@ __pycache__/
 .pytest_cache/
 .venv/
 .ruff_cache/
+# Generated per machine by `make lsp`: it carries an absolute path to the dev
+# virtualenv, which is not the same one on anybody else's disk.
+pyrightconfig.json

@@ -10,7 +10,7 @@
 PLUGIN_ID := io.github.bruce-forte.mcp-server
 export UV_PROJECT_ENVIRONMENT := $(if $(XDG_STATE_HOME),$(XDG_STATE_HOME),$(HOME)/.local/state)/$(PLUGIN_ID)/dev-venv
 
-.PHONY: check test lint validate tools schema sync clean run guard py elicit
+.PHONY: check test lint validate tools schema lsp sync clean run guard py elicit
 
 check: guard test lint validate
 
@@ -63,11 +63,33 @@ validate:
 	  > /tmp/permissions.schema.json.check
 	@diff -q permissions.schema.json /tmp/permissions.schema.json.check >/dev/null || { \
 	  echo "error: permissions.schema.json is stale. Run 'make schema' and commit it."; exit 1; }
+	@test ! -e pyrightconfig.json || { \
+	  PYTHONPATH=src uv run --frozen python -m tests.generate_pyright_config \
+	    > /tmp/pyrightconfig.json.check && \
+	  diff -q pyrightconfig.json /tmp/pyrightconfig.json.check >/dev/null; } || { \
+	  echo "error: pyrightconfig.json is stale, so your editor and CI disagree."; \
+	  echo "       Run 'make lsp'. It is git-ignored; delete it to opt out."; exit 1; }
 
 # Regenerate TOOLS.md from the server's own schemas, so the documentation
 # cannot drift from what the server actually advertises.
 tools: sync
 	PYTHONPATH=src uv run --frozen python -m tests.generate_tools_doc > TOOLS.md
+
+# Point an editor's language server at the dev virtualenv.
+#
+# `make lint` runs pyright through `uv run`, which finds the environment. nvim,
+# VS Code and Zed launch pyright directly, it looks for a `.venv` beside
+# `pyproject.toml` and finds none -- the virtualenv is deliberately outside this
+# directory -- and every third-party import reads as unresolved.
+#
+# The file is git-ignored and machine-specific: pyright expands neither `~` nor
+# an environment variable in `venvPath`, so the absolute path has to be written
+# out here. Re-run this after changing `[tool.pyright]`; `make check` fails if
+# the file exists and has gone stale.
+lsp: sync
+	@PYTHONPATH=src uv run --frozen python -m tests.generate_pyright_config \
+	  > pyrightconfig.json
+	@echo "wrote pyrightconfig.json -> $(UV_PROJECT_ENVIRONMENT)"
 
 # Regenerate the permissions JSON Schema from the pydantic models that enforce
 # it, so an editor and the daemon cannot disagree about what the file may say.
@@ -110,5 +132,5 @@ elicit: sync
 	uv run --frozen python examples/elicit_client.py --port $(ELICIT_PORT) $(ARGS)
 
 clean:
-	rm -rf .venv .pytest_cache .ruff_cache
+	rm -rf .venv .pytest_cache .ruff_cache pyrightconfig.json
 	find . -name __pycache__ -type d -prune -exec rm -rf {} +

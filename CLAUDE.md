@@ -37,6 +37,14 @@ This file is the working agreement.
   schema, or annotations change, and `permissions.schema.json` with
   `make schema` whenever `permissions.py`'s models change. Both are generated;
   never edit either by hand, and `make check` fails if either is stale.
+- **Run `make lsp` once if your editor reports unresolved imports.** `make lint`
+  finds the virtualenv because it goes through `uv run`; nvim, VS Code and Zed
+  launch `pyright` directly, look for a `.venv` beside `pyproject.toml`, and find
+  none — it is outside this directory on purpose. `make lsp` writes a
+  git-ignored `pyrightconfig.json` naming the real one. It is a full copy of
+  `[tool.pyright]` plus two keys, because pyright replaces that table rather
+  than merging with it, so re-run it after changing those settings; `make check`
+  fails if the file exists and has gone stale.
 - **Every parameter in `src/` and `examples/` carries a type.** `pyright` is
   configured to fail on one that does not. `tests/` is deliberately exempt: an
   unannotated `tmp_path` or `monkeypatch` is a pytest fixture whose name is its
