@@ -4,6 +4,44 @@ This plugin runs an HTTP server that executes commands on your desktop on behalf
 of a language model. That is the entire point of it, and it is worth being
 precise about what it does and does not allow.
 
+## Start here
+
+**If you are deciding whether to install this**, read these four paragraphs and
+then [What the server does not defend against](#what-the-server-does-not-defend-against).
+
+1. **What it is.** An HTTP server on `127.0.0.1`, started with your graphical
+   session, that can run any non-sudo Omarchy command. Anything on your machine
+   that can open a loopback socket can reach it, so it requires a 256-bit bearer
+   token and rejects any request whose `Origin` or `Host` is not loopback.
+2. **What it will not do, whatever you configure.** Run anything needing sudo.
+   Pass an argument through a shell. Bind beyond loopback. Grant a route whose
+   own argument is a command line. Switch off its own supervision, or the record
+   of what it did.
+3. **What it asks you about.** Commands that change your system in ways that are
+   hard to undo raise a notification naming the command *and what its arguments
+   resolved to on your machine*, and run only if you press a labelled button.
+   Silence refuses. So does a dismissal, and so does a deadline.
+4. **The real risk is not in this list.** It is prompt injection: the tools that
+   read your screen, your clipboard and your window titles hand the model text
+   that neither you nor this project wrote. That is
+   [the first thing below](#prompt-injection-through-the-screen-and-the-clipboard),
+   because it is the one this server cannot solve for you.
+
+**If you are changing code**, the boundary is `policy.py`, `permissions.py`,
+`auth.py`, `execute.py`, `gate.py` and `prompt.py`. Changes there need tests in
+the same commit, and the existing tests are the specification — see
+[What the tests pin](ARCHITECTURE.md#what-the-tests-pin) and the working
+agreement in [`CLAUDE.md`](CLAUDE.md).
+
+### Contents
+
+- [Threat model](#threat-model) — what is defended against, and what a defence is
+- [What the server does not defend against](#what-the-server-does-not-defend-against) — prompt injection, honestly
+- [What the server will not do](#what-the-server-will-not-do) — the guarantees, one section each
+- [Bounds](#bounds) — timeouts, sizes, the token
+- [Supply chain](#supply-chain) — what is pinned, and what is fetched
+- [Reporting](#reporting)
+
 ## Threat model
 
 The server is reachable by **anything on this machine that can open a TCP
