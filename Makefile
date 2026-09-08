@@ -10,7 +10,7 @@
 PLUGIN_ID := io.github.bruce-forte.mcp-server
 export UV_PROJECT_ENVIRONMENT := $(if $(XDG_STATE_HOME),$(XDG_STATE_HOME),$(HOME)/.local/state)/$(PLUGIN_ID)/dev-venv
 
-.PHONY: check test lint validate tools schema sync clean run guard py
+.PHONY: check test lint validate tools schema sync clean run guard py elicit
 
 check: guard test lint validate
 
@@ -73,6 +73,16 @@ py: sync
 # Run the daemon in the foreground, as the plugin would.
 run:
 	./bin/omarchy-mcpd
+
+# Ask the running daemon for something guarded and answer it here, over MCP
+# elicitation -- the consent path Claude Code cannot take, because the protocol
+# revision it negotiates carries no back-channel (ROADMAP F23). Declines by
+# default, so it changes nothing:
+#   make elicit
+#   make elicit ARGS='--accept'
+#   make elicit ARGS='"omarchy theme set" Nord'
+elicit: sync
+	@uv run --frozen python examples/elicit_client.py $(ARGS)
 
 clean:
 	rm -rf .venv .pytest_cache .ruff_cache

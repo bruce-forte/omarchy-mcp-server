@@ -428,6 +428,32 @@ Two properties are load-bearing, and neither may be relaxed:
 An exception from the asker is caught, not propagated: a broken prompt surfacing
 as a tool-call traceback would bury the reason the command did not run.
 
+### Seeing the elicitation path actually work
+
+The mechanism that could not be used is still there, and still reachable — the
+server answers each connection in the era that connection negotiated, so a
+handshake-era client gets a back-channel and gets asked over MCP.
+`examples/elicit_client.py` is that client, in about eighty lines:
+
+```bash
+make elicit                     # declines, so nothing runs
+make elicit ARGS='--accept'     # says yes
+```
+
+It is worth running once before changing anything in `consent.py` or `gate.py`,
+because it exercises the half of `gate._ask` that a desktop notification never
+reaches: `can_elicit` returning true, `ctx.elicit` being awaited, and
+`consent._interpret` reading a real `ElicitResult` off the wire rather than a
+`Clicked` from `prompt.py`. The tests cover that path with a fake asker; this
+covers it with a real one.
+
+The difference between the two eras is a single field. In the installed SDK,
+`streamable_http.py` stamps `can_send_request = not is_json_response_enabled`,
+while `_streamable_http_modern.py` declares
+`can_send_request: bool = field(default=False, init=False)` and passes `False`
+at every construction site. Nothing in this project chooses between them; the
+client's first message does.
+
 ## Asking at call time
 
 `gate.py` is where `policy.py`, `permissions.py`, `resolve.py` and `consent.py`
