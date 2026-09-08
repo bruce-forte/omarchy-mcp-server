@@ -17,7 +17,7 @@ import pytest
 
 from omarchy_mcp import delta
 from omarchy_mcp.permissions import Effect, Permissions, Rule, evaluate
-from omarchy_mcp.policy import Tier, base_tier
+from omarchy_mcp.policy import base_tier
 
 
 def rules(*specs: tuple[Effect, str]) -> Permissions:
@@ -160,7 +160,9 @@ class TestDeadRules:
         assert review.gone == ("omarchy gone away",)
 
     def test_a_rule_that_never_matched_is_not_newly_dead(self, commands):
-        review = delta.compute(frozenset(commands), commands, rules((Effect.DENY, "omarchy nope *")))
+        review = delta.compute(
+            frozenset(commands), commands, rules((Effect.DENY, "omarchy nope *"))
+        )
         assert review.dead == ()
 
 

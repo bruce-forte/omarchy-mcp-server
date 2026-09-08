@@ -24,8 +24,8 @@ from omarchy_mcp.activity import Record, Sink
 from omarchy_mcp.config import Config
 from omarchy_mcp.permissions import Effect, Permissions
 from omarchy_mcp.settings import Settings
-from omarchy_mcp.tools.catalogue import Catalogue
 from omarchy_mcp.stats import Stats
+from omarchy_mcp.tools.catalogue import Catalogue
 
 LOG = logging.getLogger("test")
 
@@ -255,8 +255,7 @@ class TestReadingItBack:
 
     def test_tail_json_says_when_the_log_is_off(self, tmp_path, monkeypatch, capsys):
         """Otherwise an empty list reads as "nothing happened" to the panel."""
-        from omarchy_mcp import __main__ as entry
-        from omarchy_mcp import config as config_module
+        from omarchy_mcp import __main__ as entry, config as config_module
 
         monkeypatch.setattr(activity, "STATE_DIR", tmp_path)
         monkeypatch.setattr(config_module, "load", lambda: Config(activity=False))
@@ -552,7 +551,8 @@ class TestHowLoudARecordIs:
 
     def test_a_missing_dependency_is_an_error(self):
         """A defect on the desktop, not something an agent did."""
-        assert activity.level(Record(tool="omarchy_screenshot", outcome="not_installed").as_dict()) == "e"
+        body = Record(tool="omarchy_screenshot", outcome="not_installed").as_dict()
+        assert activity.level(body) == "e"
 
     def test_a_raised_exception_is_an_error(self):
         assert activity.level(Record(tool="omarchy_run", outcome="error").as_dict()) == "e"

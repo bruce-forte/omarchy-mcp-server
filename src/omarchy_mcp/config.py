@@ -233,7 +233,12 @@ def load(path: Path | None = None) -> Config:
     cfg = Config(
         port=_int(server.get("port"), "server.port", DEFAULT_PORT, problems, 1024, 65535),
         timeout_ms=_int(
-            server.get("timeout_ms"), "server.timeout_ms", DEFAULT_TIMEOUT_MS, problems, 100, 600_000
+            server.get("timeout_ms"),
+            "server.timeout_ms",
+            DEFAULT_TIMEOUT_MS,
+            problems,
+            100,
+            600_000,
         ),
         max_output_b=_int(
             server.get("max_output_b"),

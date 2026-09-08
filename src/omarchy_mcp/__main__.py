@@ -30,10 +30,10 @@ from . import (
     __version__,
     activity,
     config as config_module,
+    delta as delta_module,
     execute,
     frames,
     notify,
-    delta as delta_module,
     permissions as permissions_module,
     registry,
     token as token_module,
@@ -345,7 +345,8 @@ def _check_permissions(log) -> int:
         print(f"  {finding.level}: {finding.rule.matcher!r} -- {finding.reason}")
 
     rules = len(loaded.rules)
-    print(f"\n{rules} rule{'' if rules == 1 else 's'}, guardedDefault={loaded.guarded_default.value}")
+    plural = "" if rules == 1 else "s"
+    print(f"\n{rules} rule{plural}, guardedDefault={loaded.guarded_default.value}")
     if permissions_module.errors(findings):
         print("The daemon would refuse to start.")
         return EX_CONFIG

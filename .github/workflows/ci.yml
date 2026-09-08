@@ -25,6 +25,11 @@ jobs:
       - name: Run tests
         run: uv run --frozen pytest -q
 
+      - name: Lint
+        # The same pinned ruff `make lint` runs. `ruff format` is deliberately
+        # not run; see the note in pyproject.toml.
+        run: uv run --frozen ruff check .
+
       - name: Type check
         # The same pinned pyright `make lint` runs, over src, tests and
         # examples. A type error fails the build.

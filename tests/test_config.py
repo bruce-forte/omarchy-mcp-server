@@ -64,7 +64,9 @@ def test_a_leftover_policy_table_is_reported_by_name(tmp_path):
     believe they still have a deny list. These moved to permissions.json, and
     saying so is the whole point of noticing them."""
     path = tmp_path / "config.toml"
-    path.write_text('[policy]\nallow = ["omarchy install app"]\ndeny = ["omarchy launch browser"]\n')
+    path.write_text(
+        '[policy]\nallow = ["omarchy install app"]\ndeny = ["omarchy launch browser"]\n'
+    )
     cfg = load(path)
 
     assert cfg.parsed, "a dead key is not a broken file"

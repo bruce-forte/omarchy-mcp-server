@@ -12,12 +12,11 @@ import logging
 
 from mcp.server.mcpserver import MCPServer
 
-from omarchy_mcp import __version__
+from omarchy_mcp import __version__, resources
 from omarchy_mcp.config import Config
-from omarchy_mcp.settings import Settings
 from omarchy_mcp.policy import GUARDED_GROUPS, GUARDED_ROUTES
+from omarchy_mcp.settings import Settings
 from omarchy_mcp.stats import Stats
-from omarchy_mcp import resources
 from omarchy_mcp.tools import control, desktop, feedback, generic, system
 from omarchy_mcp.tools.catalogue import Catalogue
 

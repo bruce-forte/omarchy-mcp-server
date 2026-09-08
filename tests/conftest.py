@@ -30,9 +30,10 @@ import pytest
 # below. ``parents[1]`` is the repository root: one level up from ``tests/``.
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 
-# ``noqa`` silences the linter's "imports go at the top of the file" rule, with
-# the reason on the line: this import cannot run until the path insert above has.
-from omarchy_mcp import execute, prompt  # noqa: E402  -- after the path insert
+# Below the statement above rather than at the top of the file, because it
+# cannot run until that path insert has. `ruff` allows an import after a
+# `sys.path` edit for exactly this case, so no `noqa` is needed to say so.
+from omarchy_mcp import execute, prompt
 
 #: The committed snapshots. ``__file__`` is this file's own path, so this
 #: resolves the same from any working directory.
@@ -215,7 +216,8 @@ def _no_desktop_prompts(monkeypatch):
 @pytest.fixture(scope="session")
 def themes() -> list[str]:
     """A snapshot of `omarchy theme list`."""
-    return [line.strip() for line in (FIXTURES / "themes.txt").read_text().splitlines() if line.strip()]
+    listing = (FIXTURES / "themes.txt").read_text().splitlines()
+    return [line.strip() for line in listing if line.strip()]
 
 
 @pytest.fixture(scope="session")
@@ -252,7 +254,9 @@ def live_registry_groups(registry_payload):
 # A pytest hook: a function with this exact name is called once at startup.
 # Declaring the marker here is what stops pytest warning about an unknown one.
 def pytest_configure(config):
-    config.addinivalue_line("markers", "needs_omarchy: reads the installed Omarchy, not the fixture")
+    config.addinivalue_line(
+        "markers", "needs_omarchy: reads the installed Omarchy, not the fixture"
+    )
 
 
 @pytest.fixture

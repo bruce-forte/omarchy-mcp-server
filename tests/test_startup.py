@@ -18,8 +18,7 @@ import logging
 
 import pytest
 
-from omarchy_mcp import __main__ as entry
-from omarchy_mcp import notify, permissions as permissions_module
+from omarchy_mcp import __main__ as entry, notify, permissions as permissions_module
 
 LOG = logging.getLogger("test")
 
@@ -138,7 +137,7 @@ class TestSayingWhy:
 
         assert any(state == "failed" for state, _ in frames_out)
         assert len(notifications) == 1
-        (headline, body), kwargs = notifications[0]
+        (headline, _), kwargs = notifications[0]
         assert "permissions" in headline.lower()
         assert kwargs["urgency"] == "critical"
 
@@ -265,8 +264,7 @@ class TestPrintPermissions:
         permission_files[0].write_text(doc(allow=["omarchy theme *"]))
         assert entry._print_permissions(LOG, as_json=True) == 0
 
-        from omarchy_mcp import permissions as perms_module
-        from omarchy_mcp import registry
+        from omarchy_mcp import permissions as perms_module, registry
 
         printed = json.loads(capsys.readouterr().out)
         expected = perms_module.explain(

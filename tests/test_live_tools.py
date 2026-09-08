@@ -124,7 +124,11 @@ def session(client):
     response = rpc(
         client,
         "initialize",
-        {"protocolVersion": PROTOCOL, "capabilities": {}, "clientInfo": {"name": "pytest", "version": "1"}},
+        {
+            "protocolVersion": PROTOCOL,
+            "capabilities": {},
+            "clientInfo": {"name": "pytest", "version": "1"},
+        },
     )
     assert response.status_code == 200
     sid = response.headers["mcp-session-id"]
@@ -214,7 +218,7 @@ def test_the_notification_reaches_a_listening_client(live_server):
                                 frames.put(json.loads(line[6:]))
                             if stop.is_set():
                                 return
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 -- the reader reports, never raises
                 frames.put({"error": str(exc)})
 
         reader = threading.Thread(target=listen, daemon=True)

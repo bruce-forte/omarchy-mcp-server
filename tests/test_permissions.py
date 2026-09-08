@@ -26,26 +26,26 @@ from omarchy_mcp.paths import PERMISSIONS_FILE, PERMISSIONS_LOCAL_FILE
 from omarchy_mcp.permissions import (
     COVERED_SHOWN,
     DEFAULT_GUARDED,
+    NEVER_STORE,
     Effect,
+    GrantRefused,
     Permissions,
     PermissionsError,
+    RevokeRefused,
     Rule,
     check,
     describe,
     errors,
     evaluate,
-    GrantRefused,
     explain,
     grant,
     load,
+    parse,
     prunable,
     prune,
-    parse,
     revoke,
-    RevokeRefused,
     seed,
 )
-from omarchy_mcp.permissions import NEVER_STORE
 from omarchy_mcp.policy import Tier, base_tier
 
 

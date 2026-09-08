@@ -43,8 +43,8 @@ Type hints (``def f(x: str) -> bool``)
     Documentation that a checker can verify. Python itself ignores them
     entirely: nothing is enforced at runtime, and a wrong hint never raises --
     so the checker is what makes them worth writing. ``make lint`` runs
-    ``pyright`` over this package, the tests and the examples, and CI fails on
-    an error. Two hints recur and are worth telling apart: ``object`` means "a
+    ``ruff`` and ``pyright`` over this package, the tests and the examples, and
+    CI fails on either. Two hints recur and are worth telling apart: ``object`` means "a
     value this code never looks inside", and ``Any`` means "the checker cannot
     say" -- which is what a JSON document parsed back out of a file is, and why
     every ``as_dict``, ``explain`` and ``state`` here returns ``dict[str,

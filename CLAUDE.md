@@ -24,8 +24,9 @@ This file is the working agreement.
 - **Commit straight to `master`.** No branches.
 - **No AI attribution in commit messages.** No `Co-Authored-By`, no
   `Generated with`, no session trailer.
-- Run `make check` before committing. It runs the tests, `pyright`, `qmllint`,
-  `shellcheck`, `omarchy plugin validate`, and three staleness gates: that
+- Run `make check` before committing. It runs the tests, `ruff`, `pyright`,
+  `qmllint`, `shellcheck`, `omarchy plugin validate`, and three staleness gates:
+  that
   `TOOLS.md` matches the server's current schemas, that
   `permissions.schema.json` matches the pydantic models that enforce it, and
   that `config.example.toml` still pins no defaults. CI runs the same things.

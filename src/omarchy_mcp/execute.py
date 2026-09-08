@@ -37,7 +37,7 @@ import os
 import shlex
 import signal
 import subprocess
-from dataclasses import dataclass, asdict, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from .paths import OMARCHY_PATH

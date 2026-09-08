@@ -25,7 +25,6 @@ import json
 from typing import Any
 
 from . import desktop, permissions, registry, shell
-from .config import Config
 from .permissions import describe
 from .settings import Settings
 from .status import gather

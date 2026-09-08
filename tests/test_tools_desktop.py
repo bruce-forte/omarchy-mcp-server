@@ -16,9 +16,9 @@ import pytest
 from omarchy_mcp import desktop as desktop_layer
 from omarchy_mcp.config import Config
 from omarchy_mcp.settings import Settings
-from omarchy_mcp.tools.catalogue import Catalogue
 from omarchy_mcp.stats import Stats
 from omarchy_mcp.tools import desktop as desktop_tools
+from omarchy_mcp.tools.catalogue import Catalogue
 
 
 @pytest.fixture
@@ -77,9 +77,8 @@ async def test_a_monitor_that_is_not_connected_never_reaches_grim(tools):
 @pytest.mark.anyio
 async def test_ocr_refuses_the_same_name_the_same_way(tools):
     mcp, captured = tools
-    payload = json.loads(
-        (await _call(mcp, "omarchy_screen_text", {"target": "monitor", "monitor": "HDMI-1"}))[0].text
-    )
+    args = {"target": "monitor", "monitor": "HDMI-1"}
+    payload = json.loads((await _call(mcp, "omarchy_screen_text", args))[0].text)
     assert payload["reason"] == "not_found"
     assert captured == []
 

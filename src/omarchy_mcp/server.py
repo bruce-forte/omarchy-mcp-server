@@ -22,12 +22,11 @@ from mcp.server.subscriptions import InMemorySubscriptionBus, ToolsListChanged
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.responses import JSONResponse
 
-from . import __version__, frames, gate
-from .delta import Review
+from . import __version__, frames, gate, resources
 from .auth import BearerAuth
 from .clients import Clients
 from .config import Config
-from . import resources
+from .delta import Review
 from .reload import Reloader, lifespan_for
 from .settings import Settings
 from .stats import Stats

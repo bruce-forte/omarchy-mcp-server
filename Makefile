@@ -35,11 +35,15 @@ sync:
 test: sync
 	uv run --frozen pytest -q
 
-# `pyright` needs the dev environment to resolve `mcp`, `anyio` and the rest,
-# so this depends on `sync` where the other two linters do not. It is pinned in
-# the dev group rather than run through `uvx`, so CI and a desktop check the
-# same version.
+# `ruff` and `pyright` need the dev environment -- one to find the config, the
+# other to resolve `mcp`, `anyio` and the rest -- so this depends on `sync`
+# where the QML and shell linters do not. Both are pinned in the dev group
+# rather than run through `uvx`, so CI and a desktop check the same version.
+#
+# `ruff check` only. The line breaks here are hand-placed, and `ruff format`
+# would rewrite most of the source to no benefit; see the note in pyproject.toml.
 lint: sync
+	uv run --frozen ruff check .
 	uv run --frozen pyright
 	qmllint -I "$(OMARCHY_PATH)/shell" Service.qml BarWidget.qml
 	for f in bin/*; do bash -n "$$f"; done

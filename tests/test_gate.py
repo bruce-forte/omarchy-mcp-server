@@ -148,7 +148,9 @@ class TestWhatIsNeverAsked:
     """The two refusals no answer may overturn."""
 
     @pytest.mark.anyio
-    async def test_a_sudo_route_is_refused_without_asking_anyone(self, commands, quiet_notifications):
+    async def test_a_sudo_route_is_refused_without_asking_anyone(
+        self, commands, quiet_notifications
+    ):
         sent, _ = quiet_notifications
         cmd = sudo(commands)
         assert base_tier(cmd) is Tier.BLOCKED
@@ -363,7 +365,8 @@ class TestWhichAskerIsUsed:
 
         Calling elicit anyway would report a genuine client as disconnected.
         """
-        assert gate.can_elicit(Ctx(can_send_request=False, caps=Caps(Elicitation(form=object())))) is False
+        ctx = Ctx(can_send_request=False, caps=Caps(Elicitation(form=object())))
+        assert gate.can_elicit(ctx) is False
 
     def test_a_bare_elicitation_capability_counts(self):
         """F22: Claude Code declares `elicitation: {}` and names no sub-mode.
@@ -484,7 +487,11 @@ class TestTheNotificationComesDown:
     @pytest.mark.anyio
     async def test_it_is_dismissed_after_an_answer(self, commands, quiet_notifications):
         sent, dismissed = quiet_notifications
-        ctx = Ctx(can_send_request=True, caps=Caps(Elicitation(form=object())), reply=Reply("accept"))
+        ctx = Ctx(
+            can_send_request=True,
+            caps=Caps(Elicitation(form=object())),
+            reply=Reply("accept"),
+        )
 
         await gate.authorize(
             guarded(commands), [], perms=asking(), ctx=ctx, log=LOG, offload=offload
@@ -619,7 +626,11 @@ class TestWhatComesBack:
     async def test_a_refusal_carries_the_outcome_for_the_agent_to_read(
         self, commands, quiet_notifications
     ):
-        ctx = Ctx(can_send_request=True, caps=Caps(Elicitation(form=object())), reply=Reply("decline"))
+        ctx = Ctx(
+            can_send_request=True,
+            caps=Caps(Elicitation(form=object())),
+            reply=Reply("decline"),
+        )
         decision = await gate.authorize(
             guarded(commands), [], perms=asking(), ctx=ctx, log=LOG, offload=offload
         )
@@ -636,7 +647,11 @@ class TestWhatComesBack:
         attention for nothing."""
         sent, _ = quiet_notifications
         cmd = commands["omarchy theme remove"]
-        ctx = Ctx(can_send_request=True, caps=Caps(Elicitation(form=object())), reply=Reply("accept"))
+        ctx = Ctx(
+            can_send_request=True,
+            caps=Caps(Elicitation(form=object())),
+            reply=Reply("accept"),
+        )
 
         decision = await gate.authorize(
             cmd, ["Tokoy Night"], perms=asking(), ctx=ctx, log=LOG, offload=offload
