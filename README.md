@@ -209,6 +209,7 @@ For the reasoning behind each of those, read [`ARCHITECTURE.md`](ARCHITECTURE.md
 | [`SECURITY.md`](SECURITY.md)                           | What an agent can and cannot do, and why                    |
 | [`ROADMAP.md`](ROADMAP.md)                             | What is done, what is left, what was decided against        |
 | [`CLAUDE.md`](CLAUDE.md)                               | Working agreement, and Omarchy plugin conventions           |
+| [`examples/elicit_client.py`](examples/elicit_client.py) | Answer an approval over MCP elicitation — `make elicit`      |
 | [`permissions.example.json`](permissions.example.json) | A starting point for your own rules                         |
 | [`permissions.schema.json`](permissions.schema.json)   | The schema your editor validates them against               |
 
@@ -686,10 +687,38 @@ One route is asked about every time and can never be granted:
 `omarchy update lock`, whose own argument is a command line. Allowing it once
 would allow everything.
 
-If your MCP client supports elicitation over a transport that can carry it, the
-question appears there instead. Claude Code's does not — the protocol revision
-it negotiates carries no server-initiated requests at all — which is why the
+#### The other surface: MCP elicitation
+
+If your client supports elicitation **over a transport that can carry it**, the
+question appears in the client instead of on your desktop. Both halves matter,
+and the second is the one that decides it:
+
+| The client negotiates | Back-channel | Where the question goes |
+| --------------------- | ------------ | ----------------------- |
+| `2025-11-25` or older, via `initialize()` | yes, with SSE | the client, as an elicitation |
+| `2026-07-28`, via `server/discover` | **none, by construction** | a desktop notification |
+
+Claude Code does the second, so elicitation cannot reach it — not a client gap
+and not something to wait out, but the negotiated revision. That is why the
 notification is the primary surface rather than a nicety beside it.
+
+You can watch the other path work. From a checkout, with the daemon running:
+
+```bash
+make elicit                     # asks about `omarchy theme set`, declines
+make elicit ARGS='--accept'     # ...and says yes, so the theme actually changes
+```
+
+It attaches as a handshake-era client, so the daemon asks *it* rather than your
+desktop, and the question is printed in your terminal. It declines by default,
+so running it changes nothing. `examples/elicit_client.py` is about eighty lines
+and explains the negotiation in its own docstring.
+
+Two things you may see instead of a question. If no rule makes the route ask, it
+simply runs — add the `ask` rule from
+[step 6](#6-move-the-line-and-watch-it-take-effect) first. And if you have
+already declined it a few times, you get `not_asked_again` rather than a prompt:
+that is the anti-habituation guard, and it clears itself within minutes.
 
 ### Arguments are checked before anything runs
 
@@ -818,6 +847,7 @@ make test
 make tools        # regenerate TOOLS.md from the server's schemas
 make schema       # regenerate permissions.schema.json from the pydantic models
 make run          # run the daemon in the foreground
+make elicit       # answer a real approval over MCP elicitation, in your terminal
 ```
 
 Use the `Makefile` rather than bare `uv` commands: it puts the dev virtualenv
