@@ -9,6 +9,10 @@ daemon starts with your session and stops with it.
 
 ## Getting started
 
+Steps 1–4 get it installed and connected, in about two minutes. Steps 5–7 are a
+short tour that ends with you having written a real permission rule and seen it
+take effect. Each step links to the section that goes deeper.
+
 ### 1. Install the plugin
 
 ```bash
@@ -66,29 +70,85 @@ omarchy-shell io.github.bruce-forte.mcp-server status
 Or just look at the bar: the plug icon shows `!` when the daemon is not serving,
 and blinks when an agent makes a call. → [Checking it works](#checking-it-works)
 
-### 5. Ask the agent for something
+### 5. Ask the agent for something, and watch it just happen
 
 Try _"what theme am I using, and what else is installed?"_, then _"switch to
-Tokyo Night"_. Both just happen — **no prompt**, and that is correct. Switching
-a theme is reversible in one more sentence, so it is `safe` and it runs.
+Tokyo Night"_.
 
-Now ask for something that is not: _"install cowsay"_. A **critical
-notification** appears on your desktop naming the command and what its arguments
-resolved to. Clicking it opens the panel, where **Allow once**, **Always** and
-**Deny** are. Press **Deny** — nothing runs, and you have seen the whole
-mechanism.
+Both just happen. **No prompt** — and that is correct, not a fault. The line
+this server draws is **what is hard to undo**, not what writes: switching a
+theme is reversed by one more sentence to the agent, so it is `safe` and it
+runs. Wallpapers, volume, brightness, launching an app and moving a window are
+all the same. What asks is the `guarded` tier — installs, removals, migrations,
+reboots, shell plugins — and what is never allowed at all is anything needing
+sudo.
 
-That is the shape of it, and the line is **not** "reads run, writes ask". Most
-things an agent does to your desktop — themes, wallpapers, volume, brightness,
-launching apps, opening windows — are `safe` and run without asking, because
-undoing them is another sentence to the agent. What asks is the tier called
-`guarded`: installs, removals, migrations, reboots, shell plugins. What is never
-allowed at all is anything needing sudo.
+If that is where you want the line, you are done; skip to
+[What to do next](#what-to-do-next). The next two steps move it, which is also
+how you learn what the prompt looks like without installing anything.
 
-If that split is not the one you want, it is yours to change — a `deny` rule
-refuses a route outright, and an `ask` rule puts a route you consider risky
-behind a prompt even though it derives as safe.
-→ [What an agent is allowed to run](#what-an-agent-is-allowed-to-run)
+### 6. Move the line, and watch it take effect
+
+Say you want to be asked before an agent restyles your desktop. Open your rules
+file — this creates it from a template if you have none:
+
+```bash
+omarchy-mcpd --edit permissions
+```
+
+Add one rule to the `ask` list, so the file reads:
+
+```json
+{
+  "permissions": {
+    "deny": [],
+    "ask": [{ "kind": "route", "matcher": "omarchy theme set" }],
+    "allow": []
+  }
+}
+```
+
+Save it. **That is the whole deployment.** No restart, no reload command: the
+daemon re-reads both rule files within about two seconds and the next call is
+decided by the new document. The matcher is an exact route here, so
+`omarchy theme list` and `omarchy theme current` stay unaffected — reading which
+themes you have is not the thing you wanted to be asked about.
+
+### 7. Try it again
+
+Ask for _"switch to Catppuccin"_. (Any theme you actually have — `omarchy theme
+list` shows them. Name one you do not have and you get a refusal naming the near
+misses instead of a prompt: arguments are checked against your machine *before*
+anybody is asked, so a question is never put about something that does not
+exist.)
+
+This time a **critical notification** appears on your desktop, naming the
+command and the theme name it resolved to — `Catppuccin`, not
+`omarchy theme set`, because a question you cannot see the object of is not a
+question. Clicking it opens the panel, where the answers are:
+
+| Press          | What happens                                                                             |
+| -------------- | ---------------------------------------------------------------------------------------- |
+| **Allow once** | The theme switches. Nothing is written down, and you are asked again next time            |
+| **Deny**       | Nothing runs                                                                              |
+| **Always**     | Refused here, deliberately — see below                                                     |
+
+Ignoring it refuses too, after `askTimeoutSeconds`. Silence is never a yes.
+
+**Always** is the interesting one. It is refused with _"`omarchy theme set` is
+covered by 'omarchy theme set' in the 'ask' list of permissions.json, so an
+allow rule would have no effect"_ — because rules are read **deny, then ask,
+then allow**, and your own `ask` rule is reached first. Rather than write a
+grant that would never be consulted, the daemon says so and refuses the call.
+That precedence is the thing that stops a grant from ever carving a hole in a
+restriction you wrote.
+
+To put it back the way it was, delete the rule you just added — same file, same
+two seconds. Or keep it: it is a real rule, not a demo.
+
+→ [What an agent is allowed to run](#what-an-agent-is-allowed-to-run) for the
+tiers in full, and [Being asked, and writing it down](#being-asked-and-writing-it-down)
+for what `Always` does when it is _not_ shadowed.
 
 ### What to do next
 
