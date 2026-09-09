@@ -28,6 +28,34 @@ UV_BIN_DIR="$STATE_DIR/bin"
 # happens to be serving at the moment they install it.
 UV_VERSION="0.9.29"
 
+#: SHA-256 of each supported uv release archive at UV_VERSION.
+#
+# These are committed here, in the source a reviewer reads, and that is the
+# whole point of them. The previous version fetched `<archive>.sha256` from the
+# same GitHub release and checked against that, which authenticates nothing:
+# release assets are mutable, so whoever can replace the archive can replace
+# the checksum lying beside it, and the check passes on both. A constant in
+# reviewed source cannot be replaced without a commit somebody signed off on.
+#
+# Bumping UV_VERSION means transcribing both of these again. Verify them
+# against more than the release page if you can -- that is the only step that
+# makes this an independent check rather than a longer way of trusting the same
+# host.
+UV_SHA256_X86_64="1ce5212f8f42dc7427a1bd3db4168d6d1abcf81b38d8c82a5b9d0ddc54ceebfc"
+UV_SHA256_AARCH64="935b35542b7e25493a551dcb3487af23b72ad284ee8ac6a488a97d02ce2d84ec"
+
+#: What is accepted from the network, and out of the archive.
+#
+# The pinned checksum already fixes the size of a legitimate archive, so these
+# never fire on a good download. They exist so that the failure mode of a
+# careless version bump -- a new constant, transcribed from a release that has
+# been tampered with -- is a refusal rather than a full disk, and so that
+# nothing enormous is written before any check has run.
+UV_ARCHIVE_MAX_BYTES=$((64 * 1024 * 1024))
+UV_MEMBER_MAX_BYTES=$((192 * 1024 * 1024))
+UV_MEMBERS_MAX=8
+UV_DOWNLOAD_MAX_SECONDS=300
+
 # The system interpreter, by absolute path. `python3` on PATH is frequently a
 # mise, brew or conda shim, and building the venv against one of those makes the
 # daemon stop working the moment that shim moves.
@@ -42,47 +70,136 @@ fail() {
   exit 1
 }
 
+# A uv this script is willing to execute: a regular file, not a symlink, and
+# executable. `-f` is true for a symlink pointing at a regular file, so the
+# `-L` test is not redundant -- it is what stops anything that can write into
+# the state directory from redirecting the interpreter build at another binary.
+usable_uv() {
+  local candidate="$1"
+  [[ -n $candidate ]] && [[ ! -L $candidate ]] && [[ -f $candidate ]] && [[ -x $candidate ]]
+}
+
 find_uv() {
-  if command -v uv >/dev/null 2>&1; then
-    command -v uv
+  local found
+  # A uv on PATH is the user's own installation, and their PATH is their
+  # decision; this only declines to follow a symlink planted where this script
+  # writes.
+  if found="$(command -v uv 2>/dev/null)" && [[ -n $found ]]; then
+    printf '%s\n' "$found"
     return 0
   fi
-  if [[ -x $UV_BIN_DIR/uv ]]; then
+  if usable_uv "$UV_BIN_DIR/uv"; then
     printf '%s\n' "$UV_BIN_DIR/uv"
     return 0
   fi
   return 1
 }
 
+# Decide whether a downloaded archive may be unpacked at all.
+#
+# Split out from install_uv so that it can be exercised without a network: the
+# test suite builds hostile archives in a temporary directory and calls this
+# directly. Everything here runs *before* tar writes anything, because a
+# checksum says the bytes are the ones upstream published and says nothing
+# about what tar would do with them.
+#
+#   $1 archive path   $2 expected top-level directory   $3 expected sha256
+verify_uv_archive() {
+  local archive="$1" dir="$2" want="$3"
+  local size got listing names expected
+
+  size="$(stat -c %s -- "$archive")"
+  [[ $size -gt 0 && $size -le $UV_ARCHIVE_MAX_BYTES ]] \
+    || fail "the downloaded uv archive is $size bytes, which is outside what this plugin accepts"
+
+  # Against the constant committed above, never against a checksum fetched
+  # from the host that served the archive.
+  got="$(sha256sum -- "$archive" | cut -d' ' -f1)"
+  [[ $got == "$want" ]] \
+    || fail "uv $UV_VERSION does not match the checksum committed in this plugin; refusing to run it"
+
+  listing="$(tar -tvzf "$archive")" \
+    || fail "the downloaded uv archive could not be read"
+
+  [[ "$(printf '%s\n' "$listing" | wc -l)" -le $UV_MEMBERS_MAX ]] \
+    || fail "the uv archive has more members than this plugin accepts"
+
+  # tar -tv prints the entry type as the first character of the mode. Anything
+  # but a regular file (-) or a directory (d) -- a symlink (l), a hard link
+  # (h), a device (b, c), a fifo (p) -- is not the shape upstream publishes,
+  # and tar can follow a link out of the extraction directory.
+  if printf '%s\n' "$listing" | grep -qvE '^[-d]'; then
+    fail "the uv archive contains a link or a special file; refusing to unpack it"
+  fi
+
+  # Field 3 of GNU tar's verbose listing is the size. A member over the bound
+  # is refused before a byte of it is written.
+  if ! printf '%s\n' "$listing" | awk -v max="$UV_MEMBER_MAX_BYTES" \
+       '$3 !~ /^[0-9]+$/ || $3 > max { exit 1 }'; then
+    fail "the uv archive contains an oversized or unreadable member"
+  fi
+
+  # An allowlist, not a denylist. Requiring the member names to be exactly
+  # these three covers traversal (`..`), absolute paths, and anything
+  # unexpected, in one comparison rather than three patterns that each have to
+  # be right on their own.
+  names="$(tar -tzf "$archive" | LC_ALL=C sort)"
+  expected="$(printf '%s\n' "$dir/" "$dir/uv" "$dir/uvx" | LC_ALL=C sort)"
+  [[ $names == "$expected" ]] \
+    || fail "the uv archive does not contain exactly the files this plugin expects"
+}
+
 install_uv() {
-  local arch tarball url tmp
+  local arch tarball dir url tmp want size staged binary
+
   arch="$(uname -m)"
   case "$arch" in
-    x86_64)  tarball="uv-x86_64-unknown-linux-gnu.tar.gz" ;;
-    aarch64) tarball="uv-aarch64-unknown-linux-gnu.tar.gz" ;;
+    x86_64)  tarball="uv-x86_64-unknown-linux-gnu.tar.gz";  want="$UV_SHA256_X86_64" ;;
+    aarch64) tarball="uv-aarch64-unknown-linux-gnu.tar.gz"; want="$UV_SHA256_AARCH64" ;;
     *) fail "unsupported architecture $arch; install uv yourself (sudo pacman -S uv)" ;;
   esac
+  # The archive unpacks into one directory named after itself.
+  dir="${tarball%.tar.gz}"
 
   url="https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/${tarball}"
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' RETURN
 
   log "downloading uv $UV_VERSION"
-  curl -fsSL --retry 3 --retry-delay 2 -o "$tmp/uv.tar.gz" "$url" \
+  # --proto '=https' refuses a redirect to any other scheme, which -L would
+  # otherwise follow. --max-filesize refuses a body whose declared length is
+  # over the bound before any of it is written.
+  curl -fsSL --proto '=https' --tlsv1.2 \
+    --retry 3 --retry-delay 2 --max-time "$UV_DOWNLOAD_MAX_SECONDS" \
+    --max-filesize "$UV_ARCHIVE_MAX_BYTES" \
+    -o "$tmp/uv.tar.gz" "$url" \
     || fail "could not download uv. Check your network, or install it with: sudo pacman -S uv"
 
-  # The checksum comes from the same release, so this catches a corrupted or
-  # truncated download rather than a compromised release. Pinning the version is
-  # what bounds the latter.
-  curl -fsSL --retry 3 -o "$tmp/sums" "${url}.sha256" \
-    || fail "could not download the uv checksum"
-  ( cd "$tmp" && sha256sum -c --ignore-missing sums >/dev/null 2>&1 ) \
-    || fail "the downloaded uv failed its checksum; refusing to run it"
+  verify_uv_archive "$tmp/uv.tar.gz" "$dir" "$want"
 
-  mkdir -p "$UV_BIN_DIR"
-  tar -xzf "$tmp/uv.tar.gz" -C "$tmp"
-  install -m 0755 "$(find "$tmp" -name uv -type f -print -quit)" "$UV_BIN_DIR/uv" \
+  # Only the one member is extracted, into a directory of its own, and without
+  # taking the archive's ownership or permission bits.
+  mkdir -p "$tmp/x"
+  tar -xzf "$tmp/uv.tar.gz" -C "$tmp/x" --no-same-owner --no-same-permissions \
+    -- "$dir/uv" \
     || fail "could not unpack uv"
+
+  # Verify what came out, rather than what the listing promised.
+  binary="$tmp/x/$dir/uv"
+  usable_uv "$binary" || fail "the unpacked uv is not a regular executable file"
+  size="$(stat -c %s -- "$binary")"
+  [[ $size -gt 0 && $size -le $UV_MEMBER_MAX_BYTES ]] \
+    || fail "the unpacked uv is $size bytes, which is outside what this plugin accepts"
+
+  # Staged beside its destination and renamed onto it. Same directory means the
+  # same filesystem, so the rename is atomic: nothing ever executes a
+  # half-written uv, and a failure part-way leaves the previous one in place.
+  mkdir -p "$UV_BIN_DIR"
+  staged="$UV_BIN_DIR/.uv.$$"
+  install -m 0755 -- "$binary" "$staged" || fail "could not install uv"
+  mv -f -- "$staged" "$UV_BIN_DIR/uv" || { rm -f -- "$staged"; fail "could not install uv"; }
+
+  usable_uv "$UV_BIN_DIR/uv" || fail "uv did not survive installation"
   printf '%s\n' "$UV_BIN_DIR/uv"
 }
 
@@ -114,7 +231,12 @@ ensure_venv() {
   [[ -x $SYSTEM_PYTHON ]] || fail "$SYSTEM_PYTHON is missing; Omarchy expects a system Python"
 
   uv="$(find_uv || true)"
-  [[ -n $uv ]] || uv="$(install_uv)"
+  if [[ -z $uv ]]; then
+    uv="$(install_uv)"
+  fi
+  # Checked here as well as at installation, because find_uv may have returned
+  # one installed on an earlier run, and this is the line before it is executed.
+  usable_uv "$uv" || fail "no usable uv; install it with: sudo pacman -S uv"
 
   log "building the environment in $VENV"
   mkdir -p "$STATE_DIR"
