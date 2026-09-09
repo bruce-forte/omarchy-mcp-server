@@ -964,7 +964,9 @@ outside it by design and are not touched.
 - Omarchy 4 (Quattro) or newer
 - `/usr/bin/python3` — present on every Omarchy install
 - A network connection on first run, to build the environment
-- `uv`, or a network connection so the plugin can fetch a pinned copy of it
+- `uv`, or a network connection so the plugin can fetch a pinned copy of it —
+  verified against a SHA-256 committed in this repository, not one fetched
+  alongside the download. See [Supply chain](SECURITY.md#supply-chain)
 
 ## Security
 

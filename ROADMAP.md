@@ -88,7 +88,7 @@ security boundary only assert whatever the code already does.
 
 ## Phase 6 in detail
 
-**Finished**: N1–N18. The theme was that the person the daemon acts on behalf of
+**Finished**: N1–N19. The theme was that the person the daemon acts on behalf of
 could not see what it did, could not answer for a call in flight, and could not
 stop it without a terminal. Decision 12 covers *daemon* faults; none of this
 covered what an *agent* does, which is the part with consequences.
@@ -2364,6 +2364,86 @@ have made the check a spelling test.
   repository's own tracked files. The venv is built outside the plugin directory,
   so what `uv` installs does not land in the cloned tree — but that is a
   property of where the venv goes, not something this check verifies.
+
+### N19 — The uv download authenticates against a committed digest — done
+
+The marketplace security review, second pass. The agent-control files were
+gone; this was the finding underneath them.
+
+`install_uv` downloaded `uv-<arch>.tar.gz` **and** `uv-<arch>.tar.gz.sha256`
+from the same GitHub release, then checked one against the other. The comment
+in the source was honest about what that bought — *"catches a corrupted or
+truncated download rather than a compromised release"* — and it was still the
+wrong check to ship. **GitHub release assets are mutable.** A publisher who is
+compromised, or an account that is taken over, replaces both files in the same
+minute; the checksum then matches, the plugin installs the replacement, and the
+first thing that replacement is asked to do is build the interpreter that runs
+this daemon. Pinning `UV_VERSION` bounds *which* release is fetched. It does
+not authenticate the bytes of it.
+
+**Committed digests.** `UV_SHA256_X86_64` and `UV_SHA256_AARCH64` are constants
+in `bin/omarchy-mcpd`, checked against the archive. They are part of the source
+a reviewer reads and cannot change without a commit. The cost is real and worth
+naming: bumping `UV_VERSION` now means transcribing two digests by hand, and if
+that transcription is done by pasting from the same release page on a bad day,
+the independence is only as good as the person doing it. The source says so.
+
+**Then the archive, before tar writes anything.** A checksum says the bytes are
+the ones upstream published. It says nothing about what `tar` will do with
+them, and `tar` will follow a symlink out of the extraction directory, write
+above it through `..`, or create a device node. `verify_uv_archive` now:
+
+- bounds the response — `--max-filesize`, `--max-time`, and a second size check
+  against what actually landed, because `--max-filesize` acts on a declared
+  length that a chunked response does not carry
+- bounds each member, and the member count
+- refuses any entry that is not a regular file or a directory: the first
+  character of `tar -tv`'s mode column catches symlinks, hard links, devices
+  and fifos in one test
+- requires the member names to be **exactly** `<dir>/`, `<dir>/uv`,
+  `<dir>/uvx`. An allowlist, the same shape as N17's `SAFE_GROUPS` and for the
+  same reason: traversal, absolute paths and anything unexpected are all
+  refused by one comparison rather than by three patterns that each have to be
+  right on their own
+
+**Then the file, before it is installed.** One member is extracted — `uvx` is
+never written — into a directory of its own, with `--no-same-owner` and
+`--no-same-permissions`. What comes out is checked as a regular non-symlink
+executable within bounds, staged as `.uv.$$` beside its destination, and
+`mv`-ed onto it. Same directory, same filesystem, so the rename is atomic:
+nothing executes a half-written `uv`, and a failure part-way leaves the
+previous one in place.
+
+**And again before it is executed.** `usable_uv` runs on the line before
+`uv sync`, not only at installation, because `find_uv` may return one installed
+on an earlier run. `-f` is true for a symlink pointing at a regular file, so
+the `-L` test is the one doing the work — it is what stops anything that can
+write into the state directory from redirecting the build at another binary.
+
+**The tests run the checks rather than reading them.** `verify_uv_archive` was
+split out of `install_uv` for exactly that: `tests/test_bootstrap.py` builds a
+symlink archive, a hard-link archive, a fifo archive, a traversing archive, an
+absolute-path archive, an archive with an extra member and one with a member
+missing, and asserts each is refused — with no network, in a temporary
+directory. The bounds are tested by lowering the bound rather than by building
+something enormous, which also proves the bound is the value being consulted.
+Reading the source proves a flag is spelled correctly; only running it proves
+`tar` is refused the input. Both mutations were checked: deleting the type test
+fails exactly the three link tests, and weakening the allowlist to a non-empty
+test fails exactly the four name tests.
+
+#### Watch for
+
+- **The digests rot with the version, and rot silently.** Nothing checks them
+  against upstream; they are constants. A bump that transcribes them wrongly
+  fails closed — the plugin refuses to install uv — which is the right failure,
+  but it is a failure a user meets rather than CI.
+- **A distribution `uv` on PATH is taken as-is.** `find_uv` prefers one the user
+  already installed, and none of the above applies to it. That is deliberate:
+  their PATH is their decision, and their package manager already had this
+  argument. What the checks cover is the copy this plugin fetches and writes.
+- **Only two architectures are supported.** Anything else is refused with a
+  message naming `pacman -S uv`, rather than fetched unverified.
 
 ## Deferred
 

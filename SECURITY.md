@@ -509,9 +509,30 @@ cuts the activity log off mid-session.
   and hashes. The bootstrap uses `--frozen`, so it installs the lockfile and
   never resolves.
 - `uv` itself, when not already installed, is downloaded at a **pinned version**
-  from GitHub releases and checksum-verified before it is executed. The upstream
-  one-line installer is deliberately not used: fetching an unpinned script from a
-  third-party host would run whatever that host serves at install time.
+  from GitHub releases. The upstream one-line installer is deliberately not used:
+  fetching an unpinned script from a third-party host would run whatever that
+  host serves at install time.
+- **The expected SHA-256 is committed here, one per architecture**, and the
+  archive is checked against that constant. It is not fetched from the release.
+  A `.sha256` served beside the archive authenticates nothing — release assets
+  are mutable, so whoever can replace the archive can replace the checksum next
+  to it and the check passes on both. A constant in reviewed source cannot move
+  without a commit. Bumping `UV_VERSION` means transcribing both digests again.
+- **The archive is inspected before tar writes anything.** The checksum says the
+  bytes are the ones upstream published; it says nothing about what `tar` would
+  do with them. `verify_uv_archive` bounds the response and each member, refuses
+  any entry that is not a regular file or a directory — a symlink, a hard link,
+  a device, a fifo — and requires the member names to be *exactly* the three a
+  real archive carries. That last one is an allowlist, so traversal (`..`),
+  absolute paths and anything unexpected are all refused by the same comparison.
+- **One member is extracted, and the result is verified before it is installed**:
+  a regular file, not a symlink, within bounds. It is then staged beside its
+  destination and renamed onto it, so the install is atomic and nothing ever
+  executes a half-written `uv`. The same check runs again on the line before
+  `uv` is executed, because it may have been installed on an earlier run.
+- `tests/test_bootstrap.py` builds each of those hostile archives and asserts
+  the refusal. Reading the source proves a flag is spelled right; only running
+  it proves `tar` is refused the input.
 - This project is never installed into the virtualenv, only its dependencies.
 
 ## Reporting
