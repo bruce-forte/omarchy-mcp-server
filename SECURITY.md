@@ -31,7 +31,7 @@ then [What the server does not defend against](#what-the-server-does-not-defend-
    because it is the one this server cannot solve for you.
 
 **If you are changing code**, the boundary is `policy.py`, `permissions.py`,
-`auth.py`, `execute.py`, `gate.py` and `prompt.py`. Changes there need tests in
+`auth.py`, `execute.py`, `trust.py`, `gate.py` and `prompt.py`. Changes there need tests in
 the same commit, and the existing tests are the specification — see
 [What the tests pin](ARCHITECTURE.md#what-the-tests-pin) and the working
 agreement in [`CONTRIBUTING.md`](CONTRIBUTING.md).
@@ -209,6 +209,43 @@ is the language model itself, by accident.
 
 Verified by `tests/test_execute.py`, which writes a canary file and checks it
 survives.
+
+### Only root-owned executables run
+
+A bare command name is resolved against a fixed allowlist — `$OMARCHY_PATH/bin`,
+`/usr/local/bin`, `/usr/bin` — and **never** against the `PATH` this daemon
+inherited from the session. The file it lands on must be a regular executable
+owned by `uid 0` and writable by nobody else, and so must every directory above
+it, up to `/`. A child gets the allowlist as its `PATH`, not ours.
+
+This was not a security control until the Omarchy marketplace review made it
+one. `execute.py` said so in its own docstring — *robustness, not a security
+control* — reasoning that no MCP client can influence this daemon's environment.
+That reasoning missed the session `PATH`. On the machine this was written on,
+`curl` resolved to `/home/linuxbrew/.linuxbrew/bin/curl`: a user-writable
+directory winning over `/usr/bin`, executed by the bootstrap **before** the
+token, the policy tier and the consent prompt exist. The attack needed a package
+manager, not a hostile client.
+
+Symlinks are followed rather than refused — `/usr/share/omarchy/bin/omarchy` is
+one — and both the link and its target are verified, because replacing either
+would be enough.
+
+The rule lives in `trust.py` for the daemon and `bin/omarchy-mcp-trust` for the
+bootstrap, which runs before the interpreter it is building exists.
+`Service.qml` cannot check anything itself, so it spawns `bin/omarchy-mcp-exec`
+by absolute path and that resolves the real name.
+
+**What this does not cover**, stated because a half-claimed guarantee is worse
+than none: `$VENV/bin/python` is in the state directory, which the user owns by
+necessity — it has to be writable to be built. What stands behind the
+interpreter is how it got there, not who owns it: a pinned archive, a digest
+committed in the wrapper, and `--frozen` against `uv.lock`. See
+[Supply chain](#supply-chain).
+
+Verified by `tests/test_trust.py` and `tests/test_bootstrap.py`, which build a
+shadowing directory and assert the planted binary is skipped and the trusted one
+behind it is used.
 
 ### The bearer token is never put on screen
 

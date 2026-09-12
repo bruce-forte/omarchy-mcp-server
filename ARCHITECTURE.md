@@ -39,7 +39,8 @@ section below, and each has a test that fails if it is broken:
 1. Nothing is ever written inside the plugin directory. Omarchy reloads the
    shell on any write there. → [Where things are written](#where-things-are-written)
 2. `argv` never passes through a shell, and `argv[0]` is resolved against a
-   fixed list of directories. → [Which binary actually runs](#which-binary-actually-runs)
+   fixed allowlist of directories whose contents must be root-owned.
+   → [Which binary actually runs](#which-binary-actually-runs)
 3. Every path to running a command goes through `gate.py`. A check one path
    applies and another skips is worse than no check.
    → [Asking at call time](#asking-at-call-time)
@@ -145,6 +146,8 @@ fail validation. The `Makefile` sets `UV_PROJECT_ENVIRONMENT` so a bare
     │        │<──── JSON state lines on stdout ───────────────────┤
     │        │<──── logs on stderr ──────────────────────────────-┘
     │        │
+    │        ├── spawns bin/omarchy-mcp-exec for curl, omarchy, wl-copy
+    │        │        (QML cannot ask who owns a file; the shim verifies first)
     │        ├── polls GET /health every 10s
     │        ├── writes $XDG_RUNTIME_DIR/omarchy-mcp.state
     │        └── IpcHandler: status, recent, review, pending, permissions,
@@ -252,7 +255,8 @@ In dependency order, shallowest first:
 | `consent.py` | The six ways a call can fail to get a yes, and a wait that fails closed. See below |
 | `gate.py` | Where policy, resolution and consent meet and a call runs or does not. Both tool paths come through it |
 | `prompt.py` | The two ways a question reaches a person, and the notification that outlives neither |
-| `execute.py` | `argv` only, never a shell. Timeouts, process-group termination, output caps, detaching, and which file a bare command name runs |
+| `execute.py` | `argv` only, never a shell. Timeouts, process-group termination, output caps, detaching |
+| `trust.py` | Which files may be executed at all: a fixed allowlist, root-owned, link and target both checked. Mirrored in `bin/omarchy-mcp-trust` for the bootstrap |
 | `token.py` | The bearer token, created `0600` |
 | `auth.py` | Bearer authentication as **pure ASGI** — see below |
 | `resources.py` | The 5 concrete resources and 3 URI templates |
@@ -593,18 +597,30 @@ single-daemon design exists to provide.
 
 ## Which binary actually runs
 
-`argv[0]` is resolved against a fixed list -- `$OMARCHY_PATH/bin`,
+`argv[0]` is resolved against a fixed allowlist -- `$OMARCHY_PATH/bin`,
 `/usr/local/bin`, `/usr/bin` -- rather than against the `PATH` this process
-inherited from the session.
+inherited from the session. The file it lands on must be a regular executable
+owned by `uid 0` and writable by nobody else, and so must every directory above
+it. `trust.py` is where that rule lives.
 
-**This is robustness, not a security control,** and it is deliberately not in
-`SECURITY.md`. No MCP client can influence this daemon's environment, so the
-attack it would defend against does not exist here. What it defends against is
-an ordinary desktop: on the machine this was written on, the daemon's inherited
-`PATH` was `/usr/share/omarchy/bin`, then fifty-five toolchain-manager shims,
-and only then `/usr/bin`. Which `tesseract` an OCR call used was therefore a
-property of what the user had most recently installed, and would change without
-anything in this project changing.
+**This used to say "robustness, not a security control".** It said so on the
+reasoning that no MCP client can influence this daemon's environment, and it was
+deliberately absent from `SECURITY.md` on those grounds. The reasoning missed
+the session `PATH`. The daemon does not need a hostile client to inherit a bad
+list -- it needs a package manager, and on the machine this was written on it
+had one: `curl` resolved to `/home/linuxbrew/.linuxbrew/bin/curl`, a directory
+the user can write, and the bootstrap executed it before the token, the policy
+tier or any consent prompt existed.
+
+The Omarchy marketplace security review is what found that. It is now a security
+control, it is in `SECURITY.md`, and ROADMAP N20 records what changed and what
+it cost -- including that a dev-linked `OMARCHY_PATH` under `$HOME` is no longer
+trusted, which is a real regression for that workflow and the price of an
+environment variable no longer being able to promote a directory.
+
+The ordinary-desktop problem it started life solving is still solved, and is now
+a consequence rather than the purpose: which `tesseract` an OCR call uses is no
+longer a property of what the user installed most recently.
 
 Two details are load-bearing:
 
@@ -613,12 +629,13 @@ Two details are load-bearing:
   the copy-pasteable `omarchy theme set` that the README and `TOOLS.md` show.
   Which file ran goes in the log line, where it answers *which one* without
   costing a line of the agent's context on every call.
-- **The environment is passed through untouched, `PATH` included.** What a
-  command looks up for *itself* is its own business: `omarchy launch editor` is
-  supposed to find the editor this user installed, wherever that is. Omarchy's
-  own dispatcher resolves its `omarchy-*` helpers relative to its own location
-  rather than through `PATH`, so choosing the right `omarchy` already settles
-  every subcommand.
+- **The child's `PATH` is replaced with the allowlist.** Choosing the right
+  file settles nothing if the command then looks *its own* helpers up on a list
+  nobody checked -- the same hole, one process along. Omarchy's own dispatcher
+  resolves its `omarchy-*` helpers relative to its own location rather than
+  through `PATH`, so choosing the right `omarchy` already settles every
+  subcommand. The cost is that a command shelling out to something in
+  `~/.local/bin` no longer finds it; `omarchy launch` is the case to watch.
 
 The other half is the error. `execute.run` was the one spawn site that let
 `FileNotFoundError` escape, and the SDK strips the cause, so a renamed `omarchy`

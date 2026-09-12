@@ -578,7 +578,11 @@ Item {
   // collector needs waitForEnd, or its text is empty when we read it.
   Process {
     id: health
-    command: ["curl", "-fsS", "--max-time", "2", "http://127.0.0.1:" + root.port + "/health"]
+    // Through the shim rather than bare: QML cannot ask who owns a file, and a
+    // bare name here is resolved on the shell's inherited session PATH. See
+    // bin/omarchy-mcp-trust and ROADMAP N20.
+    command: [root.pluginDir + "bin/omarchy-mcp-exec",
+      "curl", "-fsS", "--max-time", "2", "http://127.0.0.1:" + root.port + "/health"]
 
     stdout: StdioCollector {
       id: healthOut
@@ -930,7 +934,8 @@ Item {
 
   Process {
     id: notify
-    command: ["omarchy", "notification", "send", "-u", "critical",
+    command: [root.pluginDir + "bin/omarchy-mcp-exec",
+      "omarchy", "notification", "send", "-u", "critical",
       "MCP server", "The Omarchy MCP server keeps failing to start. "
       + "See journalctl --user -f, or run: omarchy-shell io.github.bruce-forte.mcp-server rebuild"]
   }
@@ -998,7 +1003,7 @@ Item {
   Process {
     id: clipboard
     property string payload: ""
-    command: ["wl-copy"]
+    command: [root.pluginDir + "bin/omarchy-mcp-exec", "wl-copy"]
     stdinEnabled: true
 
     onStarted: {
@@ -1024,11 +1029,13 @@ Item {
     }
   }
 
+  // The wrapper removes the environment and exits, rather than QML spawning a
+  // bare `rm` at a path it worked out for itself. Two things fixed by the same
+  // line: nothing here resolves an executable on the session PATH, and where
+  // the venv lives stops being knowledge duplicated in the UI layer.
   Process {
     id: rebuildProc
-    command: ["rm", "-rf",
-      (Quickshell.env("XDG_STATE_HOME") || (Quickshell.env("HOME") + "/.local/state"))
-        + "/" + root.pluginId + "/venv"]
+    command: [root.pluginDir + "bin/omarchy-mcpd", "--rebuild-only"]
     onExited: root.restart()
   }
 }

@@ -11,6 +11,7 @@ import io
 import pathlib
 import re
 import shlex
+import shutil
 import subprocess
 import tarfile
 
@@ -104,7 +105,7 @@ def test_installation_is_atomic(wrapper):
     nothing ever executes a half-written uv.
     """
     assert 'staged="$UV_BIN_DIR/.uv.$$"' in wrapper
-    assert 'mv -f -- "$staged" "$UV_BIN_DIR/uv"' in wrapper
+    assert '"${TRUSTED[mv]}" -f -- "$staged" "$UV_BIN_DIR/uv"' in wrapper
 
 
 def test_the_binary_is_checked_again_before_it_is_executed(wrapper):
@@ -129,9 +130,19 @@ ARCHIVE_DIR = "uv-x86_64-unknown-linux-gnu"
 
 
 def _library(tmp_path: pathlib.Path) -> pathlib.Path:
-    """The wrapper's functions, without the tail that runs the daemon."""
+    """The wrapper's functions, without the tail that runs the daemon.
+
+    Written into a ``bin/`` directory beside a copy of `omarchy-mcp-trust`,
+    because the head of the wrapper now works out its own plugin directory and
+    sources that library from it. Mirroring the real layout rather than stubbing
+    the library means these tests exercise the real one -- a stub would agree
+    with a bug in it.
+    """
+    binaries = tmp_path / "bin"
+    binaries.mkdir(exist_ok=True)
+    shutil.copy(WRAPPER.parent / "omarchy-mcp-trust", binaries / "omarchy-mcp-trust")
+    library = binaries / "lib.sh"
     text = WRAPPER.read_text()
-    library = tmp_path / "lib.sh"
     library.write_text(text[: text.index("seed_config() {")])
     return library
 
@@ -362,14 +373,32 @@ def test_config_is_never_overwritten(wrapper):
 
 def test_failures_notify(wrapper):
     """The caller is a QML service and the user is looking at a desktop, so a
-    failure that is only logged is a failure nobody sees."""
-    assert "omarchy notification send" in wrapper
+    failure that is only logged is a failure nobody sees.
+
+    Through the allowlist like everything else. A failure path is the worst
+    place to resolve a command on an unchecked PATH, and this one can be
+    reached before binding has succeeded -- so it is guarded rather than bare.
+    """
+    assert '"${TRUSTED[omarchy]}" notification send' in wrapper
+    assert "${TRUSTED[omarchy]:-}" in wrapper, "reachable before binding; must not assume"
 
 
 #: Commands whose last argument is where they write.
 WRITES_TO_LAST_ARG = ("cp", "mv", "install", "tee")
 #: Commands where every argument is a target.
 WRITES_TO_ANY_ARG = ("mkdir", "touch", "rm", "rmdir", "truncate")
+
+
+def command_name(word: str) -> str:
+    """The command a first word names, whichever way it is spelled.
+
+    Every spawn in the wrapper now goes through the allowlist, so `cp` is
+    written `"${TRUSTED[cp]}"`. Without this the guard below stops recognising
+    a single write in the file **and keeps passing** -- which is the worst
+    outcome available to a test whose whole job is to notice one.
+    """
+    found = re.fullmatch(r'"?\$\{TRUSTED\[([a-z0-9-]+)\]\}"?', word)
+    return found.group(1) if found else word
 
 
 def test_nothing_writes_into_the_plugin_directory(wrapper):
@@ -393,7 +422,7 @@ def test_nothing_writes_into_the_plugin_directory(wrapper):
         words = stripped.split()
         if not words:
             continue
-        command = words[0]
+        command = command_name(words[0])
         if command in WRITES_TO_ANY_ARG and any("$PLUGIN_DIR" in w for w in words[1:]):
             offenders.append(stripped)
         elif command in WRITES_TO_LAST_ARG and "$PLUGIN_DIR" in words[-1]:
@@ -402,7 +431,19 @@ def test_nothing_writes_into_the_plugin_directory(wrapper):
     assert not offenders, f"these write into the plugin directory: {offenders}"
 
 
+def test_the_write_guard_sees_through_a_verified_spelling():
+    """Guards the guard. `test_nothing_writes_into_the_plugin_directory` went on
+    passing when every command in the wrapper was rewritten, because it no
+    longer recognised any of them as a command."""
+    assert command_name('"${TRUSTED[cp]}"') == "cp"
+    assert command_name('"${TRUSTED[rm]}"') == "rm"
+    assert command_name("cp") == "cp"
+    assert command_name('"$VENV/bin/python"') == '"$VENV/bin/python"'
+
+
 def test_reading_from_the_plugin_directory_is_fine(wrapper):
     """Guards the guard: the config template is copied out of the plugin
     directory, and that must not be mistaken for a write into it."""
-    assert 'cp "$PLUGIN_DIR/config.example.toml" "$CONFIG_DIR/config.toml"' in wrapper
+    assert (
+        '"${TRUSTED[cp]}" "$PLUGIN_DIR/config.example.toml" "$CONFIG_DIR/config.toml"'
+    ) in wrapper

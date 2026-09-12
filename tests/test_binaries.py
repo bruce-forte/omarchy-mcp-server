@@ -19,10 +19,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+from pathlib import Path
 
 import pytest
 
-from omarchy_mcp import execute
+from omarchy_mcp import execute, trust
 from omarchy_mcp.config import Config
 from omarchy_mcp.permissions import Permissions
 from omarchy_mcp.stats import Stats
@@ -65,10 +66,20 @@ class TestResolution:
         fake_binary(second, "thing")
         assert execute.resolve_binary("thing", (first, second)) == str(second / "thing")
 
-    def test_a_path_is_used_as_given(self, tmp_path):
+    def test_a_trusted_path_is_used_as_given(self):
         """Standard PATH semantics, and it keeps an explicit choice explicit."""
+        assert execute.resolve_binary("/usr/bin/true", (Path("/nowhere"),)) == "/usr/bin/true"
+
+    def test_an_explicit_path_is_still_verified(self, tmp_path):
+        """A path from a caller is not a reason to skip the check.
+
+        It used to be: a name containing a separator was returned untouched, so
+        naming a file directly was the way past every check in this module. The
+        marketplace review is what found it (ROADMAP N20).
+        """
         explicit = fake_binary(tmp_path / "elsewhere", "thing")
-        assert execute.resolve_binary(str(explicit), (tmp_path / "a",)) == str(explicit)
+        with pytest.raises(trust.NotTrusted):
+            execute.resolve_binary(str(explicit), (tmp_path / "a",))
 
     def test_nothing_found_names_the_binary_and_where_it_looked(self, tmp_path):
         with pytest.raises(execute.NotInstalled) as caught:
