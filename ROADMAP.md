@@ -88,7 +88,7 @@ security boundary only assert whatever the code already does.
 
 ## Phase 6 in detail
 
-**Finished**: N1–N19. The theme was that the person the daemon acts on behalf of
+**Finished**: N1–N20. The theme was that the person the daemon acts on behalf of
 could not see what it did, could not answer for a call in flight, and could not
 stop it without a terminal. Decision 12 covers *daemon* faults; none of this
 covered what an *agent* does, which is the part with consequences.
@@ -2444,6 +2444,114 @@ test fails exactly the four name tests.
   argument. What the checks cover is the copy this plugin fetches and writes.
 - **Only two architectures are supported.** Anything else is refused with a
   message naming `pacman -S uv`, rather than fetched unverified.
+
+### N20 — Executable provenance, before the policy boundary — done
+
+The marketplace security review, third pass. N19 hardened *what the bootstrap
+downloads*. This is about *what it runs to do the downloading*, and the finding
+was that the answer came from the session `PATH`.
+
+On the machine this was written on:
+
+```
+$ command -v curl
+/home/linuxbrew/.linuxbrew/bin/curl
+$ stat -c '%U %a' /home/linuxbrew/.linuxbrew/bin
+addamsson 775
+```
+
+A `curl` in a directory this user can write, winning over `/usr/bin/curl`, in
+the script that fetches and installs a toolchain — reached before the bearer
+token exists, before `policy.py` classifies anything, and before any consent
+prompt. Every digest and archive check N19 added sat *behind* it. The attack
+needed no MCP client and no hostile web page. It needed a package manager.
+
+Three surfaces had it:
+
+- `bin/omarchy-mcpd` resolved `uv` with `command -v`, and spawned `omarchy`,
+  `curl`, `tar`, `stat`, `sha256sum`, `grep`, `awk` and a dozen more as bare
+  words.
+- `Service.qml` spawned bare `curl`, `omarchy`, `wl-copy` and `rm`. QML has no
+  way to ask who owns a file.
+- `execute.py::resolve_binary` searched a fixed list — but tested only
+  `isfile` and `X_OK`, followed symlinks blindly, and returned any name
+  containing a `/` untouched, which made naming a file directly the way past
+  every check in the module.
+
+**The rule, in one sentence.** A bare name resolves against a fixed allowlist
+and never against `PATH`; the file it lands on must be a regular executable
+owned by `uid 0` and writable by nobody else; and so must every directory above
+it, to `/`.
+
+**Symlinks are followed, not refused.** `/usr/share/omarchy/bin/omarchy` is a
+symlink to `/usr/bin/omarchy`, and `/usr/bin/awk` is one to `gawk`. Refusing
+links would refuse a healthy Omarchy. So both paths are checked — the literal
+one component by component, and the fully resolved one — because replacing
+either would be enough, and trusting one because the other is sound would be
+trusting neither.
+
+**Where it lives.** `src/omarchy_mcp/trust.py` for the daemon,
+`bin/omarchy-mcp-trust` for the bootstrap. Two implementations of one rule is a
+real cost, and it is paid on purpose: the wrapper runs before the interpreter it
+is building exists, so it cannot ask the Python one. They are tested against the
+same files and asserted to agree.
+
+`bin/omarchy-mcp-exec` is the third caller. QML cannot check anything, so
+`Service.qml` spawns that shim by absolute path inside the plugin directory and
+the shim resolves the real name. One rule, three callers, one implementation of
+it per language rather than per call site.
+
+**The child's `PATH` is replaced, not prepended.** Choosing the right file
+settles nothing if the command then looks *its own* helpers up on a list nobody
+checked. `trust.child_env` replaces it with the allowlist.
+
+**Two things removed rather than fixed.** The bar panel's Rebuild button spawned
+a bare `rm -rf` at a venv path it had worked out for itself; it now calls
+`omarchy-mcpd --rebuild-only`, which deletes one spawn *and* stops the UI layer
+holding a second copy of where the venv lives. The wrapper's last line was
+`exec env PYTHONPATH=... python`; `env` is now an `export` and a builtin, which
+is one fewer executable to resolve on the last line of the bootstrap.
+
+**The bootstrap's own seed.** Asking "who owns this" needs `stat`; following a
+link needs `readlink`. Neither can be verified without already having it. Each
+is first checked with bash builtins alone — a regular file, not a symlink,
+executable, and **not writable by this user** — and then, once usable, put
+through the full check like anything else, its own directory chain included. The
+assumption that remains is that a user who can write `/usr/bin` has already won,
+which is true on any ordinary system and is what every one of these checks rests
+on. Python needs no such seed: `os.lstat` is a syscall.
+
+**What it cost, stated plainly.**
+
+- A dev-linked `OMARCHY_PATH` under `$HOME` is no longer trusted. It is still
+  *looked in* — it is skipped, not fatal, and the `/usr/bin` copy behind it is
+  used — so a dev-linked checkout silently gets the system Omarchy rather than
+  its own. That is a real regression for that workflow and the honest trade for
+  an environment variable no longer being able to promote a directory.
+- An Omarchy command that shells out to something in `~/.local/bin` no longer
+  finds it, because the child's `PATH` is the allowlist. `omarchy launch` is the
+  case to watch.
+- A user-owned file is now refused where it used to run. On a machine with a
+  homebrew prefix ahead of `/usr/bin`, that changes which `curl` runs — which is
+  the entire point, and will still read as "it used to work" to whoever meets it.
+  The refusal names the file and the reason for exactly that reason.
+
+#### Watch for
+
+- **The venv interpreter is not covered, and cannot be.** `$VENV/bin/python` is
+  in the state directory, which the user owns by necessity — it has to be
+  writable to be built. What stands behind it is *how it got there*: a pinned
+  archive, a digest committed in the wrapper (N19), and `--frozen` against
+  `uv.lock`. Anything that can write the state directory can replace the
+  interpreter, and no ownership check can say otherwise.
+- **`/usr/local/bin` is in the allowlist.** Root-owned and `755` on an ordinary
+  system, so it passes; on a machine where an admin group can write it, it
+  passes the ownership check and fails the mode check, and is skipped. Worth
+  knowing it is there.
+- **Two implementations will drift.** The bash and Python rules are tested
+  against the same files, but only the cases somebody thought to write down.
+- **A verified binary is not a safe binary.** This says the file is the one root
+  installed. It says nothing about what that file does.
 
 ## Deferred
 

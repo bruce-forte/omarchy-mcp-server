@@ -1,0 +1,43 @@
+#!/bin/bash
+#
+# Run one command, resolved and verified first.
+#
+# QML has no way to ask who owns a file, so `Service.qml` cannot check what it
+# is about to spawn -- and a bare `command: ["curl", ...]` is resolved by the
+# shell's inherited PATH, which is the session's. On the machine this was
+# written on that PATH found `curl` in a directory the user could write.
+#
+# So the shell spawns this instead, by absolute path inside the plugin
+# directory, and this resolves the real name against the same allowlist the
+# daemon and the bootstrap use. One rule, three callers, one implementation.
+#
+#   omarchy-mcp-exec curl -fsS http://127.0.0.1:8765/health
+#
+# Fails closed with exit 127 -- the shell's own "no such command" -- so a
+# refusal reads the same way as a missing dependency to the caller, with the
+# reason on stderr for `journalctl --user -f`.
+
+set -euo pipefail
+
+# ${BASH_SOURCE[0]%/*} is `dirname` without spawning one: nothing may be
+# executed here before the library that vets executables has been loaded.
+#
+# shellcheck source=bin/omarchy-mcp-trust
+source "${BASH_SOURCE[0]%/*}/omarchy-mcp-trust"
+
+[[ $# -ge 1 ]] || {
+  echo "usage: omarchy-mcp-exec <command> [args...]" >&2
+  exit 2
+}
+
+name="$1"
+shift
+
+trust_bind "$name" || exit 127
+
+# The child gets the trusted PATH too: choosing the right file settles nothing
+# if that file then looks its own helpers up on a list nobody checked.
+PATH="$(trust_path)"
+export PATH
+
+exec "${TRUSTED[$name]}" "$@"

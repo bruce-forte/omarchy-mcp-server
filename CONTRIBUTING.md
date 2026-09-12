@@ -88,8 +88,9 @@ This file is the working agreement. It is `CONTRIBUTING.md` rather than
 
 ## The security boundary
 
-`policy.py`, `permissions.py`, `auth.py`, `execute.py`, `gate.py` and
-`prompt.py` are the boundary. Changes to them need tests in the same commit, and
+`policy.py`, `permissions.py`, `auth.py`, `execute.py`, `trust.py`, `gate.py`
+and `prompt.py` are the boundary, along with `bin/omarchy-mcp-trust` and
+`bin/omarchy-mcp-exec`, which are the same rule in bash. Changes to them need tests in the same commit, and
 the existing tests are the specification:
 
 - Every sudo command classifies `blocked`, and **no rule** can promote it.
@@ -113,6 +114,12 @@ the existing tests are the specification:
   except the first run, which has nothing to compare against.
 - `argv` never passes through a shell. `tests/test_execute.py` writes a canary
   file and asserts it survives an injection attempt.
+- **Nothing is executed that the session `PATH` chose.** A bare name resolves
+  against a fixed allowlist, and the file must be root-owned and writable by
+  nobody else, as must every directory above it. A new spawn anywhere -- python,
+  bash, or QML -- goes through `trust.py`, `bin/omarchy-mcp-trust`, or
+  `bin/omarchy-mcp-exec`, never through a bare word. See N20: `curl` on the
+  developer's own machine resolved into a user-writable homebrew prefix.
 - Missing, wrong, and truncated tokens are all rejected; `/health` is the only
   route without one.
 - A foreign `Origin` gets 403, a foreign `Host` gets 421.

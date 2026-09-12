@@ -38,6 +38,19 @@ set -euo pipefail
 PLUGIN_ID="io.github.bruce-forte.mcp-server"
 CONSENT_DIR="${XDG_RUNTIME_DIR:-/tmp}/$PLUGIN_ID/consent"
 
+# This is the whole answer channel, and the bar panel spawns it. It runs two
+# external commands; both are resolved against the allowlist rather than the
+# session PATH, for the reason in `bin/omarchy-mcp-trust`. An answer recorded by
+# somebody else's `mktemp` is not an answer.
+PLUGIN_DIR="$(cd -P -- "${BASH_SOURCE[0]%/*}/.." && pwd)"
+source "$PLUGIN_DIR/bin/omarchy-mcp-trust"
+trust_bind mkdir mktemp || {
+  echo "omarchy-mcp-consent: refusing to run: mkdir or mktemp could not be verified" >&2
+  exit 1
+}
+PATH="$(trust_path)"
+export PATH
+
 usage() {
   echo "usage: omarchy-mcp-consent {approve|always|deny|acknowledge|prune} <token>" >&2
   echo "       omarchy-mcp-consent revoke <token> <effect> <matcher>" >&2
@@ -91,7 +104,7 @@ token="$2"
 # 0700 on the directory and 0600 on the file: an approval is a capability for
 # as long as it sits there, and the daemon deletes it as soon as it reads it.
 umask 077
-mkdir -p "$CONSENT_DIR"
+"${TRUSTED[mkdir]}" -p "$CONSENT_DIR"
 if [[ $1 == revoke ]]; then
   effect="$3"
   matcher="$4"
@@ -107,7 +120,7 @@ if [[ $1 == revoke ]]; then
     echo "omarchy-mcp-consent: not a matcher" >&2
     exit 2
   }
-  file=$(mktemp "$CONSENT_DIR/revoke-$token.XXXXXX")
+  file=$("${TRUSTED[mktemp]}" "$CONSENT_DIR/revoke-$token.XXXXXX")
   printf '%s revoke %s %s' "$token" "$effect" "$matcher" >"$file"
 elif [[ -n ${marker:-} ]]; then
   printf '%s' "$token" >"$CONSENT_DIR/$marker-$token"

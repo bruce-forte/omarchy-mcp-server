@@ -21,14 +21,18 @@ and everything else is bounded.
 *Output is capped.* One command's output should not be able to bury the caller's
 context.
 
-*The binary is the one we meant.* ``argv[0]`` is resolved against a fixed list of
-directories rather than the ``PATH`` this process inherited from the session.
-**This is robustness, not a security control**, and it is deliberately absent
-from `SECURITY.md`: no MCP client can influence this daemon's environment, so
-the attack it would defend against does not exist here. What it buys is that a
-session ``PATH`` which has accumulated shims, a homebrew prefix and half a dozen
-toolchain managers cannot change which ``grim`` a screenshot uses -- and that a
-missing dependency says so instead of arriving as a stripped tool error.
+*The binary is the one we meant.* ``argv[0]`` is resolved by `trust.py` against a
+fixed allowlist of directories, and the file it lands on must be root-owned and
+writable by nobody else, as must every directory above it.
+
+    This used to say *robustness, not a security control*, on the reasoning that
+    no MCP client can influence this daemon's environment. That reasoning missed
+    the session ``PATH``: on the machine this was written on, ``curl`` resolved
+    to a binary in a directory the user could write. See `trust.py`, which is
+    where the rule now lives, and ROADMAP N20 for what the review found.
+
+*Children get the trusted ``PATH``, not ours.* Choosing the right file settles
+nothing if the command then looks *its* helpers up on a list nobody checked.
 """
 
 from __future__ import annotations
@@ -42,7 +46,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .paths import OMARCHY_PATH
+from . import trust
 
 #: How a blocking call in this module reaches a worker thread. The function
 #: itself is `tools/_shared.offload`, but `gate.py` and `prompt.py` take it as
@@ -60,14 +64,10 @@ DETACH_MARKERS = ("switcher", "selector", "select", "region", "screenrecording",
 
 #: Where a bare ``argv[0]`` is looked for, in order.
 #:
-#: Derived from ``OMARCHY_PATH`` rather than hardcoded, so a developer running a
-#: dev-linked Omarchy gets the binaries from their checkout -- the same variable
-#: the Makefile passes to ``qmllint``.
-SEARCH = (
-    OMARCHY_PATH / "bin",
-    Path("/usr/local/bin"),
-    Path("/usr/bin"),
-)
+#: An alias for `trust.TRUSTED_DIRS`, so the list and the rule that guards it
+#: cannot drift apart. The name stays because the test suite redirects this
+#: binding to point the resolver at fixture directories.
+SEARCH = trust.TRUSTED_DIRS
 
 #: How long a terminated child gets to exit before it is killed.
 GRACE_S = 2.0
@@ -84,18 +84,29 @@ class NotInstalled(Exception):
     turn it into a clear message. Subclassing ``Exception`` is all it takes.
     """
 
-    def __init__(self, name: str, searched: Iterable[Path] | None = None) -> None:
+    def __init__(
+        self,
+        name: str,
+        searched: Iterable[Path] | None = None,
+        refused: Iterable[str] | None = None,
+    ) -> None:
         """Record what was looked for and where, and build the message."""
         searched = SEARCH if searched is None else searched
         self.name = name
         # A generator expression inside ``tuple(...)``: each Path is turned into
         # a string, so the record survives being serialised to JSON later.
         self.searched = tuple(str(d) for d in searched)
+        #: Files that were found and refused, with the reason for each. Empty
+        #: for an ordinary missing dependency. Carried separately because the
+        #: two send a reader to completely different places: a package manager,
+        #: or the owner of a file.
+        self.refused = tuple(refused or ())
+        sentence = f"`{name}` is not installed. Looked in " + ", ".join(self.searched) + "."
+        if self.refused:
+            sentence += " Refused: " + "; ".join(self.refused) + "."
         # ``super().__init__`` runs the base ``Exception``'s constructor, which
         # is what makes ``str(exc)`` return this sentence.
-        super().__init__(
-            f"`{name}` is not installed. Looked in " + ", ".join(self.searched) + "."
-        )
+        super().__init__(sentence)
 
     def as_dict(self) -> dict[str, object]:
         """The JSON shape a tool returns when the dependency is missing."""
@@ -113,21 +124,29 @@ def resolve_binary(name: str, searched: Iterable[Path] | None = None) -> str:
     argument: a default is bound once at import, which would make the module
     global a decoy that could be reassigned with no effect.
 
-    Not cached. Three `os.access` calls cost nothing beside the fork that
-    follows, there is no invalidation question to answer forever, and a
-    dependency installed while the daemon is running works without a restart.
+    Verification is applied when the directories are the real allowlist, and not
+    when a caller has deliberately supplied its own. Only the test suite does
+    the latter, and it is building fake binaries in a directory it owns -- the
+    same distinction `conftest.py` already draws with ``REAL_SEARCH``. Nothing
+    in the daemon passes ``searched``.
+
+    Not cached. The `os.stat` calls cost nothing beside the fork that follows,
+    there is no invalidation question to answer forever, and a dependency
+    installed while the daemon is running works without a restart.
     """
     searched = SEARCH if searched is None else searched
-    # ``os.sep`` is "/" here. A name containing one is already a path.
+    # ``os.sep`` is "/" here. A name containing one is already a path, and is
+    # verified rather than taken on faith -- an absolute path from a caller is
+    # still a file somebody could have replaced.
     if os.sep in name:
-        return name
-    for directory in searched:
-        candidate = os.path.join(str(directory), name)
-        # Both checks are needed: a directory is not a file, and a file without
-        # the executable bit (``X_OK``) cannot be run.
-        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
-            return candidate
-    raise NotInstalled(name, searched)
+        return trust.verify(name)
+    directories = tuple(searched)
+    verified = directories == tuple(trust.TRUSTED_DIRS)
+    found = trust.resolve(name, directories, verified=verified)
+    if found is not None:
+        return found
+    refused = trust.describe(name, directories) if verified else []
+    raise NotInstalled(name, directories, refused)
 
 
 @dataclass(frozen=True)
@@ -215,12 +234,10 @@ def run(
     # out of Popen reaches the agent as a tool error with the cause stripped.
     exe = resolve_binary(argv[0])
 
-    # The environment is passed through untouched, including PATH. What a
-    # command looks up for itself is its own business -- `omarchy launch editor`
-    # is supposed to find the editor this user installed, wherever that is.
-    # ``{**a, **b}`` builds one dict from both, with ``b`` winning any key they
-    # share: the process environment, plus whatever the caller wants to override.
-    full_env = {**os.environ, **(env or {})}
+    # The child gets the trusted PATH rather than this process's. Choosing the
+    # right file settles nothing if the command then looks its own helpers up on
+    # a list nobody checked. See `trust.child_env`, which states the cost.
+    full_env = trust.child_env(env)
 
     if detach:
         # start_new_session detaches from our process group, so the child

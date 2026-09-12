@@ -14,7 +14,15 @@
 set -euo pipefail
 
 PLUGIN_ID="io.github.bruce-forte.mcp-server"
-PLUGIN_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+# ${BASH_SOURCE[0]%/*} is `dirname` without spawning one, and `cd -P` resolves
+# symlinks with a builtin. Nothing may be executed before the library that vets
+# executables has been loaded -- including the thing that works out where it is.
+PLUGIN_DIR="$(cd -P -- "${BASH_SOURCE[0]%/*}/.." && pwd)"
+
+# Which files this script is willing to run. Sourced before anything is spawned;
+# see the header of that file for the rule and for why it is duplicated in
+# `src/omarchy_mcp/trust.py`.
+source "$PLUGIN_DIR/bin/omarchy-mcp-trust"
 
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/$PLUGIN_ID"
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/mcp"
@@ -66,9 +74,34 @@ fail() {
   log "$*"
   # Nowhere else reports this: the caller is a QML service and the user is
   # looking at a desktop, not a terminal.
-  omarchy notification send -u critical "Omarchy MCP server" "$*" 2>/dev/null || true
+  #
+  # `${TRUSTED[omarchy]:-}` rather than the bare name: this can be reached
+  # before binding has succeeded -- binding failing is one of the things it
+  # reports -- and a failure path is the worst place to resolve a command on an
+  # unchecked PATH. With nothing bound the notification is skipped and stderr
+  # still carries it.
+  if [[ -n ${TRUSTED[omarchy]:-} ]]; then
+    "${TRUSTED[omarchy]}" notification send -u critical "Omarchy MCP server" "$*" 2>/dev/null || true
+  fi
   exit 1
 }
+
+#: Every external command this script runs. Named in one place so that a new
+#: spawn has to be declared here, where it is checked, rather than appearing as
+#: a bare word somewhere further down.
+TRUST_NEEDS=(
+  omarchy uname mktemp curl stat sha256sum cut tar grep awk sort wc
+  install mv rm mkdir cp
+)
+
+trust_bind "${TRUST_NEEDS[@]}" || {
+  log "refusing to start: the commands this bootstrap needs could not be verified"
+  exit 1
+}
+
+# Children look their own helpers up on this, not on the session PATH.
+PATH="$(trust_path)"
+export PATH
 
 # A uv this script is willing to execute: a regular file, not a symlink, and
 # executable. `-f` is true for a symlink pointing at a regular file, so the
@@ -81,13 +114,20 @@ usable_uv() {
 
 find_uv() {
   local found
-  # A uv on PATH is the user's own installation, and their PATH is their
-  # decision; this only declines to follow a symlink planted where this script
-  # writes.
-  if found="$(command -v uv 2>/dev/null)" && [[ -n $found ]]; then
+  # A system uv, resolved against the allowlist and verified like anything else.
+  #
+  # This used to be `command -v uv`, which reads the session PATH -- so a `uv`
+  # in any directory that PATH happened to name was executed to build the
+  # interpreter this daemon runs on, ahead of every check in this file. That is
+  # the hole the marketplace review found; see ROADMAP N20.
+  if found="$(trust_resolve uv 2>/dev/null)" && [[ -n $found ]]; then
     printf '%s\n' "$found"
     return 0
   fi
+  # The copy this script installed. It lives in the state directory, which the
+  # user owns by necessity, so it cannot be root-owned and is not checked for
+  # that. What stands behind it instead is how it got there: a pinned archive,
+  # a digest committed in this file, and the inspection in verify_uv_archive.
   if usable_uv "$UV_BIN_DIR/uv"; then
     printf '%s\n' "$UV_BIN_DIR/uv"
     return 0
@@ -108,33 +148,36 @@ verify_uv_archive() {
   local archive="$1" dir="$2" want="$3"
   local size got listing names expected
 
-  size="$(stat -c %s -- "$archive")"
+  size="$("${TRUSTED[stat]}" -c %s -- "$archive")"
   [[ $size -gt 0 && $size -le $UV_ARCHIVE_MAX_BYTES ]] \
     || fail "the downloaded uv archive is $size bytes, which is outside what this plugin accepts"
 
   # Against the constant committed above, never against a checksum fetched
   # from the host that served the archive.
-  got="$(sha256sum -- "$archive" | cut -d' ' -f1)"
+  got="$("${TRUSTED[sha256sum]}" -- "$archive" | "${TRUSTED[cut]}" -d' ' -f1)"
   [[ $got == "$want" ]] \
     || fail "uv $UV_VERSION does not match the checksum committed in this plugin; refusing to run it"
 
-  listing="$(tar -tvzf "$archive")" \
+  listing="$("${TRUSTED[tar]}" -tvzf "$archive")" \
     || fail "the downloaded uv archive could not be read"
 
-  [[ "$(printf '%s\n' "$listing" | wc -l)" -le $UV_MEMBERS_MAX ]] \
+  [[ "$(printf '%s\n' "$listing" | "${TRUSTED[wc]}" -l)" -le $UV_MEMBERS_MAX ]] \
     || fail "the uv archive has more members than this plugin accepts"
 
   # tar -tv prints the entry type as the first character of the mode. Anything
   # but a regular file (-) or a directory (d) -- a symlink (l), a hard link
   # (h), a device (b, c), a fifo (p) -- is not the shape upstream publishes,
   # and tar can follow a link out of the extraction directory.
-  if printf '%s\n' "$listing" | grep -qvE '^[-d]'; then
+  if printf '%s\n' "$listing" | "${TRUSTED[grep]}" -qvE '^[-d]'; then
     fail "the uv archive contains a link or a special file; refusing to unpack it"
   fi
 
   # Field 3 of GNU tar's verbose listing is the size. A member over the bound
   # is refused before a byte of it is written.
-  if ! printf '%s\n' "$listing" | awk -v max="$UV_MEMBER_MAX_BYTES" \
+  #
+  # shellcheck disable=SC2016  # $3 and max are awk's, not the shell's; expanding
+  # them here is exactly what must not happen.
+  if ! printf '%s\n' "$listing" | "${TRUSTED[awk]}" -v max="$UV_MEMBER_MAX_BYTES" \
        '$3 !~ /^[0-9]+$/ || $3 > max { exit 1 }'; then
     fail "the uv archive contains an oversized or unreadable member"
   fi
@@ -143,8 +186,8 @@ verify_uv_archive() {
   # these three covers traversal (`..`), absolute paths, and anything
   # unexpected, in one comparison rather than three patterns that each have to
   # be right on their own.
-  names="$(tar -tzf "$archive" | LC_ALL=C sort)"
-  expected="$(printf '%s\n' "$dir/" "$dir/uv" "$dir/uvx" | LC_ALL=C sort)"
+  names="$("${TRUSTED[tar]}" -tzf "$archive" | LC_ALL=C "${TRUSTED[sort]}")"
+  expected="$(printf '%s\n' "$dir/" "$dir/uv" "$dir/uvx" | LC_ALL=C "${TRUSTED[sort]}")"
   [[ $names == "$expected" ]] \
     || fail "the uv archive does not contain exactly the files this plugin expects"
 }
@@ -152,7 +195,7 @@ verify_uv_archive() {
 install_uv() {
   local arch tarball dir url tmp want size staged binary
 
-  arch="$(uname -m)"
+  arch="$("${TRUSTED[uname]}" -m)"
   case "$arch" in
     x86_64)  tarball="uv-x86_64-unknown-linux-gnu.tar.gz";  want="$UV_SHA256_X86_64" ;;
     aarch64) tarball="uv-aarch64-unknown-linux-gnu.tar.gz"; want="$UV_SHA256_AARCH64" ;;
@@ -162,14 +205,14 @@ install_uv() {
   dir="${tarball%.tar.gz}"
 
   url="https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/${tarball}"
-  tmp="$(mktemp -d)"
-  trap 'rm -rf "$tmp"' RETURN
+  tmp="$("${TRUSTED[mktemp]}" -d)"
+  trap '"${TRUSTED[rm]}" -rf "$tmp"' RETURN
 
   log "downloading uv $UV_VERSION"
   # --proto '=https' refuses a redirect to any other scheme, which -L would
   # otherwise follow. --max-filesize refuses a body whose declared length is
   # over the bound before any of it is written.
-  curl -fsSL --proto '=https' --tlsv1.2 \
+  "${TRUSTED[curl]}" -fsSL --proto '=https' --tlsv1.2 \
     --retry 3 --retry-delay 2 --max-time "$UV_DOWNLOAD_MAX_SECONDS" \
     --max-filesize "$UV_ARCHIVE_MAX_BYTES" \
     -o "$tmp/uv.tar.gz" "$url" \
@@ -179,25 +222,25 @@ install_uv() {
 
   # Only the one member is extracted, into a directory of its own, and without
   # taking the archive's ownership or permission bits.
-  mkdir -p "$tmp/x"
-  tar -xzf "$tmp/uv.tar.gz" -C "$tmp/x" --no-same-owner --no-same-permissions \
+  "${TRUSTED[mkdir]}" -p "$tmp/x"
+  "${TRUSTED[tar]}" -xzf "$tmp/uv.tar.gz" -C "$tmp/x" --no-same-owner --no-same-permissions \
     -- "$dir/uv" \
     || fail "could not unpack uv"
 
   # Verify what came out, rather than what the listing promised.
   binary="$tmp/x/$dir/uv"
   usable_uv "$binary" || fail "the unpacked uv is not a regular executable file"
-  size="$(stat -c %s -- "$binary")"
+  size="$("${TRUSTED[stat]}" -c %s -- "$binary")"
   [[ $size -gt 0 && $size -le $UV_MEMBER_MAX_BYTES ]] \
     || fail "the unpacked uv is $size bytes, which is outside what this plugin accepts"
 
   # Staged beside its destination and renamed onto it. Same directory means the
   # same filesystem, so the rename is atomic: nothing ever executes a
   # half-written uv, and a failure part-way leaves the previous one in place.
-  mkdir -p "$UV_BIN_DIR"
+  "${TRUSTED[mkdir]}" -p "$UV_BIN_DIR"
   staged="$UV_BIN_DIR/.uv.$$"
-  install -m 0755 -- "$binary" "$staged" || fail "could not install uv"
-  mv -f -- "$staged" "$UV_BIN_DIR/uv" || { rm -f -- "$staged"; fail "could not install uv"; }
+  "${TRUSTED[install]}" -m 0755 -- "$binary" "$staged" || fail "could not install uv"
+  "${TRUSTED[mv]}" -f -- "$staged" "$UV_BIN_DIR/uv" || { "${TRUSTED[rm]}" -f -- "$staged"; fail "could not install uv"; }
 
   usable_uv "$UV_BIN_DIR/uv" || fail "uv did not survive installation"
   printf '%s\n' "$UV_BIN_DIR/uv"
@@ -207,8 +250,8 @@ seed_config() {
   # Seeded on every start, not only when the venv is built, so deleting the file
   # gets it back. Never overwritten: the copy in the config directory is yours.
   [[ -f $CONFIG_DIR/config.toml ]] && return 0
-  mkdir -p "$CONFIG_DIR"
-  cp "$PLUGIN_DIR/config.example.toml" "$CONFIG_DIR/config.toml"
+  "${TRUSTED[mkdir]}" -p "$CONFIG_DIR"
+  "${TRUSTED[cp]}" "$PLUGIN_DIR/config.example.toml" "$CONFIG_DIR/config.toml"
   log "wrote $CONFIG_DIR/config.toml"
 }
 
@@ -217,14 +260,14 @@ want_stamp() {
   printf '%s\n' \
     "uv=$UV_VERSION" \
     "python=$("$SYSTEM_PYTHON" -c 'import sys;print(sys.version.split()[0])' 2>/dev/null || echo none)" \
-    "lock=$(sha256sum "$PLUGIN_DIR/uv.lock" 2>/dev/null | cut -d' ' -f1)" \
-    "wrapper=$(sha256sum "${BASH_SOURCE[0]}" | cut -d' ' -f1)"
+    "lock=$("${TRUSTED[sha256sum]}" "$PLUGIN_DIR/uv.lock" 2>/dev/null | "${TRUSTED[cut]}" -d' ' -f1)" \
+    "wrapper=$("${TRUSTED[sha256sum]}" "${BASH_SOURCE[0]}" | "${TRUSTED[cut]}" -d' ' -f1)"
 }
 
 ensure_venv() {
   local uv
   if [[ -x $VENV/bin/python ]] && [[ -f $STAMP ]] \
-     && [[ "$(cat "$STAMP")" == "$(want_stamp)" ]]; then
+     && [[ "$(<"$STAMP")" == "$(want_stamp)" ]]; then
     return 0
   fi
 
@@ -239,7 +282,7 @@ ensure_venv() {
   usable_uv "$uv" || fail "no usable uv; install it with: sudo pacman -S uv"
 
   log "building the environment in $VENV"
-  mkdir -p "$STATE_DIR"
+  "${TRUSTED[mkdir]}" -p "$STATE_DIR"
   # UV_PROJECT_ENVIRONMENT puts the venv in the state directory instead of the
   # plugin directory. That is not a preference: `omarchy plugin validate`
   # rejects symlinks inside a plugin folder, and a venv is made of them.
@@ -259,7 +302,15 @@ ensure_venv() {
 }
 
 case "${1:-}" in
-  --rebuild) rm -rf "$VENV" "$STAMP"; shift ;;
+  --rebuild) "${TRUSTED[rm]}" -rf "$VENV" "$STAMP"; shift ;;
+  # Remove the environment and stop. The bar panel's Rebuild button used to do
+  # this itself, with a bare `rm -rf` and its own idea of where the venv lives;
+  # both of those belong here.
+  --rebuild-only)
+    "${TRUSTED[rm]}" -rf "$VENV" "$STAMP"
+    log "removed $VENV"
+    exit 0
+    ;;
 esac
 
 seed_config
@@ -272,7 +323,9 @@ ensure_venv
 # Omarchy watches -- so without this every fresh interpreter start writes
 # bytecode into a watched directory and makes the shell reload itself. The
 # cache is still kept, just in the state directory where it belongs.
-exec env \
-  PYTHONPATH="$PLUGIN_DIR/src" \
-  PYTHONPYCACHEPREFIX="$STATE_DIR/pycache" \
-  "$VENV/bin/python" -m omarchy_mcp "$@"
+# `export` and a plain exec rather than `env`: one less executable to resolve on
+# the last line of the bootstrap. The interpreter is named absolutely and is the
+# one this script built.
+export PYTHONPATH="$PLUGIN_DIR/src"
+export PYTHONPYCACHEPREFIX="$STATE_DIR/pycache"
+exec "$VENV/bin/python" -m omarchy_mcp "$@"

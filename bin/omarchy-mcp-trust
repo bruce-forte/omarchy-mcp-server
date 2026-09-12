@@ -1,0 +1,190 @@
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+#
+# (SC2034 is file-level on purpose: `TRUSTED` is this library's output, and its
+# users are the scripts that source it, which shellcheck cannot see from here.
+# A directive above the `declare` does not reach the assignment in trust_bind.)
+#
+# Which executables the bootstrap is willing to run.
+#
+# Sourced, never executed. `bin/omarchy-mcpd` runs before the virtualenv exists,
+# so it cannot ask `src/omarchy_mcp/trust.py` -- the module that answers this
+# same question for the daemon. Two implementations of one rule is a real cost,
+# and the alternative is a wrapper that can check nothing until the interpreter
+# it is building already exists.
+#
+# The rule, in both places: a bare command name is resolved against a fixed
+# allowlist of directories and never against PATH, the file it lands on must be
+# a regular executable owned by root and writable by nobody else, and so must
+# every directory above it to `/`. Symlinks are followed rather than refused --
+# `/usr/share/omarchy/bin/omarchy` is one, and so is `/usr/bin/awk` -- and both
+# the link and its target are checked, because replacing either would be enough.
+#
+# The Omarchy marketplace security review is why this exists. On the machine
+# this was written on, `curl` resolved to `/home/linuxbrew/.linuxbrew/bin/curl`:
+# a user-writable directory winning over `/usr/bin`, in a script that downloads
+# and executes a toolchain, before any token or policy tier exists.
+
+#: The owner every trusted component must have.
+TRUST_ROOT_UID=0
+
+#: Searched in order. `OMARCHY_PATH` still chooses the first entry, as it always
+#: has, but it can no longer promote a directory: one under $HOME fails the
+#: ownership check and is skipped, and the trusted copy behind it is used.
+TRUST_DIRS=(
+  "${OMARCHY_PATH:-/usr/share/omarchy}/bin"
+  /usr/local/bin
+  /usr/bin
+)
+
+#: The two external tools the checks themselves need, at absolute paths.
+#
+# This is the one bootstrap in the file and it is worth being explicit about.
+# Asking "who owns this" needs `stat`, and following a symlink needs `readlink`;
+# neither can be verified without already having them. So each is first checked
+# with bash builtins alone -- a regular file, not a symlink, executable, and not
+# writable by this user -- and then, once usable, put through the full check
+# like anything else, its own directory chain included.
+#
+# The assumption that remains is that a user who can write `/usr/bin` has
+# already won. That is true on any ordinary system, and it is the same
+# assumption every one of these checks rests on.
+TRUST_STAT=/usr/bin/stat
+TRUST_READLINK=/usr/bin/readlink
+
+#: Populated by `trust_bind`. `TRUSTED[tar]` is the absolute path to run.
+declare -A TRUSTED=()
+
+trust_log() { printf 'omarchy-mcp-trust: %s\n' "$*" >&2; }
+
+# Bash-only sanity on one of the two seeds. `-w` asks whether *this user* may
+# write it, which is exactly the shadowing being refused; `-L` refuses a seed
+# that is itself a link, because following one is what we cannot do yet.
+_trust_seed_ok() {
+  local path="$1"
+  [[ -n $path && -f $path && ! -L $path && -x $path && ! -w $path ]]
+}
+
+_trust_mode() { "$TRUST_STAT" -c '%a' -- "$1" 2>/dev/null; }
+_trust_uid()  { "$TRUST_STAT" -c '%u' -- "$1" 2>/dev/null; }
+
+# A directory anybody but root can write is a directory that proves nothing:
+# the binary inside it can be replaced without touching the binary at all.
+_trust_dir_ok() {
+  local dir="$1" uid mode
+  uid="$(_trust_uid "$dir")" || return 1
+  mode="$(_trust_mode "$dir")" || return 1
+  [[ $uid == "$TRUST_ROOT_UID" ]] || { trust_log "$dir is owned by uid $uid, not root"; return 1; }
+  # 8#$mode forces base-8 on a string like "755"; (( ... & 0022 )) is true when
+  # the group-write or other-write bit is set.
+  (( (8#$mode & 8#0022) == 0 )) || { trust_log "$dir is writable by others (mode $mode)"; return 1; }
+}
+
+# Every directory from / down to, but not including, the given path.
+_trust_chain_ok() {
+  local path="$1" walked="" part
+  # A leading empty field is what the split of an absolute path gives; `/`
+  # itself is checked first and then each component is appended.
+  _trust_dir_ok / || return 1
+  local rest="${path#/}"
+  rest="${rest%/*}"
+  [[ $rest == "$path" ]] && rest=""
+  local IFS=/
+  for part in $rest; do
+    [[ -n $part ]] || continue
+    walked="$walked/$part"
+    _trust_dir_ok "$walked" || return 1
+  done
+}
+
+_trust_leaf_ok() {
+  local leaf="$1" uid mode
+  [[ -f $leaf ]] || { trust_log "$leaf is not a regular file"; return 1; }
+  [[ -x $leaf ]] || { trust_log "$leaf is not executable"; return 1; }
+  uid="$(_trust_uid "$leaf")" || return 1
+  mode="$(_trust_mode "$leaf")" || return 1
+  [[ $uid == "$TRUST_ROOT_UID" ]] || { trust_log "$leaf is owned by uid $uid, not root"; return 1; }
+  (( (8#$mode & 8#0022) == 0 )) || { trust_log "$leaf is writable by others (mode $mode)"; return 1; }
+}
+
+# Verify one absolute path, link and target alike. Prints nothing; the caller
+# already knows the path it asked about.
+trust_verify() {
+  local path="$1" resolved
+  [[ $path == /* ]] || { trust_log "$path is not an absolute path"; return 1; }
+
+  # The path as written. A symlink at the end is checked for ownership only:
+  # Linux stores 0777 on every symlink regardless, so the question that can be
+  # asked is who may replace it, and that is the link's owner and its directory.
+  _trust_chain_ok "$path" || return 1
+  if [[ -L $path ]]; then
+    local uid
+    uid="$(_trust_uid "$path")" || return 1
+    [[ $uid == "$TRUST_ROOT_UID" ]] || {
+      trust_log "$path is a symlink owned by uid $uid, not root"; return 1; }
+  else
+    _trust_leaf_ok "$path" || return 1
+  fi
+
+  # And the file the links actually land on.
+  resolved="$("$TRUST_READLINK" -f -- "$path" 2>/dev/null)" || {
+    trust_log "$path cannot be resolved"; return 1; }
+  if [[ $resolved != "$path" ]]; then
+    _trust_chain_ok "$resolved" || return 1
+  fi
+  _trust_leaf_ok "$resolved" || return 1
+}
+
+# The absolute path a bare command name should run, or failure.
+#
+# A candidate that exists but fails verification is skipped and the search
+# continues. That is still failing closed -- the untrusted file is never run --
+# and it is what lets an untrusted `OMARCHY_PATH` sit at the front of the list
+# without either being trusted or breaking the lookup.
+trust_resolve() {
+  local name="$1" dir candidate
+  [[ -n $name ]] || return 1
+  if [[ $name == */* ]]; then
+    trust_verify "$name" || return 1
+    printf '%s\n' "$name"
+    return 0
+  fi
+  for dir in "${TRUST_DIRS[@]}"; do
+    candidate="$dir/$name"
+    [[ -e $candidate ]] || continue
+    if trust_verify "$candidate"; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+#: The PATH a child gets: the allowlist, and nothing else. A session PATH left
+#: on the end is a second list that was never checked, one process along.
+trust_path() {
+  local IFS=:
+  printf '%s\n' "${TRUST_DIRS[*]}"
+}
+
+# Resolve each name into TRUSTED, or fail closed naming the first one that
+# could not be trusted. This is the entry point a script uses: one call, and
+# afterwards "${TRUSTED[tar]}" is an absolute path that has been checked.
+trust_bind() {
+  local name path
+  if ! _trust_seed_ok "$TRUST_STAT" || ! _trust_seed_ok "$TRUST_READLINK"; then
+    trust_log "$TRUST_STAT or $TRUST_READLINK is missing or not trustworthy"
+    return 1
+  fi
+  # Now that they can be used, they answer for themselves like anything else.
+  trust_verify "$TRUST_STAT" || return 1
+  trust_verify "$TRUST_READLINK" || return 1
+
+  for name in "$@"; do
+    if ! path="$(trust_resolve "$name")"; then
+      trust_log "no trusted $name found in ${TRUST_DIRS[*]}"
+      return 1
+    fi
+    TRUSTED["$name"]="$path"
+  done
+}

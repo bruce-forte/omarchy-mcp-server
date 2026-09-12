@@ -942,6 +942,7 @@ to read them in.
 | An approval notification appears more often than you want          | Press **Always** on it, write an `allow` rule, or set `"guardedDefault": "deny"` to have guarded commands refused instead of asked about                             |
 | A rule you wrote does nothing                                      | The **Rules** tab flags it `void`, `shadowed` or `redundant` and names the rule that got there first                                                                 |
 | After an `omarchy update`, something that used to run now asks     | Its command group is newer than this server's safe list, so it is guarded rather than assumed harmless. The refusal names the group. Allow the routes you want, or update the plugin |
+| A command that used to work is reported as not installed           | It was found and refused. Only root-owned binaries from a fixed list are run, so a copy in a homebrew prefix or `~/.local/bin` is skipped — the error names the file and the reason. Install it with your package manager, or see [Only root-owned executables run](SECURITY.md#only-root-owned-executables-run) |
 
 ## Uninstall
 
