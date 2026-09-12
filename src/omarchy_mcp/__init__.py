@@ -71,4 +71,4 @@ One convention of this codebase's own: a comment starting ``#:`` documents the
 constant on the *next* line, in the same way a docstring documents a function.
 """
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
