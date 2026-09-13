@@ -242,18 +242,64 @@ def describe(name: str, directories: Iterable[Path]) -> list[str]:
     return reasons
 
 
-def child_env(overrides: dict[str, str] | None = None) -> dict[str, str]:
-    """The environment a child gets: this process's, with ``PATH`` replaced.
+#: The only variables a child of this daemon inherits.
+#
+# An allowlist, for the same reason `TRUSTED_DIRS` is one. Choosing the right
+# file settles nothing if the environment it starts in decides what it does
+# before its first instruction:
+#
+# - ``BASH_ENV`` names a file that bash sources *before* the body of any script
+#   it runs non-interactively. ``/usr/bin/omarchy`` is a bash script, so this
+#   reaches every ``omarchy`` call this daemon makes.
+# - ``LD_PRELOAD`` and friends map an object into every ELF helper -- ``grim``,
+#   ``wl-copy``, ``hyprctl``, ``curl`` -- before ``main``.
+# - ``PYTHONHOME`` relocates an interpreter's own standard library.
+#
+# Removing them by name would be a denylist, and the list of ways to influence
+# a program through its environment is not one anybody finishes writing. So the
+# question asked here is the other one: what does a child actually need?
+KEPT_ENV: frozenset[str] = frozenset({
+    "HOME", "USER", "LOGNAME", "SHELL", "LANG", "TERM", "PWD",
+    "XDG_RUNTIME_DIR", "XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME",
+    "XDG_DATA_HOME", "XDG_DATA_DIRS", "XDG_CONFIG_DIRS", "XDG_CURRENT_DESKTOP",
+    "XDG_SESSION_TYPE",
+    # The desktop helpers. `hyprctl` cannot find its socket without the
+    # signature, and the Wayland tools cannot find the display without theirs,
+    # so an allowlist that forgets these is one that breaks `omarchy_screenshot`
+    # rather than one that is merely strict.
+    "WAYLAND_DISPLAY", "DISPLAY", "DBUS_SESSION_BUS_ADDRESS",
+    "HYPRLAND_INSTANCE_SIGNATURE",
+    "OMARCHY_PATH", "OMARCHY_OCR_LANGS",
+})
 
-    Replacing rather than prepending. A child of this daemon that looks a name
-    up for itself has to reach the same files this module would have chosen,
-    and a session ``PATH`` left on the end is a second list that was never
-    checked -- which is the hole this module exists to close, one process along.
+#: Kept by pattern rather than by name: there are a dozen and they only ever
+#: change formatting.
+KEPT_ENV_PREFIXES: tuple[str, ...] = ("LC_",)
+
+
+def child_env(overrides: dict[str, str] | None = None) -> dict[str, str]:
+    """The environment a child gets: rebuilt from `KEPT_ENV`, not inherited.
+
+    ``PATH`` is replaced with the allowlist rather than prepended to. A child
+    that looks a name up for itself has to reach the same files this module
+    would have chosen, and a session ``PATH`` left on the end is a second list
+    that was never checked -- the hole this module exists to close, one process
+    along.
+
+    ``overrides`` still wins, because a caller passing one is naming something
+    it needs; it is applied after the rebuild rather than before, so a caller
+    can set a variable this list does not mention.
 
     The cost is real and worth stating: an Omarchy command that shells out to
-    something the user installed in ``~/.local/bin`` no longer finds it. That is
+    something the user installed in ``~/.local/bin`` no longer finds it, and one
+    that reads a variable nobody thought to list here will not see it. That is
     the trade the review asked for, and it is the safe side of it.
     """
-    env = {**os.environ, **(overrides or {})}
+    env = {
+        name: value
+        for name, value in os.environ.items()
+        if name in KEPT_ENV or name.startswith(KEPT_ENV_PREFIXES)
+    }
     env["PATH"] = os.pathsep.join(str(directory) for directory in TRUSTED_DIRS)
+    env.update(overrides or {})
     return env

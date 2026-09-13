@@ -33,6 +33,48 @@ Item {
   readonly property string stateDir: (Quickshell.env("XDG_STATE_HOME")
     || (Quickshell.env("HOME") + "/.local/state")) + "/" + root.pluginId
 
+  // Everything a spawned helper is allowed to inherit, rebuilt by name.
+  //
+  // Every Process below sets `clearEnvironment: true` and hands this over, so a
+  // child gets exactly these variables and nothing else. That is not tidiness.
+  // The shell carries around 205 variables from the session, and bash sources
+  // the file named by BASH_ENV *before* the first line of any script it starts
+  // -- ahead of `set -euo pipefail`, ahead of omarchy-mcp-trust, and ahead of
+  // every provenance check N20 added. LD_PRELOAD does the same to the ELF
+  // helpers, and PYTHONHOME to the interpreter. Clearing here is the only place
+  // that can stop it, because by the time the script runs bash has already
+  // acted. `#!/bin/bash -p` on the wrappers is the second half of the same fix.
+  //
+  // PATH is a fixed value rather than the session's: the wrappers replace it
+  // with the trusted allowlist as soon as they load, and this is only a floor
+  // for anything that looks before then.
+  readonly property var childEnvKeep: [
+    "HOME", "USER", "LOGNAME", "SHELL", "LANG", "TERM",
+    "XDG_RUNTIME_DIR", "XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME",
+    "XDG_DATA_HOME", "XDG_DATA_DIRS", "XDG_CONFIG_DIRS", "XDG_CURRENT_DESKTOP",
+    "XDG_SESSION_TYPE", "WAYLAND_DISPLAY", "DISPLAY",
+    "DBUS_SESSION_BUS_ADDRESS", "HYPRLAND_INSTANCE_SIGNATURE",
+    "OMARCHY_PATH", "OMARCHY_OCR_LANGS"
+  ]
+
+  // No `: var` return annotation, deliberately: qmllint 1.0 crashes on one
+  // (exit 255, no diagnostic). Bisected to exactly that construct -- the same
+  // function without it lints clean. Do not add it back.
+  function buildChildEnv() {
+    var out = ({ "PATH": "/usr/local/bin:/usr/bin" })
+    for (var i = 0; i < root.childEnvKeep.length; i++) {
+      var name = root.childEnvKeep[i]
+      var value = Quickshell.env(name)
+      // An unset variable must stay unset rather than become an empty string:
+      // HYPRLAND_INSTANCE_SIGNATURE="" is not the same as not having one.
+      if (value !== undefined && value !== null && value !== "")
+        out[name] = value
+    }
+    return out
+  }
+
+  readonly property var childEnv: root.buildChildEnv()
+
   // What the daemon last told us, and what we last observed ourselves.
   property string phase: "starting"      // starting | building | listening | failed | stopped
   property int    port: 8765
@@ -395,6 +437,8 @@ Item {
   }
 
   Process {
+    clearEnvironment: true
+    environment: root.childEnv
     id: daemon
     command: [root.pluginDir + "bin/omarchy-mcpd"]
     running: false
@@ -577,6 +621,8 @@ Item {
   // and deciding in one while the other also writes `serving` is a race. The
   // collector needs waitForEnd, or its text is empty when we read it.
   Process {
+    clearEnvironment: true
+    environment: root.childEnv
     id: health
     // Through the shim rather than bare: QML cannot ask who owns a file, and a
     // bare name here is resolved on the shell's inherited session PATH. See
@@ -776,6 +822,8 @@ Item {
   // Validates the permissions document without starting anything. Read-only,
   // and the one verb that is useful precisely when the daemon is down.
   Process {
+    clearEnvironment: true
+    environment: root.childEnv
     id: checkProc
     command: [root.pluginDir + "bin/omarchy-mcpd", "--check-permissions"]
 
@@ -795,6 +843,8 @@ Item {
   // token is not a secret from the user's own processes -- it is a secret from
   // the *model*, which never sees stdout or this argv.
   Process {
+    clearEnvironment: true
+    environment: root.childEnv
     id: answerProc
     property string verb: ""
     property string token: ""
@@ -810,6 +860,8 @@ Item {
   // The review's rows, read when a panel asks. Computed by the CLI from the
   // same inputs the daemon used, so it answers whether or not one is running.
   Process {
+    clearEnvironment: true
+    environment: root.childEnv
     id: reviewProc
     command: [root.pluginDir + "bin/omarchy-mcpd", "--review", "--json"]
 
@@ -837,6 +889,8 @@ Item {
   // from either -- and it is computed from the files rather than asked of the
   // daemon, so it still answers when the daemon is refusing to start.
   Process {
+    clearEnvironment: true
+    environment: root.childEnv
     id: rulesProc
     command: [root.pluginDir + "bin/omarchy-mcpd", "--permissions", "--json"]
 
@@ -868,6 +922,8 @@ Item {
   // there is one writer of the consent directory and one place the vocabulary
   // is defined.
   Process {
+    clearEnvironment: true
+    environment: root.childEnv
     id: revokeProc
     property string token: ""
     property string effect: ""
@@ -894,6 +950,8 @@ Item {
   // file that is not there yet. The daemon detaches the editor, so it outlives
   // this process.
   Process {
+    clearEnvironment: true
+    environment: root.childEnv
     id: editProc
     property string which: ""
     command: [root.pluginDir + "bin/omarchy-mcpd", "--edit", editProc.which]
@@ -907,6 +965,8 @@ Item {
   }
 
   Process {
+    clearEnvironment: true
+    environment: root.childEnv
     id: pruneProc
     property string token: ""
     command: [root.pluginDir + "bin/omarchy-mcp-consent", "prune", pruneProc.token]
@@ -921,6 +981,8 @@ Item {
   }
 
   Process {
+    clearEnvironment: true
+    environment: root.childEnv
     id: ackProc
     property string token: ""
     command: [root.pluginDir + "bin/omarchy-mcp-consent", "acknowledge", ackProc.token]
@@ -933,6 +995,8 @@ Item {
   }
 
   Process {
+    clearEnvironment: true
+    environment: root.childEnv
     id: notify
     command: [root.pluginDir + "bin/omarchy-mcp-exec",
       "omarchy", "notification", "send", "-u", "critical",
@@ -945,6 +1009,8 @@ Item {
   // happened or the log is switched off, and the panel has to tell a user
   // which one they are looking at.
   Process {
+    clearEnvironment: true
+    environment: root.childEnv
     id: tail
     // Thirty rather than eight: the log has a tab of its own now, and a tab
     // with one screen of nothing in it is a tab nobody opens twice. The tab
@@ -982,6 +1048,8 @@ Item {
   // world-readable through /proc. The same reason `panels/network/Panel.qml`
   // sends a wifi password over stdin.
   Process {
+    clearEnvironment: true
+    environment: root.childEnv
     id: copyProc
     command: [root.pluginDir + "bin/omarchy-mcpd", "--print-client-config"]
 
@@ -1001,6 +1069,8 @@ Item {
   }
 
   Process {
+    clearEnvironment: true
+    environment: root.childEnv
     id: clipboard
     property string payload: ""
     command: [root.pluginDir + "bin/omarchy-mcp-exec", "wl-copy"]
@@ -1022,6 +1092,8 @@ Item {
   }
 
   Process {
+    clearEnvironment: true
+    environment: root.childEnv
     id: clientConfigProc
     command: [root.pluginDir + "bin/omarchy-mcpd", "--print-client-config"]
     stdout: StdioCollector {
@@ -1034,6 +1106,8 @@ Item {
   // line: nothing here resolves an executable on the session PATH, and where
   // the venv lives stops being knowledge duplicated in the UI layer.
   Process {
+    clearEnvironment: true
+    environment: root.childEnv
     id: rebuildProc
     command: [root.pluginDir + "bin/omarchy-mcpd", "--rebuild-only"]
     onExited: root.restart()

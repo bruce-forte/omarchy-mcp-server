@@ -55,7 +55,72 @@ TRUST_READLINK=/usr/bin/readlink
 #: Populated by `trust_bind`. `TRUSTED[tar]` is the absolute path to run.
 declare -A TRUSTED=()
 
+#: The only variables a child of this plugin inherits.
+#
+# An allowlist, for the same reason TRUST_DIRS is one. The shell this plugin
+# runs under carries around 205 variables, all of them the session's, and three
+# classes of them decide what a program does before its first line runs:
+#
+#   BASH_ENV / ENV     bash sources the named file *before* the script body, so
+#                      ahead of `set -euo pipefail` and ahead of this library.
+#                      /usr/bin/omarchy is itself a bash script, so this reaches
+#                      it too.
+#   LD_PRELOAD / LD_*  the dynamic loader maps the named object into every ELF
+#                      helper -- curl, tar, grim, wl-copy -- before main().
+#   PYTHON*            PYTHONHOME relocates the interpreter's own stdlib.
+#
+# None of them need an MCP client, a hostile page, or a write to /usr/bin. They
+# need one variable in the environment the shell was started with. The Omarchy
+# marketplace review found this one step behind N20's provenance checks; see
+# ROADMAP N21.
+#
+# LC_* is kept by pattern rather than named, because there are a dozen of them
+# and they only ever change formatting.
+TRUST_ENV_KEEP=(
+  PATH HOME USER LOGNAME SHELL LANG TERM PWD
+  XDG_RUNTIME_DIR XDG_STATE_HOME XDG_CONFIG_HOME XDG_CACHE_HOME XDG_DATA_HOME
+  XDG_DATA_DIRS XDG_CONFIG_DIRS XDG_CURRENT_DESKTOP XDG_SESSION_TYPE
+  WAYLAND_DISPLAY DISPLAY DBUS_SESSION_BUS_ADDRESS HYPRLAND_INSTANCE_SIGNATURE
+  OMARCHY_PATH OMARCHY_OCR_LANGS
+)
+
+#: Variables that are removed even if somebody adds them to the keep list.
+#
+# Belt and braces. The loop above already drops anything unnamed, so reaching
+# this list means the allowlist was edited wrongly -- which is exactly when a
+# second, shorter list that simply says "never" earns its place.
+TRUST_ENV_NEVER=(
+  BASH_ENV ENV SHELLOPTS BASHOPTS CDPATH GLOBIGNORE IFS
+  LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT
+  PYTHONHOME PYTHONSTARTUP PYTHONUSERBASE PYTHONEXECUTABLE
+)
+
 trust_log() { printf 'omarchy-mcp-trust: %s\n' "$*" >&2; }
+
+# Drop every exported variable that is not on the keep list.
+#
+# The parent is expected to have cleared the environment already -- Service.qml
+# sets `clearEnvironment: true` and hands over a reconstructed map. This runs
+# anyway, because a script that is only safe when its caller behaved is not
+# safe. It cannot defend against BASH_ENV, which bash has already acted on by
+# the time any of this exists; `#!/bin/bash -p` is what covers that, and the two
+# together are why both are here.
+trust_sanitize_env() {
+  local name
+  # `compgen -e` lists the names of exported variables.
+  for name in $(compgen -e); do
+    case "$name" in
+      LC_*) continue ;;
+    esac
+    case " ${TRUST_ENV_KEEP[*]} " in
+      *" $name "*) continue ;;
+    esac
+    unset -v "$name" 2>/dev/null || true
+  done
+  for name in "${TRUST_ENV_NEVER[@]}"; do
+    unset -v "$name" 2>/dev/null || true
+  done
+}
 
 # Bash-only sanity on one of the two seeds. `-w` asks whether *this user* may
 # write it, which is exactly the shadowing being refused; `-L` refuses a seed

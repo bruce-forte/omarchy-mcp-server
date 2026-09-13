@@ -629,13 +629,19 @@ Two details are load-bearing:
   the copy-pasteable `omarchy theme set` that the README and `TOOLS.md` show.
   Which file ran goes in the log line, where it answers *which one* without
   costing a line of the agent's context on every call.
-- **The child's `PATH` is replaced with the allowlist.** Choosing the right
-  file settles nothing if the command then looks *its own* helpers up on a list
-  nobody checked -- the same hole, one process along. Omarchy's own dispatcher
-  resolves its `omarchy-*` helpers relative to its own location rather than
-  through `PATH`, so choosing the right `omarchy` already settles every
-  subcommand. The cost is that a command shelling out to something in
-  `~/.local/bin` no longer finds it; `omarchy launch` is the case to watch.
+- **The child's whole environment is rebuilt, not just its `PATH`.** Choosing
+  the right file settles nothing if the command then looks *its own* helpers up
+  on a list nobody checked -- the same hole, one process along -- and it settles
+  even less if the environment decides what the program does before its first
+  instruction. `BASH_ENV` is sourced by bash *before* a script's first line,
+  `LD_PRELOAD` is mapped before `main`, and `PYTHONHOME` relocates an
+  interpreter's standard library. `trust.child_env` keeps about twenty names and
+  drops the other two hundred; `Service.qml` clears and reconstructs at the QML
+  boundary; the wrappers are `#!/bin/bash -p`, which is the only thing that
+  stops `BASH_ENV`. See ROADMAP N21. The cost is that a command shelling out to
+  something in `~/.local/bin` no longer finds it, and one reading a variable
+  nobody listed will not see it; `omarchy launch` and `http_proxy` are the cases
+  to watch.
 
 The other half is the error. `execute.run` was the one spawn site that let
 `FileNotFoundError` escape, and the SDK strips the cause, so a renamed `omarchy`

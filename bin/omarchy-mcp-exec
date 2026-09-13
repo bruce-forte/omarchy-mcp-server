@@ -1,4 +1,7 @@
-#!/bin/bash
+#!/bin/bash -p
+#
+# `-p` stops bash sourcing BASH_ENV before this file's first line. See the
+# same note in omarchy-mcpd, and ROADMAP N21.
 #
 # Run one command, resolved and verified first.
 #
@@ -32,6 +35,10 @@ source "${BASH_SOURCE[0]%/*}/omarchy-mcp-trust"
 
 name="$1"
 shift
+
+# Everything the caller sent that this plugin does not need goes now, before a
+# child exists to inherit it.
+trust_sanitize_env
 
 trust_bind "$name" || exit 127
 

@@ -114,6 +114,16 @@ the existing tests are the specification:
   except the first run, which has nothing to compare against.
 - `argv` never passes through a shell. `tests/test_execute.py` writes a canary
   file and asserts it survives an injection attempt.
+- **A wrapper's shebang is `#!/bin/bash -p`, and that is load-bearing.**
+  Without it bash sources the file named by `BASH_ENV` *before* the script's
+  first line — ahead of `set -euo pipefail` and ahead of the trust library, so
+  nothing inside the file can defend against it. Restoring a plain
+  `#!/bin/bash` reopens it and looks like nothing at runtime.
+- **A spawned helper gets a rebuilt environment, never the session's.** Every
+  `Process` in `Service.qml` sets `clearEnvironment: true` and hands over
+  `childEnv`; the wrappers call `trust_sanitize_env`; the daemon uses
+  `trust.child_env`. All three are allowlists. A new variable a helper needs is
+  added by name in all the places that build one — see N21.
 - **Nothing is executed that the session `PATH` chose.** A bare name resolves
   against a fixed allowlist, and the file must be root-owned and writable by
   nobody else, as must every directory above it. A new spawn anywhere -- python,

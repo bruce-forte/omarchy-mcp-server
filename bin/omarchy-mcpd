@@ -1,4 +1,11 @@
-#!/bin/bash
+#!/bin/bash -p
+#
+# `-p` is not decoration. Without it a non-interactive bash sources the file
+# named by BASH_ENV *before* the first line below, so an attacker-chosen script
+# runs ahead of `set -euo pipefail`, ahead of the trust library, and ahead of
+# every provenance check in it. Privileged mode also makes bash ignore
+# SHELLOPTS, BASHOPTS, CDPATH and GLOBIGNORE, and refuse inherited functions.
+# Nothing inside a script can undo any of that; only the shebang can.
 #
 # Starts the Omarchy MCP daemon, building whatever it needs first.
 #
@@ -23,6 +30,9 @@ PLUGIN_DIR="$(cd -P -- "${BASH_SOURCE[0]%/*}/.." && pwd)"
 # see the header of that file for the rule and for why it is duplicated in
 # `src/omarchy_mcp/trust.py`.
 source "$PLUGIN_DIR/bin/omarchy-mcp-trust"
+
+# Drop everything the wrappers do not need, before a single child is spawned.
+trust_sanitize_env
 
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/$PLUGIN_ID"
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/mcp"
@@ -326,6 +336,20 @@ ensure_venv
 # `export` and a plain exec rather than `env`: one less executable to resolve on
 # the last line of the bootstrap. The interpreter is named absolutely and is the
 # one this script built.
+#
+# Replacing PYTHONPATH was never enough on its own. PYTHONHOME relocates the
+# interpreter's own standard library, PYTHONSTARTUP and PYTHONUSERBASE add code
+# to what it imports, and the loader variables reach it before `main`. They are
+# dropped by trust_sanitize_env above and named again here, because this is the
+# line that actually starts an interpreter and a reader should see it stated at
+# the point of use.
+#
+# `-E` would have covered all of them in one flag and cannot be used: it ignores
+# PYTHONPATH too, and PYTHONPATH is how this project is imported without being
+# installed. `-s` drops the per-user site directory; `-P` stops the working
+# directory being prepended to sys.path.
+unset -v PYTHONHOME PYTHONSTARTUP PYTHONUSERBASE PYTHONEXECUTABLE 2>/dev/null || true
+export PYTHONNOUSERSITE=1
 export PYTHONPATH="$PLUGIN_DIR/src"
 export PYTHONPYCACHEPREFIX="$STATE_DIR/pycache"
-exec "$VENV/bin/python" -m omarchy_mcp "$@"
+exec "$VENV/bin/python" -s -P -m omarchy_mcp "$@"
