@@ -247,6 +247,48 @@ Verified by `tests/test_trust.py` and `tests/test_bootstrap.py`, which build a
 shadowing directory and assert the planted binary is skipped and the trusted one
 behind it is used.
 
+### A helper starts in a known environment
+
+Choosing the right file settles nothing if the environment it starts in decides
+what it does. Three kinds of variable act **before a program's first
+instruction**:
+
+- **`BASH_ENV`** names a file that a non-interactive bash sources before the
+  body of the script it was asked to run — so before `set -euo pipefail`, before
+  `omarchy-mcp-trust` is loaded, and before every check in it. `/usr/bin/omarchy`
+  is itself a bash script, so this reaches `omarchy` calls too.
+- **`LD_PRELOAD`** and `LD_LIBRARY_PATH` map an object into every ELF helper —
+  `curl`, `tar`, `grim`, `wl-copy`, `hyprctl` — before `main`.
+- **`PYTHONHOME`** relocates the interpreter's own standard library.
+
+Nothing written *inside* a script can defend against the first of those. So the
+defence is in two places, and both are needed:
+
+- Every wrapper is `#!/bin/bash -p`. Privileged mode refuses `BASH_ENV` and
+  `ENV`, ignores `SHELLOPTS`, `BASHOPTS`, `CDPATH` and `GLOBIGNORE`, and does
+  not inherit shell functions.
+- Every `Process` in `Service.qml` sets `clearEnvironment: true` and supplies a
+  `childEnv` rebuilt by name, so a helper receives exactly those variables and
+  nothing else.
+
+The wrappers sanitise again (`trust_sanitize_env`), and so does the daemon
+(`trust.child_env`) for anything it spawns. A script that is only safe when its
+caller behaved is not safe.
+
+It is an **allowlist** — roughly twenty names — rather than a list of dangerous
+ones, which is a list nobody finishes writing. `HYPRLAND_INSTANCE_SIGNATURE`,
+`WAYLAND_DISPLAY`, `DISPLAY` and `DBUS_SESSION_BUS_ADDRESS` are on it because
+the desktop helpers genuinely need them.
+
+The interpreter is launched with `PYTHONHOME`, `PYTHONSTARTUP` and
+`PYTHONUSERBASE` unset and with `-s -P`. `-E` would cover them in one flag and
+cannot be used: it ignores `PYTHONPATH`, which is how this project is imported
+without being installed.
+
+**What this does not cover:** a variable nobody thought to list does not reach a
+child. `http_proxy` is the likely one — the `uv` download will not work behind a
+proxy that needs it. See ROADMAP N21.
+
 ### The bearer token is never put on screen
 
 The setup line carries the token, so nothing renders it. `clientConfig` prints it

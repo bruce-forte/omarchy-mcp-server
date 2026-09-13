@@ -367,6 +367,63 @@ def test_a_symlink_at_the_destination_is_not_executed(tmp_path):
     assert "REGULAR_ACCEPTED" in result.stdout, result.stderr
 
 
+#: Every wrapper the shell spawns. All three are entered by bash, so all three
+#: need the privileged shebang.
+WRAPPERS = ("omarchy-mcpd", "omarchy-mcp-exec", "omarchy-mcp-consent")
+
+
+@pytest.mark.parametrize("name", WRAPPERS)
+def test_the_shebang_refuses_bash_env(name):
+    """`#!/bin/bash -p`, and it is load-bearing rather than decorative.
+
+    A non-interactive bash sources the file named by `BASH_ENV` *before* the
+    first line of the script -- so ahead of `set -euo pipefail`, ahead of
+    `omarchy-mcp-trust`, and ahead of every provenance check in it. Nothing
+    written inside the file can defend against that; privileged mode is the only
+    thing that does, and it is available only here. A rewrite that restores a
+    plain `#!/bin/bash` reopens it and looks identical at runtime, which is why
+    this is asserted rather than trusted. See ROADMAP N21.
+    """
+    first = (WRAPPER.parent / name).read_text().splitlines()[0]
+    assert first == "#!/bin/bash -p", f"{name} must be privileged; got {first!r}"
+
+
+def test_bash_env_does_not_run_before_the_wrapper(tmp_path):
+    """The shebang, exercised rather than read.
+
+    Uses the shim with a harmless command, so nothing reaches the network or the
+    desktop -- only the canary matters.
+    """
+    canary = tmp_path / "PWNED"
+    evil = tmp_path / "evil.sh"
+    evil.write_text(f'touch {shlex.quote(str(canary))}\n')
+
+    subprocess.run(
+        [str(WRAPPER.parent / "omarchy-mcp-exec"), "true"],
+        capture_output=True,
+        env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "BASH_ENV": str(evil)},
+    )
+    assert not canary.exists(), "BASH_ENV ran before the wrapper could defend itself"
+
+
+def test_the_environment_is_sanitised_before_anything_is_spawned(wrapper):
+    """A script that is only safe when its caller behaved is not safe."""
+    sanitise = wrapper.index("trust_sanitize_env")
+    assert sanitise < wrapper.index("trust_bind "), "sanitise before binding"
+
+
+def test_the_interpreter_does_not_inherit_python_variables(wrapper):
+    """Replacing PYTHONPATH was never enough on its own: PYTHONHOME relocates
+    the standard library, and PYTHONSTARTUP adds code to what is imported.
+
+    `-E` would cover them in one flag and cannot be used -- it ignores
+    PYTHONPATH, which is how this project is imported without being installed.
+    """
+    assert "unset -v PYTHONHOME PYTHONSTARTUP PYTHONUSERBASE" in wrapper
+    assert '"$VENV/bin/python" -s -P -m omarchy_mcp' in wrapper
+    assert " -E " not in wrapper, "-E would break PYTHONPATH; see N21"
+
+
 def test_config_is_never_overwritten(wrapper):
     assert "[[ -f $CONFIG_DIR/config.toml ]] && return 0" in wrapper
 

@@ -88,7 +88,7 @@ security boundary only assert whatever the code already does.
 
 ## Phase 6 in detail
 
-**Finished**: N1–N20. The theme was that the person the daemon acts on behalf of
+**Finished**: N1–N21. The theme was that the person the daemon acts on behalf of
 could not see what it did, could not answer for a call in flight, and could not
 stop it without a terminal. Decision 12 covers *daemon* faults; none of this
 covered what an *agent* does, which is the part with consequences.
@@ -2552,6 +2552,79 @@ on. Python needs no such seed: `os.lstat` is a syscall.
   against the same files, but only the cases somebody thought to write down.
 - **A verified binary is not a safe binary.** This says the file is the one root
   installed. It says nothing about what that file does.
+
+### N21 — The environment a helper starts in — done
+
+The marketplace security review, fourth pass. N20 settled *which file* runs.
+This is about the environment it runs *in*, and the finding was that a helper
+inherited all 205 variables of the session.
+
+Three of them decide what a program does before its first instruction:
+
+| Variable | What it does | Reaches |
+|---|---|---|
+| `BASH_ENV` | bash sources the named file **before** the script body | every wrapper, and `/usr/bin/omarchy`, which is itself a bash script |
+| `LD_PRELOAD`, `LD_LIBRARY_PATH` | the loader maps an object into the process before `main` | `curl`, `tar`, `grim`, `wl-copy`, `hyprctl`, `qs` |
+| `PYTHONHOME` | relocates the interpreter's own standard library | the daemon |
+
+`BASH_ENV` is the sharp one, and it is worth being precise about why. It is
+read by a non-interactive bash **before line one of the script**. Not before the
+first command — before the file is entered at all. So it runs ahead of
+`set -euo pipefail`, ahead of sourcing `omarchy-mcp-trust`, and ahead of every
+provenance check N20 added. **Nothing written inside a script can defend against
+it**, because by the time any of that exists bash has already sourced the file.
+Confirmed rather than assumed: a script with a plain `#!/bin/bash` shebang runs
+the attacker's file; the same script with `#!/bin/bash -p` does not.
+
+**Two halves, because neither is sufficient alone.**
+
+- **`#!/bin/bash -p`** on all three wrappers. Privileged mode makes bash refuse
+  to process `BASH_ENV` and `ENV`, ignore `SHELLOPTS`, `BASHOPTS`, `CDPATH` and
+  `GLOBIGNORE`, and decline to inherit shell functions from the environment.
+  This is the only fix for `BASH_ENV`, and it is available only in the shebang.
+- **`clearEnvironment: true`** on all sixteen `Process` blocks in
+  `Service.qml`, each handed a `childEnv` rebuilt by name. Quickshell's
+  semantics were checked rather than assumed: with `clearEnvironment` set, the
+  `environment` map *replaces* the environment entirely — a child given two
+  variables receives exactly two. Without it, the map merges into the inherited
+  247.
+
+The wrappers do it again in `trust_sanitize_env`, and the daemon does it again
+in `trust.child_env`. A script that is only safe when its caller behaved is not
+safe.
+
+**An allowlist, not a denylist.** Naming the dangerous variables would be a
+list nobody finishes writing. The question asked instead is what a child
+actually needs, and the answer is about twenty names. `HYPRLAND_INSTANCE_SIGNATURE`,
+`WAYLAND_DISPLAY`, `DISPLAY` and `DBUS_SESSION_BUS_ADDRESS` are on it because
+`hyprctl` cannot find its socket and the Wayland tools cannot find the display
+without them — an allowlist that forgets those is not strict, it is broken.
+
+**The interpreter.** Replacing `PYTHONPATH` was never enough: `PYTHONHOME`
+relocates the stdlib, `PYTHONSTARTUP` and `PYTHONUSERBASE` add code to what is
+imported. They are dropped, and named again at the `exec` line where an
+interpreter actually starts. `-E` would have covered all of them in one flag and
+**cannot be used**, because it ignores `PYTHONPATH` too and `PYTHONPATH` is how
+this project is imported without being installed. `-s` and `-P` are used
+instead, for the user site directory and the working directory.
+
+#### Watch for
+
+- **A variable nobody listed does not reach a child.** `http_proxy` and
+  `https_proxy` are the ones most likely to be missed: the `uv` download will
+  not work behind a proxy that needs them. That is a real regression for those
+  users, and adding them back is safe — the archive is checked against a digest
+  committed in this repository (N19), so a proxy cannot substitute content —
+  but it has not been done here rather than being decided quietly.
+  `SSL_CERT_FILE`, `CURL_CA_BUNDLE` and `TMPDIR` are in the same category.
+- **`childEnv` is built once**, when the service is created. A variable the
+  session changes afterwards is not picked up until the shell restarts.
+- **`-p` is load-bearing and invisible.** An editor, a linter or a careless
+  rewrite that restores a plain `#!/bin/bash` silently reopens the whole thing,
+  and nothing at runtime looks different. A test asserts the shebang.
+- **This is the environment, not the file.** N20 says the binary is the one root
+  installed; this says it starts with a known environment. Neither says the
+  program is safe.
 
 ## Deferred
 

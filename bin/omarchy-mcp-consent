@@ -1,4 +1,8 @@
-#!/bin/bash
+#!/bin/bash -p
+#
+# `-p` stops bash sourcing BASH_ENV before this file's first line. This is the
+# whole answer channel, so an attacker-chosen script running ahead of it would
+# be running ahead of consent itself. See ROADMAP N21.
 #
 # Records an answer to an approval request.
 #
@@ -44,6 +48,7 @@ CONSENT_DIR="${XDG_RUNTIME_DIR:-/tmp}/$PLUGIN_ID/consent"
 # somebody else's `mktemp` is not an answer.
 PLUGIN_DIR="$(cd -P -- "${BASH_SOURCE[0]%/*}/.." && pwd)"
 source "$PLUGIN_DIR/bin/omarchy-mcp-trust"
+trust_sanitize_env
 trust_bind mkdir mktemp || {
   echo "omarchy-mcp-consent: refusing to run: mkdir or mktemp could not be verified" >&2
   exit 1

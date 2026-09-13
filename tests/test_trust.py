@@ -13,6 +13,9 @@ already has, and the refusals are built in a temporary directory.
 from __future__ import annotations
 
 import os
+import re
+import shlex
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -168,6 +171,29 @@ class TestResolution:
         assert trust.describe("nothing-by-this-name", (tmp_path,)) == []
 
 
+#: Variables that decide what a program does before its first instruction.
+HOSTILE_ENV = {
+    "BASH_ENV": "/tmp/evil.sh",
+    "ENV": "/tmp/evil.sh",
+    "LD_PRELOAD": "/tmp/evil.so",
+    "LD_LIBRARY_PATH": "/tmp",
+    "PYTHONHOME": "/tmp",
+    "PYTHONSTARTUP": "/tmp/evil.py",
+    "PYTHONUSERBASE": "/tmp",
+}
+
+#: Variables the desktop helpers genuinely need. An allowlist that forgets these
+#: is not strict, it is broken: `hyprctl` cannot find its socket without the
+#: signature and the Wayland tools cannot find the display.
+REQUIRED_ENV = {
+    "HYPRLAND_INSTANCE_SIGNATURE": "sig",
+    "WAYLAND_DISPLAY": "wayland-1",
+    "DISPLAY": ":0",
+    "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1000/bus",
+    "XDG_RUNTIME_DIR": "/run/user/1000",
+}
+
+
 class TestTheChildEnvironment:
     def test_path_is_replaced_rather_than_prepended(self, monkeypatch):
         """A session PATH left on the end is a second list that was never
@@ -180,6 +206,91 @@ class TestTheChildEnvironment:
     def test_an_override_still_wins_for_other_keys(self, monkeypatch):
         env = trust.child_env({"OMARCHY_MCP_TEST": "1"})
         assert env["OMARCHY_MCP_TEST"] == "1"
+
+    @pytest.mark.parametrize("name", sorted(HOSTILE_ENV))
+    def test_a_variable_that_runs_code_is_not_passed_on(self, name, monkeypatch):
+        """BASH_ENV is sourced by bash before the body of any script it runs --
+        and `/usr/bin/omarchy` is a bash script, so this reaches every `omarchy`
+        call. LD_PRELOAD is mapped into every ELF helper before `main`.
+        PYTHONHOME relocates an interpreter's standard library. See N21."""
+        monkeypatch.setenv(name, HOSTILE_ENV[name])
+        assert name not in trust.child_env()
+
+    @pytest.mark.parametrize("name", sorted(REQUIRED_ENV))
+    def test_what_the_desktop_helpers_need_survives(self, name, monkeypatch):
+        monkeypatch.setenv(name, REQUIRED_ENV[name])
+        assert trust.child_env()[name] == REQUIRED_ENV[name]
+
+    def test_an_unlisted_variable_is_dropped(self, monkeypatch):
+        """An allowlist, not a denylist: the list of ways to influence a program
+        through its environment is not one anybody finishes writing."""
+        monkeypatch.setenv("SOMETHING_NOBODY_LISTED", "1")
+        assert "SOMETHING_NOBODY_LISTED" not in trust.child_env()
+
+    def test_locale_survives_by_pattern(self, monkeypatch):
+        monkeypatch.setenv("LC_TIME", "en_GB.UTF-8")
+        assert trust.child_env()["LC_TIME"] == "en_GB.UTF-8"
+
+
+class TestTheBashSanitiser:
+    """The same rule, in the language the bootstrap is written in."""
+
+    def test_it_drops_the_unlisted_and_keeps_the_needed(self):
+        library = Path(__file__).resolve().parents[1] / "bin" / "omarchy-mcp-trust"
+        script = f"""
+          export EVIL=1 LD_PRELOAD=/tmp/x.so BASH_ENV=/tmp/e.sh PYTHONHOME=/tmp
+          export HOME=/home/u WAYLAND_DISPLAY=wayland-1 LC_ALL=C PATH=/usr/bin
+          export HYPRLAND_INSTANCE_SIGNATURE=sig
+          source {shlex.quote(str(library))}
+          trust_sanitize_env
+          compgen -e | sort
+        """
+        result = subprocess.run(
+            ["bash", "-c", script],
+            capture_output=True,
+            text=True,
+            env={"PATH": "/usr/bin:/bin"},
+        )
+        survivors = set(result.stdout.split())
+        assert not survivors & {"EVIL", "LD_PRELOAD", "BASH_ENV", "PYTHONHOME"}
+        needed = {
+            "HOME",
+            "WAYLAND_DISPLAY",
+            "HYPRLAND_INSTANCE_SIGNATURE",
+            "LC_ALL",
+            "PATH",
+        }
+        assert needed <= survivors
+
+
+class TestTheQmlBoundary:
+    """`Service.qml` is where clearing has to happen.
+
+    A wrapper cannot defend itself against `BASH_ENV` -- bash has already
+    sourced it by the time the script's first line runs -- so the parent is the
+    only place that can stop it. These read the file because there is no test
+    harness for QML here, and an unguarded `Process` would be silent.
+    """
+
+    @staticmethod
+    def _service() -> str:
+        return (Path(__file__).resolve().parents[1] / "Service.qml").read_text()
+
+    def test_every_process_clears_and_rebuilds_the_environment(self):
+        body = self._service()
+        blocks = len(re.findall(r"^\s*Process\s*\{\s*$", body, re.M))
+        assert blocks > 0, "no Process blocks found; this guard needs updating"
+        assert body.count("clearEnvironment: true") >= blocks
+        assert body.count("environment: root.childEnv") == blocks
+
+    def test_the_rebuilt_environment_carries_the_desktop_variables(self):
+        body = self._service()
+        for name in ("WAYLAND_DISPLAY", "HYPRLAND_INSTANCE_SIGNATURE", "XDG_RUNTIME_DIR"):
+            assert f'"{name}"' in body
+
+    def test_the_session_path_is_not_handed_over(self):
+        """PATH is a fixed floor; the wrappers replace it with the allowlist."""
+        assert '"PATH": "/usr/local/bin:/usr/bin"' in self._service()
 
 
 class TestWhatTheDaemonReports:
