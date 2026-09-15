@@ -140,10 +140,15 @@ def test_shell_targets_carry_signatures(session_client):
     assert methods and "signature" in methods[0]
 
 
+# Reads the installed shell through `qs ipc show`, so it carries the same
+# declaration as the desktop drift checks. The skip matches its sibling above:
+# the old one only caught "not on PATH", so anything else that stopped the
+# listing surfaced as a KeyError on the line below rather than as a skip.
+@pytest.mark.needs_omarchy
 def test_shell_target_template_resolves(session_client):
     client, sid = session_client
     body = read(client, sid, "omarchy://shell/target/media")
-    if "error" in body and "not on PATH" in body["error"]:
+    if "error" in body:
         pytest.skip("omarchy-shell is not running")
     assert body["target"] == "media"
 

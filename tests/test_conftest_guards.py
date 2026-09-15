@@ -35,6 +35,25 @@ class TestNothingReachesTheRealDesktop:
         assert "real desktop" in str(exc.value)
         assert " ".join(argv) in str(exc.value), "the refusal names what was attempted"
 
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            ["wl-paste", "--no-newline"],
+            ["hyprctl", "-j", "monitors"],
+            ["omarchy", "commands", "--all", "--json"],
+        ],
+    )
+    def test_the_bounded_reader_is_guarded_too(self, argv):
+        """`execute.capture` is a second way to start a process, added for the
+        bounded reads in N22. It was unguarded at first, and the suite promptly
+        read the developer's real clipboard through it."""
+        with pytest.raises(AssertionError) as exc:
+            execute.capture(
+                argv, executable="/usr/bin/false", timeout_s=1, max_output_b=64
+            )
+        assert "real desktop" in str(exc.value)
+        assert " ".join(argv) in str(exc.value), "the refusal names what was attempted"
+
     def test_a_redirected_resolver_is_left_alone(self, tmp_path, monkeypatch):
         """A test building its own fake `omarchy` is doing the right thing, and
         the guard must not be the reason it cannot."""

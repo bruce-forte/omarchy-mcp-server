@@ -26,6 +26,9 @@ from .paths import OMARCHY_PATH
 
 LIST_TIMEOUT_S = 15
 
+#: The IPC listing is a page or two of text.
+LIST_OUTPUT_B = 1024 * 1024
+
 #: A regular expression is a pattern for matching text. The ``r"..."`` prefix
 #: makes it a raw string, so a backslash reaches the regex engine rather than
 #: being read as a Python escape -- always used for patterns.
@@ -134,7 +137,7 @@ def _list_raw() -> str:
     """The raw text of ``qs ipc show``, or raise `ShellError` explaining why not."""
     # Imported here rather than at module level to avoid a circular import; see
     # the same note in `registry.py`.
-    from .execute import NotInstalled, resolve_binary
+    from .execute import NotInstalled, OutputTooLarge, capture, resolve_binary
 
     argv = ["qs", "ipc", "-n", "-p", str(OMARCHY_PATH / "shell"), "show"]
     try:
@@ -143,23 +146,22 @@ def _list_raw() -> str:
         raise ShellError(f"{exc} Is Quickshell installed?") from exc
 
     try:
-        proc = subprocess.run(
-            argv,
-            executable=exe,
-            capture_output=True,
-            text=True,
-            timeout=LIST_TIMEOUT_S,
+        # Bounded while it arrives rather than buffered whole; see N22.
+        code, out, err = capture(
+            argv, executable=exe, timeout_s=LIST_TIMEOUT_S, max_output_b=LIST_OUTPUT_B
         )
     except FileNotFoundError as exc:
         raise ShellError("`qs` (Quickshell) is not on PATH") from exc
     except subprocess.TimeoutExpired as exc:
         raise ShellError("`qs ipc show` timed out; is omarchy-shell running?") from exc
+    except OutputTooLarge as exc:
+        raise ShellError(f"`qs ipc show` {exc}") from exc
 
-    if proc.returncode != 0:
+    if code != 0:
         raise ShellError(
-            f"`qs ipc show` failed: {proc.stderr.strip()[:200] or 'is omarchy-shell running?'}"
+            f"`qs ipc show` failed: {err.strip()[:200] or 'is omarchy-shell running?'}"
         )
-    return proc.stdout
+    return out
 
 
 def targets(*, refresh: bool = False) -> dict[str, Target]:

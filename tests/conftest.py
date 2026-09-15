@@ -150,7 +150,11 @@ REAL_SEARCH = tuple(execute.SEARCH)
 
 #: Spawning either of these against the live system reaches the desktop the
 #: suite is running on. `omarchy system reboot` is the one that taught us.
-DESKTOP_BINARIES = frozenset({"omarchy", "omarchy-shell", "hyprctl", "qs", "wl-copy"})
+#: `wl-paste` reads the developer's actual clipboard. It was missing from this
+#: set until a test did exactly that and asserted on the contents.
+DESKTOP_BINARIES = frozenset(
+    {"omarchy", "omarchy-shell", "hyprctl", "qs", "wl-copy", "wl-paste"}
+)
 
 
 @pytest.fixture(autouse=True)
@@ -184,21 +188,30 @@ def _no_real_omarchy(monkeypatch, request):
         # are skipped in CI; and the marker is the opt-in.
         return
 
-    # The real function, kept before it is replaced, so the stand-in below can
-    # still call it once it is satisfied the argv is safe.
-    real_run = execute.run
+    # Every way this daemon starts a process has to be covered, not just the
+    # one that existed when the guard was written. `execute.capture` was added
+    # for the bounded reads in N22, and until it was named here the suite could
+    # reach the real desktop through it -- which it then did, reading the
+    # developer's actual clipboard and asserting on the contents.
+    def guard(real):
+        """Wrap one spawn function so a desktop binary raises instead of running."""
 
-    def guarded(argv, **kwargs):
-        if tuple(execute.SEARCH) == REAL_SEARCH and argv and argv[0] in DESKTOP_BINARIES:
-            raise AssertionError(
-                "a test tried to run this against the real desktop: "
-                + " ".join(map(str, argv))
-                + ". Mock it, or point execute.SEARCH at a fixture directory. "
-                "Nothing in the suite may reach the machine it runs on."
-            )
-        return real_run(argv, **kwargs)
+        def guarded(argv, **kwargs):
+            if tuple(execute.SEARCH) == REAL_SEARCH and argv and argv[0] in DESKTOP_BINARIES:
+                raise AssertionError(
+                    "a test tried to run this against the real desktop: "
+                    + " ".join(map(str, argv))
+                    + ". Mock it, or point execute.SEARCH at a fixture directory. "
+                    "Nothing in the suite may reach the machine it runs on."
+                )
+            return real(argv, **kwargs)
 
-    monkeypatch.setattr(execute, "run", guarded)
+        return guarded
+
+    # The real functions, kept before they are replaced, so the stand-ins can
+    # still call them once satisfied the argv is safe.
+    monkeypatch.setattr(execute, "run", guard(execute.run))
+    monkeypatch.setattr(execute, "capture", guard(execute.capture))
 
 
 @pytest.fixture(autouse=True)
