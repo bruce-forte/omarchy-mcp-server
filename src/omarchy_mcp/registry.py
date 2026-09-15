@@ -17,6 +17,11 @@ from .paths import OMARCHY_PATH
 
 REGISTRY_TIMEOUT_S = 20
 
+#: The command listing is a few hundred kilobytes of JSON. Generous, and still a
+#: bound: past this the reply is not a command listing and parsing it is not
+#: the right failure.
+REGISTRY_OUTPUT_B = 4 * 1024 * 1024
+
 
 @dataclass(frozen=True)
 class Command:
@@ -100,7 +105,7 @@ def _load_for_version(_version: str) -> dict[str, Command]:
     # Imported inside the function rather than at the top of the file:
     # ``execute`` imports from here, and two modules importing each other at
     # import time is a circular import. By the time this runs, both exist.
-    from .execute import NotInstalled, resolve_binary
+    from .execute import NotInstalled, OutputTooLarge, capture, resolve_binary
 
     argv = ["omarchy", "commands", "--all", "--json"]
     try:
@@ -109,21 +114,23 @@ def _load_for_version(_version: str) -> dict[str, Command]:
         raise RegistryError(f"{exc} Is this an Omarchy system?") from exc
 
     try:
-        proc = subprocess.run(
+        # Bounded while it arrives rather than buffered whole; see N22.
+        code, out, err = capture(
             argv,
             executable=exe,
-            capture_output=True,
-            text=True,
-            timeout=REGISTRY_TIMEOUT_S,
+            timeout_s=REGISTRY_TIMEOUT_S,
+            max_output_b=REGISTRY_OUTPUT_B,
         )
     except FileNotFoundError as exc:
         raise RegistryError("`omarchy` is not on PATH; is this an Omarchy system?") from exc
     except subprocess.TimeoutExpired as exc:
         raise RegistryError("omarchy commands --json timed out") from exc
+    except OutputTooLarge as exc:
+        raise RegistryError(f"omarchy commands --json {exc}") from exc
 
-    if proc.returncode != 0:
-        raise RegistryError(f"omarchy commands --json failed: {proc.stderr.strip()[:200]}")
-    return _parse(proc.stdout)
+    if code != 0:
+        raise RegistryError(f"omarchy commands --json failed: {err.strip()[:200]}")
+    return _parse(out)
 
 
 def all_commands() -> dict[str, Command]:

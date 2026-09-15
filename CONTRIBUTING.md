@@ -124,6 +124,11 @@ the existing tests are the specification:
   `childEnv`; the wrappers call `trust_sanitize_env`; the daemon uses
   `trust.child_env`. All three are allowlists. A new variable a helper needs is
   added by name in all the places that build one — see N21.
+- **Output is bounded while it arrives, never buffered and trimmed after.**
+  `communicate()` returns when the child is done, so anything shaped afterwards
+  bounds what the *agent* sees and not what the *daemon* holds. A new spawn
+  reads through `execute.run` or `execute.capture`; neither reads a pipe to the
+  end. See N22.
 - **Nothing is executed that the session `PATH` chose.** A bare name resolves
   against a fixed allowlist, and the file must be root-owned and writable by
   nobody else, as must every directory above it. A new spawn anywhere -- python,

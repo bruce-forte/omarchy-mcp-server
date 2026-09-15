@@ -255,7 +255,7 @@ In dependency order, shallowest first:
 | `consent.py` | The six ways a call can fail to get a yes, and a wait that fails closed. See below |
 | `gate.py` | Where policy, resolution and consent meet and a call runs or does not. Both tool paths come through it |
 | `prompt.py` | The two ways a question reaches a person, and the notification that outlives neither |
-| `execute.py` | `argv` only, never a shell. Timeouts, process-group termination, output caps, detaching |
+| `execute.py` | `argv` only, never a shell. Timeouts, process-group termination, detaching, and output bounded *as it arrives* -- both pipes drained concurrently into fixed-size sinks, with a ceiling that kills the group rather than reading on |
 | `trust.py` | Which files may be executed at all: a fixed allowlist, root-owned, link and target both checked. Mirrored in `bin/omarchy-mcp-trust` for the bootstrap |
 | `token.py` | The bearer token, created `0600` |
 | `auth.py` | Bearer authentication as **pure ASGI** — see below |

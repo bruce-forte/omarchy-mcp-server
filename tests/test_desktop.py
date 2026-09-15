@@ -130,17 +130,18 @@ class TestClipboard:
         """wl-paste exits non-zero for an empty clipboard, for content it cannot
         render as text, and for a selection that has gone away. To a caller
         those are one answer -- there is no text -- and none is a failure."""
-        import subprocess
+        from omarchy_mcp import execute
 
-        class Reply:
-            returncode = 1
-            stdout = ""
-            # Filled in from the parameter below, so the three wordings are one
-            # test rather than three.
-            stderr = ""
-
-        Reply.stderr = stderr
-        monkeypatch.setattr(subprocess, "run", lambda *a, **k: Reply())
+        # `execute.capture` rather than `subprocess.run`: the clipboard is read
+        # through the bounded reader now (N22), because a clipboard has no size
+        # a program can rely on. The local import inside `clipboard_read`
+        # resolves at call time, so patching the module attribute reaches it.
+        #
+        # This test is why the suite's guard grew to cover `capture`: while it
+        # still mocked `subprocess.run` the mock silently stopped intercepting,
+        # the real `wl-paste` ran, and the assertion was made against the
+        # developer's actual clipboard.
+        monkeypatch.setattr(execute, "capture", lambda *a, **k: (1, "", stderr))
         assert desktop.clipboard_read() == ""
 
     def test_write_sends_text_on_stdin_not_as_an_argument(self, monkeypatch):
@@ -188,6 +189,11 @@ class TestClipboard:
 
 
 @needs_wayland
+# Declared, not accidental: this drives the live session, which is the
+# existing opt-in conftest's guard checks for. It used to slip past that
+# guard only because these helpers went through `subprocess.run`, which
+# was never wrapped -- see N22.
+@pytest.mark.needs_omarchy
 class TestAgainstARealSession:
     def test_state_reports_this_desktop(self):
         state = desktop.state()
@@ -208,6 +214,11 @@ class TestAgainstARealSession:
 
 
 @needs_wayland
+# Declared, not accidental: this drives the live session, which is the
+# existing opt-in conftest's guard checks for. It used to slip past that
+# guard only because these helpers went through `subprocess.run`, which
+# was never wrapped -- see N22.
+@pytest.mark.needs_omarchy
 class TestClipboardRoundTrip:
     def test_write_then_read_returns_the_same_text(self):
         """The regression this pins: wl-copy succeeded but reported a timeout,

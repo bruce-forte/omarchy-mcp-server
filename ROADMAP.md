@@ -88,7 +88,7 @@ security boundary only assert whatever the code already does.
 
 ## Phase 6 in detail
 
-**Finished**: N1–N21. The theme was that the person the daemon acts on behalf of
+**Finished**: N1–N22. The theme was that the person the daemon acts on behalf of
 could not see what it did, could not answer for a call in flight, and could not
 stop it without a terminal. Decision 12 covers *daemon* faults; none of this
 covered what an *agent* does, which is the part with consequences.
@@ -2625,6 +2625,76 @@ instead, for the user site directory and the working directory.
 - **This is the environment, not the file.** N20 says the binary is the one root
   installed; this says it starts with a known environment. Neither says the
   program is safe.
+
+### N22 — Output is bounded while it arrives, not trimmed afterwards — done
+
+The marketplace security review, fifth pass, and the first one that is not
+about provenance. `execute.run` connected both pipes and called
+`proc.communicate()`, then handed the results to `cap()`.
+
+`communicate()` returns when the child is finished. So the whole of a command's
+output was in this process's memory **before** `max_output_b` was consulted.
+The cap trimmed what the *agent* saw and never bounded what the *daemon* held.
+One allowed command printing enough on stdout could exhaust a process that is
+meant to run for weeks, and the timeout did not help: it bounds how long a
+command runs, not how many bytes it produces inside that time. `yes` produces
+roughly a gigabyte a second.
+
+**Two limits now, and they are different things.**
+
+| | |
+|---|---|
+| `max_output_b` | presentational — how much of the output the agent is shown |
+| `ceiling_for(max_output_b)` | structural — how much this process will read before concluding the command is a runaway |
+
+The ceiling is `32 x max_output_b`, floored at 1 MiB: 8 MiB per stream at the
+default cap. It has to be the larger of the two, or a command that legitimately
+prints a few megabytes would be killed instead of trimmed.
+
+**Draining.** Both pipes are read concurrently through a `selectors` loop
+against a single deadline, in 64 KiB chunks, into a `_Sink` per stream. Reading
+them by hand is what `communicate()` existed to avoid -- a child that fills the
+stderr pipe blocks forever while the parent waits on stdout -- so the selector
+is not a flourish, it is the thing that makes hand-draining safe.
+
+**Bounded retention.** A `_Sink` holds at most `limit + 1` bytes of head and
+`keep` bytes of tail, so memory is bounded by the cap however much arrives,
+while `total` keeps counting for the ceiling and for the "how much was dropped"
+note.
+
+The head is sized `limit + 1` rather than `keep`, and that detail is
+load-bearing. `keep` is `limit // 2 - 64`, so two of them come to `limit - 128`:
+collapsing to head-and-tail as soon as the first `keep` bytes arrived would
+silently lose up to 128 bytes out of the middle of output that was never over
+the limit. Everything is kept until the limit is genuinely passed.
+
+**Termination.** A stream past its ceiling stops the loop, and the whole process
+group is terminated and reaped immediately -- `SIGTERM` to the group, `GRACE_S`,
+then `SIGKILL`. The group, not the process: an Omarchy command is usually a
+shell script with children, and killing only the parent leaves them writing.
+
+**One rule, four call sites.** `registry.py`, `shell.py` and `desktop.py` had
+the same defect and were not mentioned in the review: each used
+`subprocess.run(capture_output=True)`, which buffers without limit. `wl-paste`
+is the sharp one -- `omarchy_clipboard_read` is an agent-reachable tool, and a
+clipboard has no size a program can rely on. They now share `execute.capture`,
+which raises the same `TimeoutExpired` they already catch, so their error
+messages are unchanged.
+
+#### Watch for
+
+- **The ceiling is per stream, not per call.** A command hitting it on both
+  stdout and stderr can have twice the ceiling read from it before either
+  trips. Still bounded, still constant, but it is not one number.
+- **A killed command's tail is real output, not the end of the command's
+  thinking.** When the ceiling trips, what is shown is the head and whatever
+  the last `keep` bytes happened to be at that instant -- not the summary a
+  command would have printed had it finished.
+- **`cap()` is still used on text already in memory** by `tools/desktop.py`, for
+  OCR and clipboard results that arrive as one value. That path is bounded by
+  whatever produced it, not by this.
+- **Memory is bounded per call, not per daemon.** Concurrent calls each hold
+  their own sinks.
 
 ## Deferred
 

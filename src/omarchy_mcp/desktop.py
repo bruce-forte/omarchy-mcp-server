@@ -20,6 +20,11 @@ from dataclasses import dataclass
 from typing import Any
 
 HYPRCTL_TIMEOUT_S = 5
+
+#: Bounds on what a desktop helper may hand back. `hyprctl -j clients` on a busy
+#: session is the largest of these; a clipboard has no size a program can rely
+#: on at all, which is why it gets a bound rather than a hope.
+HELPER_OUTPUT_B = 4 * 1024 * 1024
 GRIM_TIMEOUT_S = 15
 OCR_TIMEOUT_S = 30
 
@@ -91,24 +96,28 @@ def hyprctl(*args: str) -> object:
     and others with an object -- so every caller checks with ``isinstance``
     before indexing into it.
     """
+    from .execute import OutputTooLarge, capture as _capture
+
     argv = ["hyprctl", "-j", *args]
     try:
-        proc = subprocess.run(
+        # Bounded while it arrives rather than buffered whole; see N22.
+        code, out, err = _capture(
             argv,
             executable=_exe(argv),
-            capture_output=True,
-            text=True,
-            timeout=HYPRCTL_TIMEOUT_S,
+            timeout_s=HYPRCTL_TIMEOUT_S,
+            max_output_b=HELPER_OUTPUT_B,
         )
     except FileNotFoundError as exc:
         raise DesktopError("`hyprctl` is not on PATH; is Hyprland running?") from exc
     except subprocess.TimeoutExpired as exc:
         raise DesktopError("hyprctl timed out") from exc
+    except OutputTooLarge as exc:
+        raise DesktopError(f"hyprctl {exc}") from exc
 
-    if proc.returncode != 0:
-        raise DesktopError(f"hyprctl {' '.join(args)} failed: {proc.stderr.strip()[:200]}")
+    if code != 0:
+        raise DesktopError(f"hyprctl {' '.join(args)} failed: {err.strip()[:200]}")
     try:
-        return json.loads(proc.stdout)
+        return json.loads(out)
     except json.JSONDecodeError as exc:
         raise DesktopError(f"hyprctl {' '.join(args)} returned invalid JSON") from exc
 
@@ -232,30 +241,31 @@ def clipboard_read(*, mime: str = "") -> str:
     An empty clipboard is an answer rather than a failure -- see the comment on
     the exit code below.
     """
+    from .execute import OutputTooLarge, capture as _capture
+
     args = ["wl-paste", "--no-newline"]
     if mime:
         args += ["--type", mime]
     try:
-        proc = subprocess.run(
-            args,
-            executable=_exe(args),
-            capture_output=True,
-            text=True,
-            timeout=5,
-            errors="replace",
+        # The sharpest of these: `omarchy_clipboard_read` is agent-reachable and
+        # a clipboard has no size a program can rely on. See N22.
+        code, out, _ = _capture(
+            args, executable=_exe(args), timeout_s=5, max_output_b=HELPER_OUTPUT_B
         )
     except FileNotFoundError as exc:
         raise DesktopError("`wl-paste` is not on PATH") from exc
     except subprocess.TimeoutExpired as exc:
         raise DesktopError("wl-paste timed out") from exc
+    except OutputTooLarge as exc:
+        raise DesktopError(f"the clipboard {exc}") from exc
 
     # wl-paste exits non-zero for an empty clipboard ("Nothing is copied"), for
     # a clipboard holding only a type it cannot render as text, and for a
     # selection that has gone away. To a caller those are the same answer --
     # there is no text -- and none of them is worth failing a tool call over.
-    if proc.returncode != 0:
+    if code != 0:
         return ""
-    return proc.stdout
+    return out
 
 
 def clipboard_write(text: str) -> None:
@@ -297,17 +307,22 @@ def _run(argv: list[str], timeout_s: int, what: str) -> str:
     ``what`` is the name to use in the message, which is not always ``argv[0]``:
     "magick identify" is more use to a reader than "magick".
     """
+    from .execute import OutputTooLarge, capture as _capture
+
     try:
-        proc = subprocess.run(
-            argv, executable=_exe(argv), capture_output=True, text=True, timeout=timeout_s
+        # Bounded while it arrives rather than buffered whole; see N22.
+        code, out, err = _capture(
+            argv, executable=_exe(argv), timeout_s=timeout_s, max_output_b=HELPER_OUTPUT_B
         )
     except FileNotFoundError as exc:
         raise DesktopError(f"`{argv[0]}` is not on PATH") from exc
     except subprocess.TimeoutExpired as exc:
         raise DesktopError(f"{what} timed out") from exc
-    if proc.returncode != 0:
-        raise DesktopError(f"{what} failed: {proc.stderr.strip()[:200]}")
-    return proc.stdout
+    except OutputTooLarge as exc:
+        raise DesktopError(f"{what} {exc}") from exc
+    if code != 0:
+        raise DesktopError(f"{what} failed: {err.strip()[:200]}")
+    return out
 
 
 def state() -> dict[str, Any]:

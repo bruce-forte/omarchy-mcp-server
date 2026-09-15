@@ -582,6 +582,35 @@ cuts the activity log off mid-session.
 | Token | 256 bits, `0600`, constant-time compare | — |
 | Interactive commands | detached, never awaited | `theme switcher` finishes when a human is done, not when work is done |
 
+### Output is bounded as it arrives
+
+A command's output is read into a bounded sink while it streams, rather than
+buffered whole and trimmed afterwards. Two limits, and they answer different
+questions:
+
+- **`max_output_b`** (default 256 KiB) is presentational: how much of the output
+  the agent is shown. Over-long output keeps its head and tail with a note
+  saying how much went missing.
+- **A hard ceiling** of `32 x max_output_b`, floored at 1 MiB, is structural:
+  how many bytes this process will read from one stream before deciding the
+  command is a runaway. Passing it terminates and reaps the whole process
+  group immediately -- `SIGTERM` to the group, a grace period, then `SIGKILL`.
+
+This was previously a cap applied *after* `communicate()` returned, which meant
+the whole of a command's output was in the daemon's memory before the cap was
+consulted. It bounded what the agent saw, not what the daemon held, and the
+timeout does not help: it limits how long a command runs, not how much it
+prints while running. Found by the Omarchy marketplace security review; see
+ROADMAP N22.
+
+Both pipes are drained concurrently against one deadline, because reading them
+one at a time deadlocks -- a child filling the stderr pipe blocks forever while
+the parent waits on stdout.
+
+`registry.py`, `shell.py` and `desktop.py` share the same bounded helper.
+`omarchy_clipboard_read` is the one worth naming: it is agent-reachable and a
+clipboard has no size a program can rely on.
+
 ## Supply chain
 
 - Python dependencies are installed from `uv.lock`, which pins exact versions
