@@ -196,8 +196,15 @@ Panel {
   }
 
   //: A stop that disappears takes the cursor back to a resting place rather
-  //: than leaving it pointing at nothing.
-  onCursorAtChanged: if (cursorAt[0] < 0) restCursor()
+  //: than leaving it pointing at nothing. Deferred: writing `cursorKey` from
+  //: inside `cursorAt`'s own change notification re-enters the binding and
+  //: Qt reports a binding loop, so the rest happens once the notify is done.
+  onCursorAtChanged: if (cursorAt[0] < 0) Qt.callLater(restCursorIfLost)
+
+  function restCursorIfLost() {
+    if (cursorAt[0] < 0)
+      restCursor()
+  }
 
   //: The rows a Remove is actually drawn on. The ring has to agree with what
   //: is on screen, so the cap lives here rather than in the delegate.
